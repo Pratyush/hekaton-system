@@ -1,0 +1,206 @@
+// An index into RAM
+type RamIdx = usize;
+// Program counter
+type Pc = usize;
+// Instructions need to be able to STORE at least 1 Word
+type Instruction = DoubleWord;
+
+/// An entry in the transcript of memory accesses
+struct TranscriptEntry {
+    // The timestamp of this entry
+    t: usize,
+    // LOAD or STORE
+    op: enum { Load, Store },
+    // Either the index being loaded from or stored to
+    ramidx: RamIdx,
+    // The value being loaded or stored
+    val: Word,
+}
+
+impl TranscriptEntry {
+    /// Encodes this transcript entry as a field element for the purpose of hashing or
+    /// representation as a coefficient in a polynomial
+    fn to_ff(&self) -> FieldElem;
+}
+
+/// Represents the decoded instruction and register information used to LOAD or STORE in a small
+/// tick. `Load` doesn't carry the thing loaded because that has to come from outside the CPU, from
+/// the memory.
+enum SmallTickMemData {
+    Load(RamIdx),
+    Store(RamIdx, Word),
+    NoMemOp,
+}
+
+// Represents the running hash and polynomial evaluation of a transcript, i.e., `time_tr_hash =
+// Hash(Hash(Hash(op1), op2), ...)` and `time_tr(X) = (X - op1)(X - op2) ...)` evaluated at some
+// challenge point.
+struct RunningEval {
+    hash: Digest,
+    polyn: FieldElem,
+}
+
+// Computes a CPU tick. Every tick can do any op, including LOAD and a STORE. The returned index
+// `i` is a function of `instr`. `loaded_val` represents the value at the `i`, if this instruction
+// is a LOAD.
+//
+// Returns `(new_regs, new_pc, mem_data)`, where `new_regs` is the new set of registers, `new_pc`
+// is the updated program counter, and `mem_data` contains the decoded instruction and associated
+// register values regarding any LOADs or STOREs that happened in this tick.
+fn smalltick(
+    instr: Instruction,
+    regs: Registers,
+    loaded_val: Option<Word>,
+) -> (Registers, Pc, SmallTickMemData);
+
+// Represents a transition function at time `t`, doing a LOAD/STORE given by `mem_op`. `final`
+// indicates whether this is the last tick of the whole computation. `chal` is the Fiat-Shamir
+// polyn eval challenge. `time_tr_running_evals` are the running evaluations of the hashes and
+// polynomial representing the time-sorted transcript. Finally, `mem_tr_adj_pair` represents a pair
+// of adjacent entries in the mem-sorted transcript, and `mem_tr_running_evals` represents the
+// running hash and polyn evaluations of that list. Since there generally are more ticks than
+// memory accesses, the adjacent pair might be empty.
+//
+// Returns `new_regs`, `new_pc`, `new_t`, and all the updated running evals
+fn bigtick(
+    regs: Registers,
+    pc: Pc,
+    chal: FieldElem,
+    t: usize,
+    final: bool,
+    pcload: TranscriptEntry,
+    mem_op: Option<TranscriptEntry>,
+    time_tr_running_evals: RunningEval,
+    mem_tr_adj_pair: Option<(TranscriptEntry, TranscriptEntry)>,
+    mem_tr_running_evals: RunningEval,
+) -> (Registers, Pc, usize, RunningEval, RunningEval, RunningEval) {
+    // Check sequentiality of pcload and mem_op
+    assert pcload.t             == t;
+    assert pcload.op            == LOAD;
+    assert pcload.ramidx        == pc;
+    assert_if_exists mem_op.t   == t + 1;
+
+    // Check that the instruction LOAD was at the index given
+    assert pcload.ramdix.unwrap() == pc;
+
+    // Do a CPU tick
+    let instr = pcload.val;
+    let loaded_word = mem_op.val or None
+    let (new_regs, new_pc, mem_data) = smalltick(instr, regs, loaded_word);
+
+    // Make sure the idx we LOADed or STOREd was indeed what the CPU wanted
+    match mem_op.op {
+        Some(Load)  => assert mem_data == SmallTickMemData::Load(memop.ramidx),
+        Some(Store) => assert_mem_data == SmallTickMemData::Store(memop.ramidx, memop.val),
+    }
+
+    //
+    // Now accumulate the transcript entries into the time-ordered hashes and polynomials
+    //
+
+    // The next timestamp is t + 1 if no memory op happened. t + 2 otherwise.
+    let mut new_t = t + 1;
+
+    // A LOAD always happens to get the next instruction
+    let mut new_time_tr_running_evals = time_tr_running_evals.clone();
+    new_time_tr_running_evals.hash.absorb(pcload.to_ff());
+    new_time_tr_running_evals.polyn *= pcload.to_ff();
+
+    // If a LOAD or STORE was done, accumulate it into the polyn and hash. Otherwise this is a
+    // no-op
+    match mem_op {
+        Some(op) => {
+            new_time_tr_running_evals.hash.absorb(op.to_ff());
+            new_time_tr_running_evals.polyn *= (chal - op.to_ff());
+            // Mark the memory access in the timestamp
+            new_t += 1;
+        }
+        None => (),
+    }
+
+    //
+    // Entirely separately from the rest of this function, we check the consistency of the given
+    // adjacent entries in the mem-sorted memory transcript (if they're provided)
+    //
+
+    // We will update the evals
+    let mut new_mem_tr_running_evals = mem_tr_running_evals.clone();
+
+
+    // It might be the case that mem_tr_adj_pair is not given. That's because there are more ticks
+    // than memory accesses. That's okay though. You don't need to give every tick an adjacent
+    // pair. As long as you eventually give them all the adjacent pairs in the correct order, it'll
+    // hash correctly
+    if let Some((e1, e2)) = mem_tr_adj_pair {
+        // These asserts are taken from Figure 5 in Constant-Overhead Zero-Knowledge for RAM
+        // Programs: https://eprint.iacr.org/2021/979.pdf
+
+        // Check that this is sorted by memory idx then time
+        assert
+            ∨ e1.ramidx < e2.ramidx
+            ∨ (e1.ramidx == e2.ramidx ∧ e1.t < e2.t);
+
+        // Check that two contiguous LOADs on the same idx produced the same value
+        assert
+            ∨ e1.ramidx != e2.ramidx
+            ∨ e1.val == e2.val
+            ∨ e2.op == STORE;
+
+        // Check that the first access to a memory location is a STORE
+        assert
+            ∨ e1.ramidx == e2.ramidx
+            ∨ e1.op == STORE;
+
+        // Update the running hash and polyn eval
+        new_mem_tr_running_evals.0.absorb(e1.to_ff());
+        new_mem_tr_running_evals.1 *= (chal - e1.to_ff());
+
+        if final {
+            // On the final tick, include the last entry
+            new_mem_tr_running_evals.0.absorb(e2.to_ff());
+            new_mem_tr_running_evals.1 *= (chal - e2.to_ff());
+        }
+    }
+
+    // Also, on the final tick we have to check polynomial equality and verify the Fiat-Shamir
+    // challenge
+    if final {
+        assert new_mem_tr_running_evals.polyn == new_time_tr_running_evals.polyn
+        // Check chal == Hash(mem_hash || time_hash)
+        assert chal == Hash(new_mem_tr_running_evals.hash || new_time_tr_running_evals.hash)
+    }
+
+    return (
+        new_regs,
+        new_pc,
+        new_t,
+        new_time_tr_running_evals,
+        new_mem_tr_running_evals,
+    );
+}
+
+//
+// Sketch of proving procedure
+//
+
+1. Run the full computation and save the memory trace.
+2. Hash the traces to get the Fiat-Shamir challenge `chal` that we'll use to evaluate the trace
+   polynomials
+3. Do all T `bigtick()` proofs
+4. Enforce the following constraints in the aggregation phase. For each i, the input to the i-th
+   instance of bigtick has:
+    * final == false unless i == T
+    * chal == chal
+    * t == new_t from the (i-1)-th bigtick, or Default
+    * regs == new_regs from the (i-1)-th bigtick, or Default
+    * pc == new_pc from the (i-1)-th bigtick, or 0
+    * time_tr_running_evals == new_time_tr_running_evals from the (i-1)-th bigtick, or Default
+    * mem_tr_running_evals == new_mem_tr_running_evals from the (i-1)-th bigtick, or Default
+5. Additionally, enforce the following constraints for the first N ticks in the aggregation phase,
+   where N is the program size (in Words). Let `init_mem` be the public array representing the
+   initial memory. For each i <= N, the input to the i-th instance of bigtick has:
+    * pc = i
+    * mem_op = Some(TranscriptEntry {
+          op: Store,
+          val: Instruction::Store(i, init_mem[i]),
+      })
