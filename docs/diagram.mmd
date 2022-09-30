@@ -1,0 +1,94 @@
+flowchart LR
+    pub-in--"regs"-->TPU
+    pub-in--"chal"-->TPU
+    pub-in--"t"-->TPU
+    pub-in--"is_first"-->TPU
+    pub-in--"is_last"-->TPU
+    pub-in--"initmem_eval"-->TPU
+    pub-in--"running_evals^(t)"-->TPU
+    pub-in--"running_evals^(m)"-->TPU
+
+    TPU:::chip -- "instr" --> CPU:::chip
+    TPU -- "regs" --> CPU
+    CPU --"regs'"--> TPU
+    CPU -- "pc'" --> TPU
+    CPU -- "dec_memop" --> TPU
+
+    trt:::chip -- "memop^(t)" --> TPU
+    trt -- "memop^(t)" --> CPU
+    trt -- "pc_load" --> TPU
+
+    trm:::chip -- "memopᵢ^(m)" --> TPU
+    trm -- "memopᵢ₊₁^(m)" --> TPU
+
+    TPU -- "regs'" --> pub-out
+    TPU -- "t'" --> pub-out
+    TPU -- "running_evals^(t)" --> pub-out
+    TPU -- "running_evals^(m)" --> pub-out
+
+    subgraph otherchips[" "]
+        direction TB
+        subgraph trt["transcript^(t)"]
+        end
+        subgraph trm["transcript^(m)"]
+        end
+        subgraph CPU
+            cpustep:::text
+        end
+    end
+
+    subgraph TPU["Transcript Processing Unit (TPU)"]
+        direction TB
+        timestep:::text-->memcheck:::text --> finalization:::text
+        subgraph absorb["Absorbing procedures"]
+            subgraph absorbt["absorb^(t)"]
+                pc_load --> decision1>"is first read?"]
+                decision1 -- "yes" --> ey["e^(t)_firstread"]
+                decision1 -- "no" --> en["e^(t)_noninit"]
+                m["memop^(t)"] --> decision2>"is first read?"]
+                decision2 -- "yes" --> ey
+                decision2 -- "no" --> en
+            end
+            subgraph absorbm["absorb^(m)"]
+                direction LR
+                mop1["memopᵢ^(m)"] --> mdecision1>"is first read?"]
+                mdecision1 -- "yes" --> mey["e^(m)_firstread"]
+                mdecision1 -- "no" --> men["e^(m)_noninit"]
+                mop2["memopᵢ₊₁^(m)"] --> mdecision2>"is first read?"]
+                mdecision2 -- "yes" --> mey
+                mdecision2 -- "no" --> men
+            end
+        end
+    end
+    classDef var fill:#f96,stroke:#f96;
+    classDef text text-align:left;
+    classDef chip fill:#fffdd6,stroke:#a19f76;
+    classDef holder fill:#fff,stroke:#fff;
+    class otherchips holder
+    class absorb chip
+
+timestep["
+Timestep:
+1. Run CPU
+2. Get time transcript data
+3. Check dec_memop = memop^(t)
+4. Increment t
+5. Absorb memop^(t) into running_evals^(t)
+"]
+memcheck["
+Memcheck:
+1. Check memopᵢ^(m), memopᵢ₊₁^(m) are consistent
+2. Absorb memopᵢ^(m) into running_evals^(m)
+"]
+finalization["
+Final tick:
+1. Check chal = Hash(running_evals)
+2. Check e^(t)_firstread * e^(t)_nonaccessed = initmem_eval
+3. Check e^(t)_firstread * e^(t)_nonaccessed * e^(t)_noninit
+equals the same expression over e^(m)
+"]
+cpustep["
+1. Run instr using the given RAM value if required
+2. Log the memory operation performed, if any
+3. Return the op, the new pc, and the new regs
+"]
