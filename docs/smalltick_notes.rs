@@ -56,6 +56,9 @@ struct InstrJalr {
 // Do nothing
 struct InstrNoop;
 
+// Halt computation
+struct InstrHalt;
+
 // Represents the decoded instruction and register information used to LOAD or
 // STORE in a small tick. `Load` doesn't carry the thing loaded because that has
 // to come from outside the CPU, from the memory.
