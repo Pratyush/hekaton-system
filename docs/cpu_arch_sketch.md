@@ -216,14 +216,14 @@ fn bigtick(
 
 ## Polynomial definitions:
 
-* pfull: The full memory trace of our program. This consists of:
-    * pinit: The (non-timestamped) trace resulting from LOADing all the initial
-      memory state of our program. Com to pinit is a publicly known value. pinit has two factors:
-        * pnonaccessed: The (non-timestamped) trace of LOADing all the memory values that are never
-          touched in our execution of the program
-        * pfirst: The (non-timestamped) trace of LOADing all the memory values that are touched
-          in our execution of the program. Each slot is LOADed just once.
-    * pexec: The (timestamped) trace of our program execution
+* `pfull`: The full memory trace of our program. This consists of:
+    * `pinit`: The (non-timestamped) trace resulting from LOADing all the initial memory state of
+      our program. `pinit` has two factors:
+        * `pnonaccessed`: The (non-timestamped) trace of LOADing all the memory values that are
+          never touched in our execution of the program
+        * `pfirst`: The (non-timestamped) trace of LOADing all the memory values that are touched in
+          our execution of the program. Each slot is LOADed just once.
+    * `pexec`: The (timestamped) trace of our program execution
 
 ## Prover
 
@@ -247,19 +247,6 @@ fn bigtick(
    `final_pfirst_mem` and `final_pexec_mem` similarly. Prove the following outside the circuit:
     * `final_pexec_time == final_pexec_mem`
     * `pinit(chal) = pnonaccessed(chal) * final_pfirst_mem`
-
-1. Run the full computation and save the memory trace.
-2. Put the static memory locations whose initial values were never read into a polynomial
-   initmem_nonaccessed(X)
-3. Compute a polynomial commitment to init_nonaccessed(X) as com_na
-4. Hash com_na, the time-sorted memory trace, and the mem-sorted memory trace to get the
-   Fiat-Shamir challenge `chal`.
-5. Compute `initmem_eval` as `p_init(chal)` where `p_init(X)` is the polynomial corresponding to
-   the publicly known initial program memory. Similarly, compute `nonaccessed_eval`. Compute an
-   eval proof `π_naeval` of this evaluation wrt `com_na`.
-6. Do all T `bigtick()` proofs
-8. Aggregate all the bigtick proofs into `π_agg`
-9. Send `(π_agg, chal, com_na, nonaccessed_eval, π_naeval)`
 
 ## Verifier
 
