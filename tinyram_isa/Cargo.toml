@@ -3,8 +3,7 @@ name = "tinyram_isa"
 version = "0.1.0"
 edition = "2021"
 
-[lib]
-name = "tinyram_isa"
-path = "src/tinyram_isa.rs"
+[[bin]]
+name = "assembler"
 
 [dependencies]
