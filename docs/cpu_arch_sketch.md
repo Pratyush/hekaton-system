@@ -1,3 +1,6 @@
+# Pseudocode for the low-level circuits
+
+```rust
 // An index into RAM or ROM
 type RamIdx = usize;
 // Program counter
@@ -6,17 +9,30 @@ type Pc = usize;
 type Instruction = DoubleWord;
 
 /// An entry in the transcript of RAM accesses
-struct TranscriptEntry {
-    // The timestamp of this entry
-    t: usize,
-    // Whether this address has been read or written to before
-    was_accessed: bool,
-    // LOAD or STORE
-    op: enum { Load, Store },
-    // Either the index being loaded from or stored to
-    ramidx: RamIdx,
-    // The value being loaded or stored
-    val: Word,
+enum TranscriptEntry {
+    // If there are more ticks than memory accesses, we pad out the transcript
+    Padding,
+
+    // A real, non-padding entry
+    Entry {
+        // The timestamp of this entry
+        t: usize,
+        // LOAD or STORE
+        op: enum { Load, Store },
+        // Either the index being loaded from or stored to
+        ramidx: RamIdx,
+        // The value being loaded or stored
+        val: Word,
+    },
+}
+
+/// This is the placeholder transcript entry that MUST begin the memory-ordered transcript. Indexing for
+/// the real elements of the memory transcript start at t=1 and ramdix=1
+const TRANSCRIPT_START = TranscriptEntry::Entry {
+    t: 0,
+    op: LOAD,
+    ramidx: 0,
+    val: 0,
 }
 
 impl TranscriptEntry {
@@ -28,10 +44,6 @@ impl TranscriptEntry {
     /// representation as a coefficient in a polynomial. The `_notime` variant does not include the
     /// timestamp in the representation
     fn to_ff_notime(&self) -> FieldElem;
-
-    /// Returns whether this transcript entry is an initial LOAD. That is, it is a first-time LOAD
-    /// from an index in the static range
-    fn is_init_load(&self) -> bool;
 }
 
 /// Represents the decoded instruction and register information used to LOAD or STORE in a small
@@ -80,10 +92,12 @@ impl RunningEval {
 // is the updated program counter, and `mem_data` contains the decoded instruction and associated
 // register values regarding any LOADs or STOREs that happened in this tick.
 fn smalltick(
-    instr: Instruction,
-    regs: Registers,
+    pc: Pc<F>,
+    instr: EncodedInstruction<F>,
+    regs: Registers<F>,
     loaded_val: Option<Word>,
 ) -> (Registers, Pc, SmallTickMemData);
+
 
 /// Represents the running evaluations that have to get updated every bigtick
 struct Evals {
@@ -115,14 +129,12 @@ fn bigtick(
     pc: Pc,
     chal: FieldElem,
     t: usize,
-    is_first: bool,
-    is_last: bool,
-    initmem_eval: FieldElement,
     pcload: TranscriptEntry,
-    mem_op: Option<TranscriptEntry>,
-    time_sorted_evals: Evals,
-    mem_sorted_evals: Evals,
-    mem_tr_adj_pair: Option<(TranscriptEntry, TranscriptEntry)>,
+    mem_op: TranscriptEntry,
+    pexec_time: RunningEval,
+    pfirst_mem: RunningEval,
+    pexec_mem: RunningEval
+    mem_tr_adj_pair: (TranscriptEntry, TranscriptEntry),
 ) -> (Registers, Pc, usize, Evals, Evals) {
     // Check sequentiality of pcload and mem_op
     assert pcload.t           == t;
@@ -147,97 +159,94 @@ fn bigtick(
     // Now accumulate the transcript entries into the time-ordered hashes and polynomials
     //
 
-    // The next timestamp is t + 1 if no memory op happened. t + 2 otherwise.
-    let mut new_t = t + 1;
+    // There's at most 2 mem ops in a single bigtick. t just has to be monotonic, so incr by 2
+    let mut new_t = t + 2;
 
-    // Put the instruction LOAD in the initial mem or the noninitial mem
-    let mut new_time_sorted_evals = time_sorted_evals.clone();
-    if pcload.is_init_load() {
-        new_time_sorted_evals.initmem_accessed.update(pcload.to_ff_notime());
-    } else {
-        new_time_sorted_evals.execmem.update(pcload.to_ff());
-    }
+    // Put the instruction LOAD in the execution mem
+    let mut new_pexec_time = pexec_time.clone();
+    new_pexec_time.update(pcload.to_ff());
 
-    // Put the memory operation in the initial mem or the noninitial mem
-    if mem_op.is_init_load() {
-        time_sorted_evals.initmem_accessed.update(mem_op.to_ff_notime());
-        new_t += 1;
-    } else if mem_op.is_some() {
-        time_sorted_evals.execmem.update(mem_op.to_ff());
-        new_t += 1;
-    }
+    // Put the memory operation execution mem. If this is padding, then that's fine, because
+    // there's as much padding here as in the memory trace
+    new_pexec_time.update(mem_op.to_ff());
 
     //
     // Entirely separately from the rest of this function, we check the consistency of the given
     // adjacent entries in the mem-sorted memory transcript (if they're provided)
     //
 
-    // It might be the case that mem_tr_adj_pair is not given. That's because there are more ticks
-    // than memory accesses. That's okay though. You don't need to give every tick an adjacent
-    // pair. As long as you eventually give them all the adjacent pairs in the correct order, it'll
-    // hash correctly
-    if let Some((e1, e2)) = mem_tr_adj_pair {
-        // These asserts are taken from Figure 5 in Constant-Overhead Zero-Knowledge for RAM
-        // Programs: https://eprint.iacr.org/2021/979.pdf
+    let (prev, cur) = mem_tr_adj_pair;
 
-        // Check that this is sorted by memory idx then time, and the access counters are correct
-        assert
-            ∨ e1.ramidx < e2.ramidx
-            ∨ (e1.ramidx == e2.ramidx ∧ e1.t < e2.t ∧ e2.was_accessed);
+    // These asserts are taken from Figure 5 in Constant-Overhead Zero-Knowledge for RAM
+    // Programs: https://eprint.iacr.org/2021/979.pdf
 
-        // Check that two contiguous LOADs on the same idx produced the same value
-        assert
-            ∨ e1.ramidx != e2.ramidx
-            ∨ e1.val == e2.val
-            ∨ e2.op == STORE;
+    // Check that this is sorted by memory idx then time
+    assert
+        ∨ prev.ramidx < cur.ramidx
+        ∨ (prev.ramidx == cur.ramidx ∧ prev.t < cur.t);
 
-        // Update the running evals
-        let mut new_mem_sorted_evals = mem_sorted_evals.clone();
-        if is_first {
-            // On the first tick, absorb the first entry
-            if e1.is_init_load() {
-                new_mem_sorted_evals.initmem_accessed.update(e1.to_ff_notime());
-            } else {
-                new_mem_sorted_evals.execmem.update(e1.to_ff());
-            }
-        }
-        // On every other tick, absorb the second entry
-        if e2.is_init_load() {
-            new_mem_sorted_evals.initmem_accessed.update(e2.to_ff_notime());
-        } else {
-            new_mem_sorted_evals.execmem.update(e2.to_ff());
-        }
+    // Check that two adjacent LOADs on the same idx produced the same value
+    assert
+        ∨ prev.ramidx != cur.ramidx
+        ∨ prev.val == cur.val
+        ∨ cur.op == STORE;
+
+    // On every tick, absorb the second entry
+    let mut new_pexec_mem = pexec_mem.clone();
+    let mut new_pfirst_mem = pexec_mem.clone();
+    new_pexec_mem.update(cur.to_ff());
+    // If it's an initial load, also put it into pfirst
+    if prev.ramidx < cur.ramidx && cur.op == LOAD {
+        new_pfirst_mem.update(cur.to_ff_notime());
     }
 
-    // On the final tick we have to check polynomial equalities and verify the Fiat-Shamir
-    // challenge was correctly computed
-    if is_last {
-        // TODO: Verify that the below three checks are the only ones necessary. I think this is it
-        // but I'd like to be sure.
-
-        // Check that the challenge point is the hash of everything in the transcript
-        assert chal == Hash(time_sorted_evals.hashes() || mem_sorted_evals.hashes())
-
-        // Check that first-accessed * nonaccessed == full initial mem
-        assert
-            time_sorted_evals.initmem_accessed.polyn * time_sorted_evals.initmem_nonaccessed.polyn
-            == initmem_eval;
-
-        // Check that time-sorted == mem-sorted
-        assert time_sorted_evals.polyn() == mem_sorted_evals.polyn();
-    }
+    // All done
 
     return (
         new_regs,
         new_pc,
-        new_time_sorted_evals,
-        new_mem_sorted_evals,
+        new_pexec_time,
+        new_pfirst_mem,
+        new_pexec_mem,
     );
 }
+```
 
-//
-// Sketch of proving procedure
-//
+# Sketch of proving procedure
+
+## Polynomial definitions:
+
+* pfull: The full memory trace of our program. This consists of:
+    * pinit: The (non-timestamped) trace resulting from LOADing all the initial
+      memory state of our program. Com to pinit is a publicly known value. pinit has two factors:
+        * pnonaccessed: The (non-timestamped) trace of LOADing all the memory values that are never
+          touched in our execution of the program
+        * pfirst: The (non-timestamped) trace of LOADing all the memory values that are touched
+          in our execution of the program. Each slot is LOADed just once.
+    * pexec: The (timestamped) trace of our program execution
+
+## Prover
+
+1. Commit to `pnonaccessed(X)`, `pinit(X)`. Call them `com_na` and `com_init`.
+2. For each trace chunk, commit to the elements of the chunk.
+3. Let `com_tr` be the aggregate of all these commitments. We'll define what aggregation scheme we use
+   later, but think MIPP-style commitment.
+4. Let `chal = H(com_na || com_init || com_tr)`
+5. Do all `T` bigtick proofs
+6. Enforce the following constraints in the aggregation phase. For each i, the input to the i-th
+   instance of bigtick has:
+     * `chal == chal`
+     * `t == new_t` from the (i-1)-th bigtick, or 0
+     * `regs == new_regs` from the (i-1)-th bigtick, or Default
+     * `pc == new_pc` from the (i-1)-th bigtick, or 0
+     * `pexec_time = new_pexec_time` from the (i-1)-th bigtick, or Default
+        * Ditto for `pfirst_mem` and `new_pexec_mem`
+   where the Default value of a `RunningEval` has `{poly: 1, hash: rand() }`
+7. Further, in aggregation, prove that the subcommitments in `com_tr` satisfy their respective ticks.
+8. Let `final_pexec_time` be the `new_pexec_time` running eval returned by the last bigtick. Define
+   `final_pfirst_mem` and `final_pexec_mem` similarly. Prove the following outside the circuit:
+    * `final_pexec_time == final_pexec_mem`
+    * `pinit(chal) = pnonaccessed(chal) * final_pfirst_mem`
 
 1. Run the full computation and save the memory trace.
 2. Put the static memory locations whose initial values were never read into a polynomial
@@ -249,26 +258,13 @@ fn bigtick(
    the publicly known initial program memory. Similarly, compute `nonaccessed_eval`. Compute an
    eval proof `π_naeval` of this evaluation wrt `com_na`.
 6. Do all T `bigtick()` proofs
-7. Enforce the following constraints in the aggregation phase. For each i, the input to the i-th
-   instance of bigtick has:
-     * is_first == false unless i == 0
-     * is_last == false unless i == T-1
-     * chal == chal
-     * initmem_eval == initmem_eval
-     * t == new_t from the (i-1)-th bigtick, or 0
-     * regs == new_regs from the (i-1)-th bigtick, or Default
-     * pc == new_pc from the (i-1)-th bigtick, or 0
-     * time_sorted_evals == new_time_sorted_evals from the (i-1)-th bigtick, or Default
-     * mem_sorted_evals == new_mem_sorted_evals from the (i-1)-th bigtick, or Default
-   where the Default value of an `Evals` has initmem_nonaccessed set to `{poly: nonaccessed_eval,
-   hash: com_na }`, and the rest of the running evals are set to `{poly: 1, hash: rand() }`
 8. Aggregate all the bigtick proofs into `π_agg`
 9. Send `(π_agg, chal, com_na, nonaccessed_eval, π_naeval)`
 
-Verifier:
-1. Receive `(π_agg, chal, com_na, nonaccessed_eval, π_naeval)`
-2. Verify `π_naeval`, checking `com_na` opens to `nonaccessed_eval` at `chal`.
-3. Verify `π_agg`, ensuring that:
-     * The `initmem_nonaccessed` fields in ever tick are `{poly: nonaccessed_eval, hash: com_na }`
-     * Every circuit has the same input value `initmem_eval`, where `initmem_eval = p_init(chal)`.
-     * All the wiring constraints in step 7 above hold.
+## Verifier
+
+1. Receive all the commitments from the prover and compute `chal = H(com_na || com_init || com_tr)`
+2. (Optional) If `pinit` is known to the verifier, then the verifier should
+   check that they know the opening to `com_init`
+2. Check the aggregate proof, along with all the constraints in prover step 6.
+3. Check the polynomial evals in prover step 7.
