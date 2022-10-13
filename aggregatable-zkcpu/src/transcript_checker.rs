@@ -49,8 +49,8 @@ enum MemOpKind {
 impl MemOpKind {
     fn as_bool(&self) -> bool {
         match self {
-            Load => false,
-            Store => false,
+            MemOpKind::Load => false,
+            MemOpKind::Store => false,
         }
     }
 }
@@ -87,32 +87,8 @@ fn transcript_starting_entry(real_transcript: &[TranscriptEntry]) -> TranscriptE
 impl TranscriptEntry {
     /// Encodes this transcript entry as a field element for the purpose representation as a
     /// coefficient in a polynomial
-    fn to_ff<F: Field>(&self) -> F {
-        // Make a big buffer. We won't need anywhere near 254 bytes for this field element.
-        let mut buf = [0u8; 254];
-
-        // Serialize this transcript entry into the buf
-        let mut writer = &mut buf[..];
-        match self {
-            // Padding transcript entry is all 0s
-            TranscriptEntry::Padding => {
-                Timestamp::MIN.serialize(&mut writer).unwrap();
-                u8::MIN.serialize(&mut writer).unwrap();
-                RamIdx::MIN.serialize(&mut writer).unwrap();
-                Word::MIN.serialize(&mut writer).unwrap();
-            }
-            // Real transcript entry is NOT all 0s
-            TranscriptEntry::Entry { t, op, ramidx, val } => {
-                assert!(*t > 0, "transcript entry timestamps must be > 0");
-
-                t.serialize(&mut writer).unwrap();
-                (*op as u8).serialize(&mut writer).unwrap();
-                ramidx.serialize(&mut writer).unwrap();
-                val.serialize(&mut writer).unwrap();
-            }
-        }
-
-        F::deserialize(&buf[..]).unwrap()
+    fn as_ff<F: Field>(&self) -> F {
+        unimplemented!()
     }
 
     /// Encodes this transcript entry as a field element for the purpose of representation as a
@@ -151,23 +127,6 @@ fn uint32_to_fpvar<F: PrimeField>(x: &UInt32<F>) -> Result<FpVar<F>, SynthesisEr
 }
 
 impl<F: PrimeField> TranscriptEntryVar<F> {
-    /*
-    /// Returns whether this entry is a real transcript entry, and not just padding
-    fn is_real_entry(&self) -> Result<Boolean<F>, SynthesisError> {
-        // If all of these are true, then it's padding
-        let t_iszero: Boolean<F> = self.timestamp.is_eq(&TimestampVar::zero())?;
-        let op_iszero: Boolean<F> = self.op.is_eq(&MemOpKindVar::constant(false))?;
-        let ramidx_iszero: Boolean<F> = self.ram_idx.is_eq(&RamIdxVar::zero())?;
-        let val_iszero: Boolean<F> = self.val.is_eq(&WordVar::constant(0))?;
-
-        Ok(t_iszero
-            .and(&op_iszero)?
-            .and(&ramidx_iszero)?
-            .and(&val_iszero)?
-            .not())
-    }
-    */
-
     /// Encodes this transcript entry as a field element. `is_init` says whether this entry is part
     /// of the initial memory or not.
     fn as_ff(&self, is_init: bool) -> Result<FpVar<F>, SynthesisError> {
@@ -224,13 +183,14 @@ struct TranscriptCheckerEvals<F: PrimeField> {
 
 /// Returns a value which, if absorbed into the running eval, will mutate nothing. To work, it
 /// needs the challenge point.
-// TODO: This can be removed entirely. chal - 1
 fn dummy_running_eval_value<F: PrimeField>(chal: &FpVar<F>) -> FpVar<F> {
     // When you do an update(), it computes eval *= chal - entry. If you let entry = chal-1, then
     // you get eval *= 1, i.e., a no-op.
     chal - FpVar::one()
 }
 
+/// This function checks the time- and mem-sorted transcripts for consistency. It also accumulates
+/// both transcripts into their respective polynomial evaluations.
 fn transcript_checker<F: PrimeField>(
     t: &TimestampVar<F>,
     chal: &FpVar<F>,
