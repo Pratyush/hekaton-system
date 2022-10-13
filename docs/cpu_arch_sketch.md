@@ -15,11 +15,10 @@ This notation is used in the pseudocode and the diagram.
 
 ```rust
 // An index into RAM or ROM
-type RamIdx = usize;
+type ram_idx = usize;
 // Program counter
 type Pc = usize;
-// Instructions need to be able to STORE at least 1 Word
-type Instruction = DoubleWord;
+type Instruction = Word;
 
 /// An entry in the transcript of RAM accesses
 enum TranscriptEntry {
@@ -33,7 +32,7 @@ enum TranscriptEntry {
         // LOAD or STORE
         op: enum { Load, Store },
         // Either the index being loaded from or stored to
-        ramidx: RamIdx,
+        ram_idx: ram_idx,
         // The value being loaded or stored
         val: Word,
     },
@@ -44,7 +43,7 @@ enum TranscriptEntry {
 const TRANSCRIPT_START = TranscriptEntry::Entry {
     t: 0,
     op: LOAD,
-    ramidx: 0,
+    ram_idx: 0,
     val: 0,
 }
 
@@ -63,8 +62,8 @@ impl TranscriptEntry {
 /// tick. `Load` doesn't carry the thing loaded because that has to come from outside the CPU, from
 /// the memory.
 enum SmallTickMemData {
-    Load(RamIdx),
-    Store(RamIdx, Word),
+    Load(ram_idx),
+    Store(ram_idx, Word),
     NoMemOp,
 }
 
@@ -114,10 +113,10 @@ fn smalltick(
 
 struct BigtickRunningEvals {
     // The time-sorted trace of our execution
-    time_tr_exec: RuningEval,
+    time_tr_exec: RunningEval,
 
     // The mem-sorted trace of our execution
-    mem_tr_exec: RuningEval,
+    mem_tr_exec: RunningEval,
 
     // The unsorted trace of the initial memory that's read in our execution
     tr_init_accessed: RunningEval,
@@ -138,28 +137,28 @@ fn bigtick(
     pc: Pc,
     chal: FieldElem,
     t: usize,
-    pcload: TranscriptEntry,
+    pc_load: TranscriptEntry,
     mem_op: TranscriptEntry,
     evals: BigtickRunningEvals,
     mem_tr_adj_pair: (TranscriptEntry, TranscriptEntry),
 ) -> (Registers, Pc, usize, BigtickRunningEvals) {
-    // Check sequentiality of pcload and mem_op
-    assert pcload.t           == t;
+    // Check sequentiality of pc_load and mem_op
+    assert pc_load.t           == t;
     assert_if_exists mem_op.t == t + 1;
-    assert pcload.op          == LOAD;
+    assert pc_load.op          == LOAD;
 
     // Check that the instruction LOAD was at the index given
-    assert pcload.ramdix == pc;
+    assert pc_load.ramdix == pc;
 
     // Do a CPU tick
-    let instr = pcload.val;
+    let instr = pc_load.val;
     let loaded_word = mem_op.val or None
     let (new_regs, new_pc, mem_data) = smalltick(instr, regs, loaded_word);
 
     // Make sure the idx we LOADed or STOREd was indeed what the CPU wanted
     match mem_op.op {
-        Some(Load)  => assert mem_data == SmallTickMemData::Load(memop.ramidx),
-        Some(Store) => assert_mem_data == SmallTickMemData::Store(memop.ramidx, memop.val),
+        Some(Load)  => assert mem_data == SmallTickMemData::Load(memop.ram_idx),
+        Some(Store) => assert_mem_data == SmallTickMemData::Store(memop.ram_idx, memop.val),
     }
 
     //
@@ -172,7 +171,7 @@ fn bigtick(
     let mut new_t = t + 2;
 
     // Put the instruction LOAD in the time-sorted execution mem
-    new_evals.time_tr_exec.update(pcload.to_ff());
+    new_evals.time_tr_exec.update(pc_load.to_ff());
 
     // Put the memory operation execution mem. If this is padding, then that's fine, because
     // there's as much padding here as in the memory trace
@@ -190,19 +189,19 @@ fn bigtick(
 
     // Check that this is sorted by memory idx then time
     assert
-        ∨ prev.ramidx < cur.ramidx
-        ∨ (prev.ramidx == cur.ramidx ∧ prev.t < cur.t);
+        ∨ prev.ram_idx < cur.ram_idx
+        ∨ (prev.ram_idx == cur.ram_idx ∧ prev.t < cur.t);
 
     // Check that two adjacent LOADs on the same idx produced the same value
     assert
-        ∨ prev.ramidx != cur.ramidx
+        ∨ prev.ram_idx != cur.ram_idx
         ∨ prev.val == cur.val
         ∨ cur.op == STORE;
 
     // On every tick, absorb the second entry in to the mem-sorted execution trace
     new_evals.mem_tr_exec.update(cur.to_ff());
     // If it's an initial load, also put it into tr_init_accessed
-    if prev.ramidx < cur.ramidx && cur.op == LOAD {
+    if prev.ram_idx < cur.ram_idx && cur.op == LOAD {
         new_evals.tr_init_accessed.update(cur.to_ff_notime());
     }
 
