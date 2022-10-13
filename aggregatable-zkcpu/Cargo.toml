@@ -1,0 +1,24 @@
+[package]
+name = "aggregatable-zkcpu"
+authors = ["Michael Rosenberg <michael@mrosenberg.pub>"]
+edition = "2021"
+readme = "README.md"
+version = "0.1.0"
+license = "MIT/Apache-2.0"
+keywords = ["cryptography", "crypto", "zero-knowledge", "snark"]
+categories = ["cryptography", "no-std"]
+
+[dependencies]
+ark-ff = {version = "0.3", default-features = false }
+ark-poly = { version = "0.3", default-features = false }
+ark-r1cs-std = { version = "0.3", default-features = false }
+ark-relations = { version = "0.3", default-features = false }
+ark-serialize = { version = "0.3", default-features = false }
+
+[features]
+default = ["asm", "parallel"]
+std = ["ark-ff/std","ark-poly/std", "ark-r1cs-std/std", "ark-serialize/std", "ark-relations/std"]
+asm = ["ark-ff/asm"]
+parallel = [
+    "ark-ff/parallel", "ark-ff/rayon", "ark-poly/parallel", "ark-poly/rayon", "ark-r1cs-std/parallel"
+]
