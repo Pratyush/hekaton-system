@@ -8,9 +8,9 @@ pub(crate) type RamIdx = u32;
 pub(crate) type RamIdxVar<F> = FpVar<F>;
 
 /// Program counter
-pub(crate) type Pc = u32;
+pub(crate) type Pc = RamIdx;
 /// Program counter, in ZK land
-pub(crate) type PcVar<F> = UInt32<F>;
+pub(crate) type PcVar<F> = RamIdxVar<F>;
 
 /// A CPU word
 pub(crate) type Word = u32;
@@ -21,3 +21,6 @@ pub(crate) type WordVar<F> = UInt32<F>;
 pub(crate) type Instr = Word;
 /// A CPU instruction, in ZK land
 pub(crate) type InstrVar<F> = WordVar<F>;
+
+/// The set of CPU registers
+pub(crate) type RegistersVar<F> = Vec<WordVar<F>>;

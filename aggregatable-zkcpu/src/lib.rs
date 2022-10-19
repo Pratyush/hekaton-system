@@ -1,4 +1,5 @@
 mod common;
+mod exec_checker;
 mod transcript_checker;
 
 pub fn add(left: usize, right: usize) -> usize {

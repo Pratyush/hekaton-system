@@ -1,4 +1,4 @@
-use crate::common::*;
+use crate::{common::*, exec_checker::*};
 
 use core::cmp::Ordering;
 
@@ -11,7 +11,6 @@ use ark_r1cs_std::{
     uint32::UInt32,
 };
 use ark_relations::r1cs::SynthesisError;
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
 /// A timestamp in the memory access transcript
 type Timestamp = u32;
@@ -31,11 +30,30 @@ impl<F: PrimeField> Default for RunningEvalVar<F> {
 }
 
 impl<F: PrimeField> RunningEvalVar<F> {
-    /// Updates the running eval with the given entry and challenge point
-    fn update(&mut self, entry: &FpVar<F>, chal: &FpVar<F>) {
+    /// Updates the running eval with the given entry and challenge point, iff `bit` == true.
+    fn conditionally_update(
+        &mut self,
+        bit: &Boolean<F>,
+        entry: &FpVar<F>,
+        chal: &FpVar<F>,
+    ) -> Result<(), SynthesisError> {
+        // This value, when plugged into the expression below, will yield 1, thus not affecting the
+        // current running eval.
+        let dummy_entry = chal - FpVar::one();
+
+        // Select either the real entry or the dummy entry
+        let val_to_absorb = FpVar::conditionally_select(bit, entry, &dummy_entry)?;
+
         // Recall the polynoimal has factors (X - op). So to do an incremental computation, we
         // calculate `eval *= (chal - op)`.
-        self.0 *= chal - entry;
+        self.0 *= chal - val_to_absorb;
+
+        Ok(())
+    }
+
+    /// Updates the running eval with the given entry and challenge point
+    fn update(&mut self, entry: &FpVar<F>, chal: &FpVar<F>) -> Result<(), SynthesisError> {
+        self.conditionally_update(&Boolean::TRUE, entry, chal)
     }
 }
 
@@ -113,6 +131,19 @@ struct TranscriptEntryVar<F: PrimeField> {
     val: WordVar<F>,
 }
 
+impl<F: PrimeField> TranscriptEntryVar<F> {
+    /// Returns whether this memory operation is a LOAD
+    fn is_load(&self) -> Result<Boolean<F>, SynthesisError> {
+        self.op
+            .is_eq(&MemOpKindVar::Constant(MemOpKind::Load.as_bool()))
+    }
+
+    /// Returns whether this memory operation is a STORE
+    fn is_store(&self) -> Result<Boolean<F>, SynthesisError> {
+        Ok(self.is_load()?.not())
+    }
+}
+
 fn uint32_to_fpvar<F: PrimeField>(x: &UInt32<F>) -> Result<FpVar<F>, SynthesisError> {
     let bits = x.to_bits_le();
     let zero = FpVar::<F>::zero();
@@ -181,30 +212,35 @@ struct TranscriptCheckerEvals<F: PrimeField> {
     tr_init_accessed: RunningEvalVar<F>,
 }
 
-/// Returns a value which, if absorbed into the running eval, will mutate nothing. To work, it
-/// needs the challenge point.
-fn dummy_running_eval_value<F: PrimeField>(chal: &FpVar<F>) -> FpVar<F> {
-    // When you do an update(), it computes eval *= chal - entry. If you let entry = chal-1, then
-    // you get eval *= 1, i.e., a no-op.
-    chal - FpVar::one()
-}
-
 /// This function checks the time- and mem-sorted transcripts for consistency. It also accumulates
 /// both transcripts into their respective polynomial evaluations.
 fn transcript_checker<F: PrimeField>(
-    t: &TimestampVar<F>,
+    regs: &RegistersVar<F>,
     chal: &FpVar<F>,
     pc_load: &TranscriptEntryVar<F>,
     mem_op: &TranscriptEntryVar<F>,
     mem_tr_adj_pair: (&TranscriptEntryVar<F>, &TranscriptEntryVar<F>),
     evals: &TranscriptCheckerEvals<F>,
-) -> Result<(), SynthesisError> {
+) -> Result<(PcVar<F>, RegistersVar<F>, TranscriptCheckerEvals<F>), SynthesisError> {
     // pc_load occurs at time t
     let t = &pc_load.timestamp;
     // mem_op, if defined, occurs at time t
     let t_plus_one = t + FpVar::one();
-    // The timestamp for the next tick is t+2
-    let next_t = &t_plus_one + FpVar::one();
+
+    // --------------------------------------------------------------------------------------------
+    // Housekeeping of memory operations
+    // --------------------------------------------------------------------------------------------
+
+    // If mem_op is padding, it must be a LOAD. Otherwise we have a soundness issue where a STORE
+    // that's technically padding is not checked in the timestep but still makes it into the mem
+    // transcript. Concretely, we check
+    //       ¬mem_op.is_padding
+    //     ∨ mem_op.is_load()
+    mem_op
+        .is_padding
+        .not()
+        .or(&mem_op.is_load()?)?
+        .enforce_equal(&Boolean::TRUE)?;
 
     // If mem_op is a real entry, i.e., not padding, it must have timestamp t + 1
     mem_op
@@ -215,11 +251,53 @@ fn transcript_checker<F: PrimeField>(
     let mut new_evals = evals.clone();
 
     // Put the instruction LOAD in the time-sorted execution mem
-    new_evals.time_tr_exec.update(&pc_load.as_ff(false)?, chal);
+    new_evals
+        .time_tr_exec
+        .update(&pc_load.as_ff(false)?, chal)?;
 
     // Put the memory operation execution mem. If this is padding, then that's fine, because
     // there's as much padding here as in the memory trace
-    new_evals.time_tr_exec.update(&mem_op.as_ff(false)?, chal);
+    new_evals.time_tr_exec.update(&mem_op.as_ff(false)?, chal)?;
+
+    // --------------------------------------------------------------------------------------------
+    // Running the CPU
+    // --------------------------------------------------------------------------------------------
+
+    // Unpack the LOAD at the program counter
+    let pc = &pc_load.ram_idx;
+    let instr = &pc_load.val;
+
+    // If instr is a `lw`, then it needs the value from memory
+    let opt_loaded_val = &mem_op.val;
+
+    // Run the CPU for one tick
+    let (new_pc, new_regs, exec_mem_data) = exec_checker(pc, instr, regs, opt_loaded_val);
+
+    // Check well-formedness of the mem data
+    exec_mem_data.kind.enforce_well_formed()?;
+
+    // Check that the memory op is padding iff the instruction is a no-mem instruction. That is,
+    //       (mem_op.is_padding ∧ instr_used_mem)
+    //     ∨ (¬mem_op.is_padding ∧ ¬instr_used_mem)
+    let instr_used_mem = exec_mem_data.kind.is_no_mem()?.not();
+    (mem_op.is_padding.and(&instr_used_mem)?)
+        .or(&mem_op.is_padding.not().and(&instr_used_mem.not())?)?
+        .enforce_equal(&Boolean::TRUE)?;
+
+    // Check that if there was a LOAD/STORE, the RAM index `mem_op.ram_idx`
+    exec_mem_data
+        .idx
+        .conditional_enforce_equal(&mem_op.ram_idx, &instr_used_mem)?;
+
+    // Check that if there was STORE, the stored word matches `mem_op.val`
+    let instr_is_store = exec_mem_data.kind.is_store()?;
+    exec_mem_data
+        .stored_word
+        .conditional_enforce_equal(&mem_op.val, &instr_is_store)?;
+
+    // --------------------------------------------------------------------------------------------
+    // Checking memory-sorted transcript consistency
+    // --------------------------------------------------------------------------------------------
 
     //
     // Entirely separately from the rest of this function, we check the consistency of the given
@@ -255,7 +333,7 @@ fn transcript_checker<F: PrimeField>(
     cond.enforce_equal(&Boolean::TRUE)?;
 
     // On every tick, absorb the second entry in to the mem-sorted execution trace
-    new_evals.mem_tr_exec.update(&cur.as_ff(false)?, chal);
+    new_evals.mem_tr_exec.update(&cur.as_ff(false)?, chal)?;
 
     // If it's an initial load, also put it into the mem trace of initial memory that's read in our
     // execution. That is, if
@@ -263,13 +341,13 @@ fn transcript_checker<F: PrimeField>(
     //     ∧ cur.op == LOAD
     // then absorb cur into tr_init_accessed
     let cur_as_initmem = cur.as_ff(true)?;
-    let dummy_entry = dummy_running_eval_value(chal);
     let is_new_load = {
         let op_is_load = op_is_store.not();
         ram_idx_is_eq.and(&op_is_load)?
     };
-    let val_to_absorb = FpVar::conditionally_select(&is_new_load, &cur_as_initmem, &dummy_entry)?;
-    new_evals.tr_init_accessed.update(&val_to_absorb, chal);
+    new_evals
+        .tr_init_accessed
+        .conditionally_update(&is_new_load, &cur_as_initmem, chal)?;
 
-    unimplemented!()
+    Ok((new_pc, new_regs, new_evals))
 }
