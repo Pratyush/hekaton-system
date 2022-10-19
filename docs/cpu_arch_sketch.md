@@ -21,21 +21,17 @@ type Pc = usize;
 type Instruction = Word;
 
 /// An entry in the transcript of RAM accesses
-enum TranscriptEntry {
-    // If there are more ticks than memory accesses, we pad out the transcript
-    Padding,
-
-    // A real, non-padding entry
-    Entry {
-        // The timestamp of this entry
-        t: usize,
-        // LOAD or STORE
-        op: enum { Load, Store },
-        // Either the index being loaded from or stored to
-        ram_idx: ram_idx,
-        // The value being loaded or stored
-        val: Word,
-    },
+struct TranscriptEntry {
+    // A flag denoting whether this is a padding entry
+    is_padding: bool,
+    // The timestamp of this entry
+    t: usize,
+    // LOAD or STORE
+    op: enum { Load, Store },
+    // Either the index being loaded from or stored to
+    ram_idx: ram_idx,
+    // The value being loaded or stored
+    val: Word,
 }
 
 /// This is the placeholder transcript entry that MUST begin the memory-ordered transcript. Indexing
@@ -144,11 +140,16 @@ fn bigtick(
 ) -> (Registers, Pc, usize, BigtickRunningEvals) {
     // Check sequentiality of pc_load and mem_op
     assert pc_load.t           == t;
-    assert_if_exists mem_op.t == t + 1;
+    assert_if_exists mem_op.t  == t + 1;
     assert pc_load.op          == LOAD;
 
     // Check that the instruction LOAD was at the index given
     assert pc_load.ramdix == pc;
+
+    // Ensure that padding entries are LOADs. Allowing STOREs is a soundness issue: padding entries
+    // aren't subject to the SmallTickMemData comparison below, so a STORE on a no-op would still
+    // make it into the mem transcript and cause it to believe a real STORE happened.
+    assert !mem_op.is_padding ∨ (mem_op.op == LOAD)
 
     // Do a CPU tick
     let instr = pc_load.val;
