@@ -327,7 +327,7 @@ mod tests {
     // Ensures that the machine code type has enough space for all instructions
     #[test]
     fn mc_overflow(){
-        assert!(Mc::MAX > 1<<4+3*BITS_FOR_REGS);
-        assert!(Mc::MAX > 1<<4+2*BITS_FOR_REGS+BITS_FOR_OFFSET);
+        assert!(Mc::MAX >= (1<<4+3*BITS_FOR_REGS)-1);
+        assert!(Mc::MAX >= (1<<4+2*BITS_FOR_REGS+BITS_FOR_OFFSET)-1);
     }
 }
