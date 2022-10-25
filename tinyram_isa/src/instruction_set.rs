@@ -22,6 +22,7 @@ pub(crate) type Word = u32;
 pub(crate) type RegIdx = Word;
 
 /// A CPU instruction
+#[derive(Debug, Eq, PartialEq)]
 pub enum Op {
     /// Sets `*dest = *src1 + *src2`
     Add {
@@ -74,15 +75,15 @@ mod tests {
 
     #[test]
     // Checks to see NUM_REG_BITS >= log_2(NUM_REGS).
-    fn enough_regidx_bits(){
+    fn enough_regidx_bits() {
         let req_bits_for_reg: u32 = (NUM_REGS as f64).log2().ceil() as u32;
-        assert!(BITS_FOR_REGS<=req_bits_for_reg);
+        assert!(BITS_FOR_REGS <= req_bits_for_reg);
     }
 
     #[test]
     // Checks to see BITS_FOR_OFFSET >= log_2(RAM_SIZE).
-    fn enough_ram_bits(){
+    fn enough_ram_bits() {
         let req_bits_for_offset: u32 = (RAM_SIZE as f64).log2().ceil() as u32;
-        assert!(BITS_FOR_OFFSET<=req_bits_for_offset);
+        assert!(BITS_FOR_OFFSET <= req_bits_for_offset);
     }
 }
