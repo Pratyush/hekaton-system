@@ -8,3 +8,6 @@ name = "assembler"
 
 [dependencies]
 bitfield = "0.14"
+
+[dev-dependencies]
+rand = { version = "0.8", features = ["std"] }

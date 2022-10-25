@@ -225,53 +225,65 @@ impl Op {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rand::Rng;
+
+    fn gen_regidx<R: Rng>(mut rng: R) -> RegIdx {
+        rng.gen_range(0..NUM_REGS)
+    }
 
     // Tests that Op::from_mc(op.to_mc()) is the identity on `op`
     #[test]
     fn round_trip_identity() {
-        let test_cases = [
-            Op::NoOp,
-            Op::Halt,
-            Op::Beq {
-                reg1: 1,
-                reg2: 2,
-                target: 3,
-            },
-            Op::Nor {
-                src1: 1,
-                src2: 2,
-                dest: 3,
-            },
-            Op::Add {
-                src1: 1,
-                src2: 2,
-                dest: 3,
-            },
-            Op::Jalr {
-                target: 1,
-                savepoint: 2,
-            },
-            Op::Lw {
-                dest: 1,
-                base: 2,
-                offset: 3,
-            },
-            Op::Sw {
-                dest: 1,
-                base: 2,
-                offset: 3,
-            },
-        ];
+        let mut rng = rand::thread_rng();
 
-        for tc in test_cases {
-            assert_eq!(tc, Op::from_mc(tc.to_mc()))
+        // Test 100 test cases of each kind of instruction
+        for _ in 0..100 {
+            // Make random test cases
+            let test_cases = [
+                Op::NoOp,
+                Op::Halt,
+                Op::Beq {
+                    reg1: gen_regidx(&mut rng),
+                    reg2: gen_regidx(&mut rng),
+                    target: gen_regidx(&mut rng),
+                },
+                Op::Nor {
+                    src1: gen_regidx(&mut rng),
+                    src2: gen_regidx(&mut rng),
+                    dest: gen_regidx(&mut rng),
+                },
+                Op::Add {
+                    src1: gen_regidx(&mut rng),
+                    src2: gen_regidx(&mut rng),
+                    dest: gen_regidx(&mut rng),
+                },
+                Op::Jalr {
+                    target: gen_regidx(&mut rng),
+                    savepoint: gen_regidx(&mut rng),
+                },
+                Op::Lw {
+                    dest: gen_regidx(&mut rng),
+                    base: gen_regidx(&mut rng),
+                    offset: rng.gen::<Word>(),
+                },
+                Op::Sw {
+                    dest: gen_regidx(&mut rng),
+                    base: gen_regidx(&mut rng),
+                    offset: rng.gen::<Word>(),
+                },
+            ];
+
+            // Test equality after an encode-decode round trip
+            for tc in test_cases {
+                assert_eq!(tc, Op::from_mc(tc.to_mc()))
+            }
         }
     }
 
     // Ensures that the machine code type has enough space for all instructions
     #[test]
     fn mc_overflow() {
-        assert!(Mc::MAX >= (1 << 4 + 3 * REGIDX_BITLEN) - 1);
-        assert!(Mc::MAX >= (1 << 4 + 2 * REGIDX_BITLEN + WORD_BITLEN) - 1);
+        assert!(MC_BITLEN >= OPCODE_BITLEN + 3 * REGIDX_BITLEN);
+        assert!(MC_BITLEN >= OPCODE_BITLEN + 2 * REGIDX_BITLEN + WORD_BITLEN);
     }
 }
