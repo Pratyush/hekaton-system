@@ -12,6 +12,7 @@ pub(crate) const OPCODE_BITLEN: usize = 4;
 
 // Machine Code Type
 pub(crate) type Mc = u64;
+pub(crate) const MC_BITLEN: usize = core::mem::size_of::<Mc>() * 8;
 
 /// The size of the slots in our CPU's register
 pub(crate) type Word = u32;

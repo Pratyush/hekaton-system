@@ -54,6 +54,12 @@ impl Op {
         cur_bit_idx += REGIDX_BITLEN;
 
         let reg1 = mc.bit_range(cur_bit_idx + REGIDX_BITLEN - 1, cur_bit_idx);
+        cur_bit_idx += REGIDX_BITLEN;
+
+        // Check that the rest of the instruction is all 0s. This isn't strictly necessary but it
+        // might help catch bugs early
+        let rest: Mc = mc.bit_range(MC_BITLEN - 1, cur_bit_idx);
+        assert_eq!(rest, 0);
 
         match opcode {
             Opcode::Add => Op::Add {
@@ -91,6 +97,12 @@ impl Op {
         cur_bit_idx += REGIDX_BITLEN;
 
         let reg1 = mc.bit_range(cur_bit_idx + REGIDX_BITLEN - 1, cur_bit_idx);
+        cur_bit_idx += REGIDX_BITLEN;
+
+        // Check that the rest of the instruction is all 0s. This isn't strictly necessary but it
+        // might help catch bugs early
+        let rest: Mc = mc.bit_range(MC_BITLEN - 1, cur_bit_idx);
+        assert_eq!(rest, 0);
 
         match opcode {
             Opcode::Jalr => Op::Jalr {
@@ -119,6 +131,12 @@ impl Op {
         cur_bit_idx += REGIDX_BITLEN;
 
         let reg1 = mc.bit_range(cur_bit_idx + REGIDX_BITLEN - 1, cur_bit_idx);
+        cur_bit_idx += REGIDX_BITLEN;
+
+        // Check that the rest of the instruction is all 0s. This isn't strictly necessary but it
+        // might help catch bugs early
+        let rest: Mc = mc.bit_range(MC_BITLEN - 1, cur_bit_idx);
+        assert_eq!(rest, 0);
 
         match opcode {
             Opcode::Lw => Op::Lw {
@@ -181,7 +199,6 @@ impl Op {
     fn encode_rro(reg1: RegIdx, reg2: RegIdx, offset: u32, op: u32) -> Mc {
         Op::regidx_valid(reg1);
         Op::regidx_valid(reg2);
-        Op::offset_valid(offset);
 
         let mut mc = op as Mc;
         mc += (offset << 4) as Mc;
@@ -203,9 +220,6 @@ impl Op {
             panic!("Register Index exceeds our number of registers");
         }
     }
-
-    // Panics if a RAM offset overflows its allocated space in machine code
-    fn offset_valid(_offset: Word) {}
 }
 
 #[cfg(test)]
