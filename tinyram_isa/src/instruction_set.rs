@@ -1,25 +1,21 @@
 //! Defines the types used to represent instructions in our CPU
 
-// Limit bits used for RegIdx
-pub(crate) const NUM_REGS: u32 = 64;
+/// An index to a register
+pub(crate) type RegIdx = Word;
+// Maximum number of registers in our arch
+pub(crate) const NUM_REGS: u32 = 1 << REGIDX_BITLEN;
+pub(crate) const REGIDX_BITLEN: usize = 6;
 
-// Number of bits used to represent registers. Must be >= log_2(NUM_REGS).
-pub(crate) const BITS_FOR_REGS: u32 = 6;
-
-// Limits the size offsets in instructions
-pub(crate) const RAM_SIZE: u32 = 256;
-
-// Number of bits used to represent RAM offsets. Must be >=log_2(RAM_SIZE).
-pub(crate) const BITS_FOR_OFFSET: u32 = 8;
+// Maximum number of opcodes in our ISA
+pub(crate) const NUM_OPCODES: u32 = 1 << OPCODE_BITLEN;
+pub(crate) const OPCODE_BITLEN: usize = 4;
 
 // Machine Code Type
 pub(crate) type Mc = u64;
 
 /// The size of the slots in our CPU's register
 pub(crate) type Word = u32;
-
-/// An index to a register
-pub(crate) type RegIdx = Word;
+pub(crate) const WORD_BITLEN: usize = core::mem::size_of::<Word>() * 8;
 
 /// A CPU instruction
 #[derive(Debug, Eq, PartialEq)]
@@ -69,21 +65,47 @@ pub enum Op {
     NoOp,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    // Checks to see NUM_REG_BITS >= log_2(NUM_REGS).
-    fn enough_regidx_bits() {
-        let req_bits_for_reg: u32 = (NUM_REGS as f64).log2().ceil() as u32;
-        assert!(BITS_FOR_REGS <= req_bits_for_reg);
+impl Op {
+    pub(crate) fn opcode(&self) -> Opcode {
+        match &self {
+            &Op::Add { .. } => Opcode::Add,
+            &Op::Nor { .. } => Opcode::Nor,
+            &Op::Lw { .. } => Opcode::Lw,
+            &Op::Sw { .. } => Opcode::Sw,
+            &Op::Beq { .. } => Opcode::Beq,
+            &Op::Jalr { .. } => Opcode::Jalr,
+            &Op::Halt { .. } => Opcode::Halt,
+            &Op::NoOp { .. } => Opcode::NoOp,
+        }
     }
+}
 
-    #[test]
-    // Checks to see BITS_FOR_OFFSET >= log_2(RAM_SIZE).
-    fn enough_ram_bits() {
-        let req_bits_for_offset: u32 = (RAM_SIZE as f64).log2().ceil() as u32;
-        assert!(BITS_FOR_OFFSET <= req_bits_for_offset);
+#[derive(Debug, Eq, PartialEq)]
+pub enum Opcode {
+    Add = 0,
+    Nor = 1,
+    Lw = 2,
+    Sw = 3,
+    Beq = 4,
+    Jalr = 5,
+    Halt = 6,
+    NoOp = 7,
+}
+
+impl TryFrom<u8> for Opcode {
+    type Error = ();
+
+    fn try_from(b: u8) -> Result<Self, ()> {
+        match b {
+            0 => Ok(Opcode::Add),
+            1 => Ok(Opcode::Nor),
+            2 => Ok(Opcode::Lw),
+            3 => Ok(Opcode::Sw),
+            4 => Ok(Opcode::Beq),
+            5 => Ok(Opcode::Jalr),
+            6 => Ok(Opcode::Halt),
+            7 => Ok(Opcode::NoOp),
+            _ => Err(()),
+        }
     }
 }

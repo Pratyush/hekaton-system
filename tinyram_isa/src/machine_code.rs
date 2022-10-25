@@ -1,18 +1,12 @@
 use crate::instruction_set::*;
 
-// Define a canonical opcode for each operation
-impl From<&Op> for u32 {
-    fn from(op: &Op) -> u32 {
-        match op {
-            Op::Add { .. } => 0,
-            Op::Nor { .. } => 1,
-            Op::Lw { .. } => 2,
-            Op::Sw { .. } => 3,
-            Op::Beq { .. } => 4,
-            Op::Jalr { .. } => 5,
-            Op::Halt { .. } => 6,
-            Op::NoOp { .. } => 7,
-        }
+use bitfield::BitRange;
+
+pub(crate) fn mc_opcode(machine_code: Mc) -> Opcode {
+    let opcode_byte: u8 = machine_code.bit_range(OPCODE_BITLEN - 1, 0);
+    match Opcode::try_from(opcode_byte) {
+        Ok(oc) => oc,
+        Err(()) => panic!("invalid opcode provided: {opcode_byte}"),
     }
 }
 
@@ -31,114 +25,119 @@ impl Op {
 
     // Creates an Op out of machine code
     pub fn from_mc(machine_code: Mc) -> Self {
-        let op: u32 = (machine_code & 0b1111) as u32;
-        match op {
-            0 | 1 | 4 => Op::decode_rrr(machine_code),
-            5 => Op::decode_rr(machine_code),
-            2 | 3 => Op::decode_rro(machine_code),
-            6 | 7 => Op::decode_(machine_code),
-            _ => panic!("Invalid OpCode provided"),
+        use Opcode::*;
+
+        match mc_opcode(machine_code) {
+            Add | Nor | Beq => Op::decode_rrr(machine_code),
+            Jalr => Op::decode_rr(machine_code),
+            Lw | Sw => Op::decode_rrw(machine_code),
+            Halt => Op::Halt,
+            NoOp => Op::NoOp,
         }
     }
 
-    // Decodes instructions that take in 3 registers
-    // Nor, Add, Beq
-    fn decode_rrr(machine_code: Mc) -> Self {
-        let mut mc = machine_code;
-        let op = mc & (1 << 4) - 1;
-        mc -= op;
-        let mut var3 = mc & (1 << 4 + BITS_FOR_REGS) - 1;
-        var3 = var3 >> 4;
-        mc -= var3;
-        let mut var2 = mc & (1 << 4 + 2 * BITS_FOR_REGS) - 1;
-        var2 = var2 >> 4 + BITS_FOR_REGS;
-        mc -= var2;
-        let mut var1 = mc & (1 << 4 + 3 * BITS_FOR_REGS) - 1;
-        var1 = var1 >> 4 + 2 * BITS_FOR_REGS;
-        match op {
-            0 => Op::Add {
-                src1: var1 as RegIdx,
-                src2: var2 as RegIdx,
-                dest: var3 as RegIdx,
+    // Decodes instructions that take in 3 registers, i.e., Nor, Add, and Beq
+    fn decode_rrr(mc: Mc) -> Self {
+        let mut cur_bit_idx = 0;
+
+        // Structure of an RRR instruction is
+        // 000...0  reg1  reg2  reg3  opcode
+        // <-- MSB                   LSB -->
+
+        let opcode = mc_opcode(mc);
+        cur_bit_idx += OPCODE_BITLEN;
+
+        let reg3 = mc.bit_range(cur_bit_idx + REGIDX_BITLEN - 1, cur_bit_idx);
+        cur_bit_idx += REGIDX_BITLEN;
+
+        let reg2 = mc.bit_range(cur_bit_idx + REGIDX_BITLEN - 1, cur_bit_idx);
+        cur_bit_idx += REGIDX_BITLEN;
+
+        let reg1 = mc.bit_range(cur_bit_idx + REGIDX_BITLEN - 1, cur_bit_idx);
+
+        match opcode {
+            Opcode::Add => Op::Add {
+                src1: reg1,
+                src2: reg2,
+                dest: reg3,
             },
-            1 => Op::Nor {
-                src1: var1 as RegIdx,
-                src2: var2 as RegIdx,
-                dest: var3 as RegIdx,
+            Opcode::Nor => Op::Nor {
+                src1: reg1,
+                src2: reg2,
+                dest: reg3,
             },
-            4 => Op::Beq {
-                reg1: var1 as RegIdx,
-                reg2: var2 as RegIdx,
-                target: var3 as RegIdx,
+            Opcode::Beq => Op::Beq {
+                reg1,
+                reg2,
+                target: reg3,
             },
-            _ => panic!("Invalid OpCode"),
+            _ => panic!("decode_rrr got an opcode {:?}", opcode),
         }
     }
 
     // Decodes instructions that take in 2 registers
     // Jalr
-    fn decode_rr(machine_code: Mc) -> Self {
-        let mut mc = machine_code;
-        let op = mc & (1 << 4) - 1;
-        mc -= op;
-        let mut var2 = mc & (1 << 4 + BITS_FOR_REGS) - 1;
-        mc -= var2;
-        var2 = var2 >> 4;
-        let mut var1 = mc & (1 << 4 + 2 * BITS_FOR_REGS) - 1;
-        var1 = var1 >> 4 + BITS_FOR_REGS;
-        match op {
-            5 => Op::Jalr {
-                target: var1 as RegIdx,
-                savepoint: var2 as RegIdx,
+    fn decode_rr(mc: Mc) -> Self {
+        let mut cur_bit_idx = 0;
+
+        // Structure of an RR instruction is
+        // 000...0  reg1  reg2  opcode
+        // <-- MSB              LSB -->
+
+        let opcode = mc_opcode(mc);
+        cur_bit_idx += OPCODE_BITLEN;
+
+        let reg2 = mc.bit_range(cur_bit_idx + REGIDX_BITLEN - 1, cur_bit_idx);
+        cur_bit_idx += REGIDX_BITLEN;
+
+        let reg1 = mc.bit_range(cur_bit_idx + REGIDX_BITLEN - 1, cur_bit_idx);
+
+        match opcode {
+            Opcode::Jalr => Op::Jalr {
+                target: reg1,
+                savepoint: reg2,
             },
-            _ => panic!("Invalid OpCode"),
+            _ => panic!("decode_rr got an opcode {:?}", opcode),
         }
     }
 
-    // Decodes instructions that take two registers and an offset
-    // Lw, Sw
-    fn decode_rro(machine_code: Mc) -> Self {
-        let mut mc = machine_code;
-        let op = mc & (1 << 4) - 1;
-        mc -= op;
-        let mut var3 = mc & (1 << 4 + BITS_FOR_OFFSET) - 1;
-        mc -= var3;
-        var3 = var3 >> 4;
-        let mut var2 = mc & (1 << 4 + BITS_FOR_OFFSET + BITS_FOR_REGS) - 1;
-        var2 = var2 >> 4 + BITS_FOR_OFFSET;
-        mc -= var2;
-        let mut var1 = mc & (1 << 4 + BITS_FOR_OFFSET + 2 * BITS_FOR_REGS) - 1;
-        var1 = var1 >> 4 + BITS_FOR_OFFSET + BITS_FOR_REGS;
-        match op {
-            2 => Op::Lw {
-                dest: var1 as RegIdx,
-                base: var2 as RegIdx,
-                offset: var3 as Word,
-            },
-            3 => Op::Sw {
-                dest: var1 as RegIdx,
-                base: var2 as RegIdx,
-                offset: var3 as Word,
-            },
-            _ => panic!("Invalid OpCode"),
-        }
-    }
+    // Decodes instructions that take two registers and a word, i.e., Lw, and Sw
+    fn decode_rrw(mc: Mc) -> Self {
+        let mut cur_bit_idx = 0;
 
-    // Decodes instructions that take in no parameters
-    // Halt, No-Op
-    fn decode_(machine_code: Mc) -> Self {
-        if machine_code == 6 {
-            return Op::Halt;
-        } else if machine_code == 7 {
-            return Op::NoOp;
-        } else {
-            panic!("Empty space in Halt/NoOp operation is being used");
+        // Structure of an RRR instruction is
+        // 000...0  reg1  reg2  word  opcode
+        // <-- MSB                   LSB -->
+
+        let opcode = mc_opcode(mc);
+        cur_bit_idx += OPCODE_BITLEN;
+
+        let word = mc.bit_range(cur_bit_idx + WORD_BITLEN - 1, cur_bit_idx);
+        cur_bit_idx += WORD_BITLEN;
+
+        let reg2 = mc.bit_range(cur_bit_idx + REGIDX_BITLEN - 1, cur_bit_idx);
+        cur_bit_idx += REGIDX_BITLEN;
+
+        let reg1 = mc.bit_range(cur_bit_idx + REGIDX_BITLEN - 1, cur_bit_idx);
+
+        match opcode {
+            Opcode::Lw => Op::Lw {
+                dest: reg1,
+                base: reg2,
+                offset: word,
+            },
+            Opcode::Sw => Op::Sw {
+                dest: reg1,
+                base: reg2,
+                offset: word,
+            },
+            _ => panic!("decode_rrw got an opcode {:?}", opcode),
         }
     }
 
     // Converts our operation to machine code
     pub fn to_mc(&self) -> Mc {
-        let opcode: u32 = self.into();
+        let opcode: u32 = self.opcode() as u32;
         return match *self {
             Op::Add { src1, src2, dest } => Op::encode_rrr(src1, src2, dest, opcode),
             Op::Nor { src1, src2, dest } => Op::encode_rrr(src1, src2, dest, opcode),
@@ -160,8 +159,8 @@ impl Op {
 
         let mut mc = op as Mc;
         mc += (reg3 << 4) as Mc;
-        mc += (reg2 << 4 + BITS_FOR_REGS) as Mc;
-        mc += (reg1 << 4 + 2 * BITS_FOR_REGS) as Mc;
+        mc += (reg2 << 4 + REGIDX_BITLEN) as Mc;
+        mc += (reg1 << 4 + 2 * REGIDX_BITLEN) as Mc;
         return mc;
     }
 
@@ -172,8 +171,8 @@ impl Op {
         Op::regidx_valid(reg2);
 
         let mut mc = op as Mc;
-        mc += (reg2 << 4) as Mc;
-        mc += (reg1 << 4 + BITS_FOR_REGS) as Mc;
+        mc += (reg2 as Mc) << 4;
+        mc += (reg1 as Mc) << 4 + REGIDX_BITLEN;
         return mc;
     }
 
@@ -186,8 +185,8 @@ impl Op {
 
         let mut mc = op as Mc;
         mc += (offset << 4) as Mc;
-        mc += (reg2 << 4 + BITS_FOR_OFFSET) as Mc;
-        mc += (reg1 << 4 + BITS_FOR_OFFSET + BITS_FOR_REGS) as Mc;
+        mc += (reg2 as Mc) << 4 + WORD_BITLEN;
+        mc += (reg1 as Mc) << 4 + WORD_BITLEN + REGIDX_BITLEN;
         return mc;
     }
 
@@ -206,11 +205,7 @@ impl Op {
     }
 
     // Panics if a RAM offset overflows its allocated space in machine code
-    fn offset_valid(offset: Word) {
-        if offset >= RAM_SIZE {
-            panic!("Offset exceeds the number of words in our RAM");
-        }
-    }
+    fn offset_valid(_offset: Word) {}
 }
 
 #[cfg(test)]
@@ -262,7 +257,7 @@ mod tests {
     // Ensures that the machine code type has enough space for all instructions
     #[test]
     fn mc_overflow() {
-        assert!(Mc::MAX >= (1 << 4 + 3 * BITS_FOR_REGS) - 1);
-        assert!(Mc::MAX >= (1 << 4 + 2 * BITS_FOR_REGS + BITS_FOR_OFFSET) - 1);
+        assert!(Mc::MAX >= (1 << 4 + 3 * REGIDX_BITLEN) - 1);
+        assert!(Mc::MAX >= (1 << 4 + 2 * REGIDX_BITLEN + WORD_BITLEN) - 1);
     }
 }

@@ -7,3 +7,4 @@ edition = "2021"
 name = "assembler"
 
 [dependencies]
+bitfield = "0.14"
