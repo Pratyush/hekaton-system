@@ -1,6 +1,6 @@
 use crate::instruction_set::*;
 
-use bitfield::BitRange;
+use bitfield::{BitRange, BitRangeMut};
 
 pub(crate) fn mc_opcode(machine_code: Mc) -> Opcode {
     let opcode_byte: u8 = machine_code.bit_range(OPCODE_BITLEN - 1, 0);
@@ -159,8 +159,8 @@ impl Op {
         return match *self {
             Op::Add { src1, src2, dest } => Op::encode_rrr(src1, src2, dest, opcode),
             Op::Nor { src1, src2, dest } => Op::encode_rrr(src1, src2, dest, opcode),
-            Op::Lw { dest, base, offset } => Op::encode_rro(dest, base, offset, opcode),
-            Op::Sw { dest, base, offset } => Op::encode_rro(dest, base, offset, opcode),
+            Op::Lw { dest, base, offset } => Op::encode_rrw(dest, base, offset, opcode),
+            Op::Sw { dest, base, offset } => Op::encode_rrw(dest, base, offset, opcode),
             Op::Beq { reg1, reg2, target } => Op::encode_rrr(reg1, reg2, target, opcode),
             Op::Jalr { target, savepoint } => Op::encode_rr(target, savepoint, opcode),
             Op::Halt => Op::encode_(opcode),
@@ -174,11 +174,21 @@ impl Op {
         Op::regidx_valid(reg1);
         Op::regidx_valid(reg2);
         Op::regidx_valid(reg3);
+        
+        let mut cur_bit_idx = 0;
+        let mut mc:Mc = 0;
+        
+        mc.set_bit_range(cur_bit_idx + OPCODE_BITLEN - 1, cur_bit_idx, op);
+        cur_bit_idx += OPCODE_BITLEN;
 
-        let mut mc = op as Mc;
-        mc += (reg3 << 4) as Mc;
-        mc += (reg2 << 4 + REGIDX_BITLEN) as Mc;
-        mc += (reg1 << 4 + 2 * REGIDX_BITLEN) as Mc;
+        mc.set_bit_range(cur_bit_idx + REGIDX_BITLEN - 1, cur_bit_idx, reg3);
+        cur_bit_idx += REGIDX_BITLEN;
+
+        mc.set_bit_range(cur_bit_idx + REGIDX_BITLEN - 1, cur_bit_idx, reg2);
+        cur_bit_idx += REGIDX_BITLEN;
+
+        mc.set_bit_range(cur_bit_idx + REGIDX_BITLEN - 1, cur_bit_idx, reg1);
+
         return mc;
     }
 
@@ -188,22 +198,38 @@ impl Op {
         Op::regidx_valid(reg1);
         Op::regidx_valid(reg2);
 
-        let mut mc = op as Mc;
-        mc += (reg2 as Mc) << 4;
-        mc += (reg1 as Mc) << 4 + REGIDX_BITLEN;
+        let mut cur_bit_idx = 0;
+        let mut mc:Mc = 0;
+        
+        mc.set_bit_range(cur_bit_idx + OPCODE_BITLEN - 1, cur_bit_idx, op);
+        cur_bit_idx += OPCODE_BITLEN;
+
+        mc.set_bit_range(cur_bit_idx + REGIDX_BITLEN - 1, cur_bit_idx, reg2);
+        cur_bit_idx += REGIDX_BITLEN;
+
+        mc.set_bit_range(cur_bit_idx + REGIDX_BITLEN - 1, cur_bit_idx, reg1);
         return mc;
     }
 
-    // Encodes instructions that take two registers and an offset
+    // Encodes instructions that take two registers and a word
     // Lw, Sw
-    fn encode_rro(reg1: RegIdx, reg2: RegIdx, offset: u32, op: u32) -> Mc {
+    fn encode_rrw(reg1: RegIdx, reg2: RegIdx, offset: Word, op: u32) -> Mc {
         Op::regidx_valid(reg1);
         Op::regidx_valid(reg2);
 
-        let mut mc = op as Mc;
-        mc += (offset << 4) as Mc;
-        mc += (reg2 as Mc) << 4 + WORD_BITLEN;
-        mc += (reg1 as Mc) << 4 + WORD_BITLEN + REGIDX_BITLEN;
+        let mut cur_bit_idx = 0;
+        let mut mc:Mc = 0;
+
+        mc.set_bit_range(cur_bit_idx + OPCODE_BITLEN - 1, cur_bit_idx, op);
+        cur_bit_idx += OPCODE_BITLEN;
+
+        mc.set_bit_range(cur_bit_idx + WORD_BITLEN - 1, cur_bit_idx, offset);
+        cur_bit_idx += WORD_BITLEN;
+
+        mc.set_bit_range(cur_bit_idx + REGIDX_BITLEN - 1, cur_bit_idx, reg2);
+        cur_bit_idx += REGIDX_BITLEN;
+
+        mc.set_bit_range(cur_bit_idx + REGIDX_BITLEN - 1, cur_bit_idx, reg1);
         return mc;
     }
 
