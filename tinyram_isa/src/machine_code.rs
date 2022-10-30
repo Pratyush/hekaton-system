@@ -44,6 +44,11 @@ impl Op {
                 src2: imm_or_reg,
                 dest: reg1,
             },
+            Xor => Op::Xor {
+                src1: reg2,
+                src2: imm_or_reg,
+                dest: reg1,
+            },
             Cmpe => Op::Cmpe {
                 src1: reg2,
                 src2: imm_or_reg,
@@ -60,6 +65,7 @@ impl Op {
                 src: reg2,
                 dest: imm_or_reg,
             },
+            Jmp => Op::Jmp { target: imm_or_reg },
             Cjmp => Op::Cjmp { target: imm_or_reg },
             Answer => Op::Answer { src: imm_or_reg },
         }
@@ -110,10 +116,12 @@ impl Op {
         match *self {
             Op::Add { src1, src2, dest } => Op::encode(dest, src1, src2, opcode),
             Op::Or { src1, src2, dest } => Op::encode(dest, src1, src2, opcode),
+            Op::Xor { src1, src2, dest } => Op::encode(dest, src1, src2, opcode),
             Op::Not { src, dest } => Op::encode(dest, 0, src, opcode),
             Op::Loadw { src, dest } => Op::encode(dest, 0, src, opcode),
             Op::Storew { src, dest } => Op::encode(0, src, dest, opcode),
             Op::Cmpe { src1, src2 } => Op::encode(0, src1, src2, opcode),
+            Op::Jmp { target } => Op::encode(0, 0, target, opcode),
             Op::Cjmp { target } => Op::encode(0, 0, target, opcode),
             Op::Answer { src } => Op::encode(0, 0, src, opcode),
         }

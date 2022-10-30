@@ -8,19 +8,13 @@ type Registers = Vec<Word>;
 /// RAM is a sparse array
 type Ram = HashMap<Word, Word>;
 
-/// The type of a CPU memory op. It's either a load or a store
-enum MemOpKind {
-    Load,
-    Store,
-}
-
 /// An element of the CPU's execution trace
-#[derive(Copy, Clone, Eq, PartialEq)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 enum MachineStateTransition {
-    LoadRam(RamIdx),
-    StoreRam(RamIdx, Word),
-    StoreReg(RegIdx, Word),
-    StorePc(RamIdx),
+    RamLoad(RamIdx),
+    RamSet(RamIdx, Word),
+    RegSet(RegIdx, Word),
+    PcSet(RamIdx),
     Answer(RegIdx),
 }
 
@@ -84,5 +78,106 @@ fn run_program(program: &[Mc]) -> Vec<MachineStateTransition> {
         if let MachineStateTransition::Answer(..) = trace_item {
             return trace;
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::instruction_set::{ImmediateOrReg, Op};
+
+    // Test program that sums every multiple of 3 from 1 to 100. The output should be 1683.
+    #[test]
+    fn sum_skip3() {
+        // A simple Rust program we will translate to TinyRAM assembly
+        //        i is our index that ranges from 0 to 100
+        //      acc is our accumulated sum
+        // mul3_ctr is our mul-of-three counter
+        let mut i = 0;
+        let mut mul3_ctr = 0;
+        let mut acc = 0;
+        loop {
+            i += 1;
+            mul3_ctr += 1;
+            if i == 100 {
+                break;
+            } else if mul3_ctr == 3 {
+                acc += i;
+                mul3_ctr = 0;
+            }
+        }
+
+        // Here's the assembly code of the above program
+        //     reg0 -> i
+        //     reg1 -> acc
+        //     reg2 -> mul3_ctr
+        //
+        // addr          code
+        // ----  ------------------------
+        // 0x00  loop: add  reg0 reg0 1    ; incr i
+        // 0x01        add  reg2 reg2 1    ; incr mul3_ctr
+        // 0x02        cmpe reg0 100       ; if i == 100:
+        // 0x03        cjmp end            ;     jump to end
+        // 0x04        cmpe reg2 3         ; else if mul3_ctr == 3:
+        // 0x05        cjmp acc            ;     jump to acc
+        // 0x06        jmp  loop           ; else jump to beginning
+        //
+        // 0x07   acc: add reg1 reg1 reg0  ; Accumulate i into acc
+        // 0x08        xor reg2 reg2 reg2  ; Clear mul3_ctr
+        // 0x09        jmp loop            ; Jump back to the loop
+        //
+        // 0x0a   end: answer reg1         ; Return acc
+
+        let assembly = [
+            Op::Add {
+                dest: 0,
+                src1: 0,
+                src2: ImmediateOrReg::Immediate(1),
+            },
+            Op::Add {
+                dest: 2,
+                src1: 2,
+                src2: ImmediateOrReg::Immediate(1),
+            },
+            Op::Cmpe {
+                src1: 0,
+                src2: ImmediateOrReg::Immediate(100),
+            },
+            Op::Cjmp {
+                target: ImmediateOrReg::Immediate(0x0a),
+            },
+            Op::Cmpe {
+                src1: 2,
+                src2: ImmediateOrReg::Immediate(3),
+            },
+            Op::Cjmp {
+                target: ImmediateOrReg::Immediate(0x07),
+            },
+            Op::Jmp {
+                target: ImmediateOrReg::Immediate(0x00),
+            },
+            Op::Add {
+                dest: 1,
+                src1: 1,
+                src2: ImmediateOrReg::Reg(0),
+            },
+            Op::Xor {
+                dest: 2,
+                src1: 2,
+                src2: ImmediateOrReg::Reg(2),
+            },
+            Op::Jmp {
+                target: ImmediateOrReg::Immediate(0x00),
+            },
+            Op::Answer {
+                src: ImmediateOrReg::Reg(1),
+            },
+        ];
+
+        let machine_code: Vec<Mc> = assembly.iter().map(|op| op.to_mc()).collect();
+        let transcript = run_program(&machine_code);
+        let output = transcript[transcript.len() - 1];
+
+        assert_eq!(output, MachineStateTransition::Answer(acc));
     }
 }

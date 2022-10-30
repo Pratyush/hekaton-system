@@ -58,6 +58,13 @@ pub enum Op {
         dest: RegIdx,
     },
 
+    /// Sets `*dest = *src1 ⊕ *src2`
+    Xor {
+        src1: RegIdx,
+        src2: ImmediateOrReg,
+        dest: RegIdx,
+    },
+
     /// Sets `*dest = ~(*src1)`
     Not { src: ImmediateOrReg, dest: RegIdx },
 
@@ -69,6 +76,9 @@ pub enum Op {
 
     /// Sets `flag = (*src1 == *src2)`
     Cmpe { src1: RegIdx, src2: ImmediateOrReg },
+
+    /// Sets `pc = *target`
+    Jmp { target: ImmediateOrReg },
 
     /// If `flag` is set, sets `pc = *target`. Else does nothing.
     Cjmp { target: ImmediateOrReg },
@@ -82,10 +92,12 @@ impl Op {
         match &self {
             &Op::Add { .. } => Opcode::Add,
             &Op::Or { .. } => Opcode::Or,
+            &Op::Xor { .. } => Opcode::Xor,
             &Op::Not { .. } => Opcode::Not,
             &Op::Loadw { .. } => Opcode::Loadw,
             &Op::Storew { .. } => Opcode::Storew,
             &Op::Cmpe { .. } => Opcode::Cmpe,
+            &Op::Jmp { .. } => Opcode::Jmp,
             &Op::Cjmp { .. } => Opcode::Cjmp,
             &Op::Answer { .. } => Opcode::Answer,
         }
@@ -96,12 +108,14 @@ impl Op {
 pub enum Opcode {
     Add = 0,
     Or = 1,
-    Not = 2,
-    Loadw = 3,
-    Storew = 4,
-    Cmpe = 5,
-    Cjmp = 6,
-    Answer = 7,
+    Xor = 2,
+    Not = 3,
+    Loadw = 4,
+    Storew = 5,
+    Cmpe = 6,
+    Jmp = 7,
+    Cjmp = 8,
+    Answer = 9,
 }
 
 impl TryFrom<u8> for Opcode {
@@ -111,12 +125,14 @@ impl TryFrom<u8> for Opcode {
         match b {
             0 => Ok(Opcode::Add),
             1 => Ok(Opcode::Or),
-            2 => Ok(Opcode::Not),
-            3 => Ok(Opcode::Loadw),
-            4 => Ok(Opcode::Storew),
-            5 => Ok(Opcode::Cmpe),
-            6 => Ok(Opcode::Cjmp),
-            7 => Ok(Opcode::Answer),
+            2 => Ok(Opcode::Xor),
+            3 => Ok(Opcode::Not),
+            4 => Ok(Opcode::Loadw),
+            5 => Ok(Opcode::Storew),
+            6 => Ok(Opcode::Cmpe),
+            7 => Ok(Opcode::Jmp),
+            8 => Ok(Opcode::Cjmp),
+            9 => Ok(Opcode::Answer),
             _ => Err(()),
         }
     }
