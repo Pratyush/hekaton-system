@@ -21,7 +21,6 @@ enum MachineStateTransition {
     StoreRam(RamIdx, Word),
     StoreReg(RegIdx, Word),
     StorePc(RamIdx),
-    Nothing,
     Halt,
 }
 

@@ -12,55 +12,51 @@ pub enum Op {
         dest: RegIdx,
     },
 
-    /// Sets `*dest = ~(*src1, *src2)`
-    Nor {
+    /// Sets `*dest = *src1 | *src2`
+    Or {
         src1: RegIdx,
         src2: RegIdx,
         dest: RegIdx,
     },
 
+    /// Sets `*dest = ~(*src1)`
+    Not { src: RegIdx, dest: RegIdx },
+
     /// Sets `*dest = RAM[*base+offset]`
-    Lw {
+    Loadw {
         dest: RegIdx,
         base: RegIdx,
         offset: Word,
     },
 
     /// Sets `RAM[*base+offset] = *src`
-    Sw {
+    Storew {
         dest: RegIdx,
         base: RegIdx,
         offset: Word,
     },
 
-    /// If `*reg1 == *reg2`, sets `pc = *target`. Else, does nothing.
-    Beq {
-        reg1: RegIdx,
-        reg2: RegIdx,
-        target: RegIdx,
-    },
+    /// Sets `flag = (*reg1 == *reg2)`
+    Cmpe { reg1: RegIdx, reg2: RegIdx },
 
-    /// Sets `*savepoint = pc+1`, then sets `pc = *target`
-    Jalr { target: RegIdx, savepoint: RegIdx },
+    /// If `flag` is set, sets `pc = *target`. Else does nothing.
+    Cjmp { target: RegIdx },
 
     /// Stops the CPU
     Halt,
-
-    /// Does nothing
-    NoOp,
 }
 
 impl Op {
     pub(crate) fn opcode(&self) -> Opcode {
         match &self {
             &Op::Add { .. } => Opcode::Add,
-            &Op::Nor { .. } => Opcode::Nor,
-            &Op::Lw { .. } => Opcode::Lw,
-            &Op::Sw { .. } => Opcode::Sw,
-            &Op::Beq { .. } => Opcode::Beq,
-            &Op::Jalr { .. } => Opcode::Jalr,
+            &Op::Or { .. } => Opcode::Or,
+            &Op::Not { .. } => Opcode::Not,
+            &Op::Loadw { .. } => Opcode::Loadw,
+            &Op::Storew { .. } => Opcode::Storew,
+            &Op::Cmpe { .. } => Opcode::Cmpe,
+            &Op::Cjmp { .. } => Opcode::Cjmp,
             &Op::Halt { .. } => Opcode::Halt,
-            &Op::NoOp { .. } => Opcode::NoOp,
         }
     }
 }
@@ -68,13 +64,13 @@ impl Op {
 #[derive(Debug, Eq, PartialEq)]
 pub enum Opcode {
     Add = 0,
-    Nor = 1,
-    Lw = 2,
-    Sw = 3,
-    Beq = 4,
-    Jalr = 5,
-    Halt = 6,
-    NoOp = 7,
+    Or = 1,
+    Not = 2,
+    Loadw = 3,
+    Storew = 4,
+    Cmpe = 5,
+    Cjmp = 6,
+    Halt = 7,
 }
 
 impl TryFrom<u8> for Opcode {
@@ -83,13 +79,13 @@ impl TryFrom<u8> for Opcode {
     fn try_from(b: u8) -> Result<Self, ()> {
         match b {
             0 => Ok(Opcode::Add),
-            1 => Ok(Opcode::Nor),
-            2 => Ok(Opcode::Lw),
-            3 => Ok(Opcode::Sw),
-            4 => Ok(Opcode::Beq),
-            5 => Ok(Opcode::Jalr),
-            6 => Ok(Opcode::Halt),
-            7 => Ok(Opcode::NoOp),
+            1 => Ok(Opcode::Or),
+            2 => Ok(Opcode::Not),
+            3 => Ok(Opcode::Loadw),
+            4 => Ok(Opcode::Storew),
+            5 => Ok(Opcode::Cmpe),
+            6 => Ok(Opcode::Cjmp),
+            7 => Ok(Opcode::Halt),
             _ => Err(()),
         }
     }

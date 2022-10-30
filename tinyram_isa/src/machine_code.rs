@@ -32,11 +32,11 @@ impl Op {
         use Opcode::*;
 
         match mc_opcode(machine_code) {
-            Add | Nor | Beq => Op::decode_rrr(machine_code),
-            Jalr => Op::decode_rr(machine_code),
-            Lw | Sw => Op::decode_rrw(machine_code),
+            Add | Or => Op::decode_rrr(machine_code),
+            Cmpe | Not => Op::decode_rr(machine_code),
+            Cjmp => Op::decode_r(machine_code),
+            Loadw | Storew => Op::decode_rrw(machine_code),
             Halt => Op::Halt,
-            NoOp => Op::NoOp,
         }
     }
 
@@ -71,15 +71,10 @@ impl Op {
                 src2: reg2,
                 dest: reg3,
             },
-            Opcode::Nor => Op::Nor {
+            Opcode::Or => Op::Or {
                 src1: reg1,
                 src2: reg2,
                 dest: reg3,
-            },
-            Opcode::Beq => Op::Beq {
-                reg1,
-                reg2,
-                target: reg3,
             },
             _ => panic!("decode_rrr got an opcode {:?}", opcode),
         }
@@ -109,11 +104,37 @@ impl Op {
         assert_eq!(rest, 0);
 
         match opcode {
-            Opcode::Jalr => Op::Jalr {
-                target: reg1,
-                savepoint: reg2,
+            Opcode::Cmpe => Op::Cmpe { reg1, reg2 },
+            Opcode::Not => Op::Not {
+                src: reg1,
+                dest: reg2,
             },
             _ => panic!("decode_rr got an opcode {:?}", opcode),
+        }
+    }
+
+    // Decodes instructions that take in 1 register
+    fn decode_r(mc: Mc) -> Self {
+        let mut cur_bit_idx = 0;
+
+        // Structure of an RR instruction is
+        // 000...0  reg1  opcode
+        // <-- MSB        LSB -->
+
+        let opcode = mc_opcode(mc);
+        cur_bit_idx += OPCODE_BITLEN;
+
+        let reg1 = mc.bit_range(cur_bit_idx + REGIDX_BITLEN - 1, cur_bit_idx);
+        cur_bit_idx += REGIDX_BITLEN;
+
+        // Check that the rest of the instruction is all 0s. This isn't strictly necessary but it
+        // might help catch bugs early
+        let rest: Mc = mc.bit_range(MC_BITLEN - 1, cur_bit_idx);
+        assert_eq!(rest, 0);
+
+        match opcode {
+            Opcode::Cjmp => Op::Cjmp { target: reg1 },
+            _ => panic!("decode_r got an opcode {:?}", opcode),
         }
     }
 
@@ -143,12 +164,12 @@ impl Op {
         assert_eq!(rest, 0, "invalid left padding in instruction {mc:0x}");
 
         match opcode {
-            Opcode::Lw => Op::Lw {
+            Opcode::Loadw => Op::Loadw {
                 dest: reg1,
                 base: reg2,
                 offset: word,
             },
-            Opcode::Sw => Op::Sw {
+            Opcode::Storew => Op::Storew {
                 dest: reg1,
                 base: reg2,
                 offset: word,
@@ -162,13 +183,13 @@ impl Op {
         let opcode: u32 = self.opcode() as u32;
         return match *self {
             Op::Add { src1, src2, dest } => Op::encode_rrr(src1, src2, dest, opcode),
-            Op::Nor { src1, src2, dest } => Op::encode_rrr(src1, src2, dest, opcode),
-            Op::Lw { dest, base, offset } => Op::encode_rrw(dest, base, offset, opcode),
-            Op::Sw { dest, base, offset } => Op::encode_rrw(dest, base, offset, opcode),
-            Op::Beq { reg1, reg2, target } => Op::encode_rrr(reg1, reg2, target, opcode),
-            Op::Jalr { target, savepoint } => Op::encode_rr(target, savepoint, opcode),
+            Op::Or { src1, src2, dest } => Op::encode_rrr(src1, src2, dest, opcode),
+            Op::Not { src, dest } => Op::encode_rr(src, dest, opcode),
+            Op::Loadw { dest, base, offset } => Op::encode_rrw(dest, base, offset, opcode),
+            Op::Storew { dest, base, offset } => Op::encode_rrw(dest, base, offset, opcode),
+            Op::Cmpe { reg1, reg2 } => Op::encode_rr(reg1, reg2, opcode),
+            Op::Cjmp { target } => Op::encode_r(target, opcode),
             Op::Halt => Op::encode_(opcode),
-            Op::NoOp => Op::encode_(opcode),
         };
     }
 
@@ -212,6 +233,20 @@ impl Op {
         cur_bit_idx += REGIDX_BITLEN;
 
         mc.set_bit_range(cur_bit_idx + REGIDX_BITLEN - 1, cur_bit_idx, reg1);
+        return mc;
+    }
+
+    // Encodes instructions that take in 1 register
+    fn encode_r(reg: RegIdx, op: u32) -> Mc {
+        Op::regidx_valid(reg);
+
+        let mut cur_bit_idx = 0;
+        let mut mc: Mc = 0;
+
+        mc.set_bit_range(cur_bit_idx + OPCODE_BITLEN - 1, cur_bit_idx, op);
+        cur_bit_idx += OPCODE_BITLEN;
+
+        mc.set_bit_range(cur_bit_idx + REGIDX_BITLEN - 1, cur_bit_idx, reg);
         return mc;
     }
 
@@ -270,14 +305,12 @@ mod tests {
         for _ in 0..100 {
             // Make random test cases
             let test_cases = [
-                Op::NoOp,
                 Op::Halt,
-                Op::Beq {
+                Op::Cmpe {
                     reg1: gen_regidx(&mut rng),
                     reg2: gen_regidx(&mut rng),
-                    target: gen_regidx(&mut rng),
                 },
-                Op::Nor {
+                Op::Or {
                     src1: gen_regidx(&mut rng),
                     src2: gen_regidx(&mut rng),
                     dest: gen_regidx(&mut rng),
@@ -287,16 +320,19 @@ mod tests {
                     src2: gen_regidx(&mut rng),
                     dest: gen_regidx(&mut rng),
                 },
-                Op::Jalr {
-                    target: gen_regidx(&mut rng),
-                    savepoint: gen_regidx(&mut rng),
+                Op::Not {
+                    src: gen_regidx(&mut rng),
+                    dest: gen_regidx(&mut rng),
                 },
-                Op::Lw {
+                Op::Cjmp {
+                    target: gen_regidx(&mut rng),
+                },
+                Op::Loadw {
                     dest: gen_regidx(&mut rng),
                     base: gen_regidx(&mut rng),
                     offset: rng.gen::<Word>(),
                 },
-                Op::Sw {
+                Op::Storew {
                     dest: gen_regidx(&mut rng),
                     base: gen_regidx(&mut rng),
                     offset: rng.gen::<Word>(),
