@@ -1,6 +1,45 @@
 //! Defines the types used to represent instructions in our CPU
 
-use crate::{RegIdx, Word};
+use crate::{constants::NUM_REGS, RegIdx, Word};
+
+/// In TinyRAM, some instruction inputs are interpreted as either a register index or an immediate
+/// (i.e., a constant). This enum captures that functionality.
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum ImmediateOrReg {
+    Immediate(Word),
+    Reg(RegIdx),
+}
+
+impl ImmediateOrReg {
+    pub(crate) fn new(val: Word, is_immediate: bool) -> ImmediateOrReg {
+        match is_immediate {
+            true => ImmediateOrReg::Immediate(val),
+            false => {
+                if val > NUM_REGS {
+                    panic!("Cannot make an ImmediateOrReg::Reg out of the value {val}");
+                }
+                ImmediateOrReg::Reg(val as RegIdx)
+            }
+        }
+    }
+
+    /// Returns the contents of this enum as a word (i.e., that largest type that holds both a
+    /// `RegIdx` and a `Word`)
+    pub(crate) fn as_word(self) -> Word {
+        match self {
+            ImmediateOrReg::Immediate(w) => w,
+            ImmediateOrReg::Reg(r) => r as Word,
+        }
+    }
+
+    /// Returns whether this is an `Immediate`
+    pub(crate) fn is_immediate(&self) -> bool {
+        match self {
+            ImmediateOrReg::Immediate(..) => true,
+            ImmediateOrReg::Reg(..) => false,
+        }
+    }
+}
 
 /// A CPU instruction
 #[derive(Debug, Eq, PartialEq)]
@@ -8,42 +47,34 @@ pub enum Op {
     /// Sets `*dest = *src1 + *src2`
     Add {
         src1: RegIdx,
-        src2: RegIdx,
+        src2: ImmediateOrReg,
         dest: RegIdx,
     },
 
     /// Sets `*dest = *src1 | *src2`
     Or {
         src1: RegIdx,
-        src2: RegIdx,
+        src2: ImmediateOrReg,
         dest: RegIdx,
     },
 
     /// Sets `*dest = ~(*src1)`
-    Not { src: RegIdx, dest: RegIdx },
+    Not { src: ImmediateOrReg, dest: RegIdx },
 
-    /// Sets `*dest = RAM[*base+offset]`
-    Loadw {
-        dest: RegIdx,
-        base: RegIdx,
-        offset: Word,
-    },
+    /// Sets `*dest = RAM[*src]`
+    Loadw { src: ImmediateOrReg, dest: RegIdx },
 
-    /// Sets `RAM[*base+offset] = *src`
-    Storew {
-        dest: RegIdx,
-        base: RegIdx,
-        offset: Word,
-    },
+    /// Sets `RAM[*dest] = *src`
+    Storew { src: RegIdx, dest: ImmediateOrReg },
 
-    /// Sets `flag = (*reg1 == *reg2)`
-    Cmpe { reg1: RegIdx, reg2: RegIdx },
+    /// Sets `flag = (*src1 == *src2)`
+    Cmpe { src1: RegIdx, src2: ImmediateOrReg },
 
     /// If `flag` is set, sets `pc = *target`. Else does nothing.
-    Cjmp { target: RegIdx },
+    Cjmp { target: ImmediateOrReg },
 
-    /// Stops the CPU and returns *reg
-    Answer { reg: RegIdx },
+    /// Stops the CPU and returns *src
+    Answer { src: ImmediateOrReg },
 }
 
 impl Op {

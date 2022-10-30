@@ -10,11 +10,14 @@ fn main() {
     println!("This is the assembler binary!");
 
     let src1 = 1;
-    let src2 = 2;
+    let src2 = ImmediateOrReg::Reg(2);
     let dest = 3;
     let op1 = Op::Add { src1, src2, dest };
 
     let mc = op1.to_mc();
 
-    println!("reg {src1} + reg {src2} -> reg {dest} is represented as {mc:016x}");
+    println!(
+        "reg {:?} + {:?} -> reg {:?} is represented as {mc:016x}",
+        src1, src2, dest
+    );
 }
