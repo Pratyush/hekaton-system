@@ -1,4 +1,8 @@
-use crate::instruction_set::*;
+use crate::{
+    constants::{MC_BITLEN, NUM_REGS, OPCODE_BITLEN, REGIDX_BITLEN, WORD_BITLEN},
+    instruction_set::{Op, Opcode},
+    Mc, RegIdx, Word,
+};
 
 use bitfield::{BitRange, BitRangeMut};
 
@@ -6,7 +10,7 @@ pub(crate) fn mc_opcode(machine_code: Mc) -> Opcode {
     let opcode_byte: u8 = machine_code.bit_range(OPCODE_BITLEN - 1, 0);
     match Opcode::try_from(opcode_byte) {
         Ok(oc) => oc,
-        Err(()) => panic!("invalid opcode provided: {opcode_byte}"),
+        Err(()) => panic!("invalid opcode provided: {opcode_byte}, in {machine_code}"),
     }
 }
 
@@ -23,7 +27,7 @@ impl Op {
      *  For a var of type regIdx, our var is BITS_FOR_REGS bits long.
      */
 
-    // Creates an Op out of machine code
+    /// Creates an Op out of machine code. Panics if the instruction is invalid.
     pub fn from_mc(machine_code: Mc) -> Self {
         use Opcode::*;
 
@@ -136,7 +140,7 @@ impl Op {
         // Check that the rest of the instruction is all 0s. This isn't strictly necessary but it
         // might help catch bugs early
         let rest: Mc = mc.bit_range(MC_BITLEN - 1, cur_bit_idx);
-        assert_eq!(rest, 0);
+        assert_eq!(rest, 0, "invalid left padding in instruction {mc:0x}");
 
         match opcode {
             Opcode::Lw => Op::Lw {
@@ -174,10 +178,10 @@ impl Op {
         Op::regidx_valid(reg1);
         Op::regidx_valid(reg2);
         Op::regidx_valid(reg3);
-        
+
         let mut cur_bit_idx = 0;
-        let mut mc:Mc = 0;
-        
+        let mut mc: Mc = 0;
+
         mc.set_bit_range(cur_bit_idx + OPCODE_BITLEN - 1, cur_bit_idx, op);
         cur_bit_idx += OPCODE_BITLEN;
 
@@ -199,8 +203,8 @@ impl Op {
         Op::regidx_valid(reg2);
 
         let mut cur_bit_idx = 0;
-        let mut mc:Mc = 0;
-        
+        let mut mc: Mc = 0;
+
         mc.set_bit_range(cur_bit_idx + OPCODE_BITLEN - 1, cur_bit_idx, op);
         cur_bit_idx += OPCODE_BITLEN;
 
@@ -218,7 +222,7 @@ impl Op {
         Op::regidx_valid(reg2);
 
         let mut cur_bit_idx = 0;
-        let mut mc:Mc = 0;
+        let mut mc: Mc = 0;
 
         mc.set_bit_range(cur_bit_idx + OPCODE_BITLEN - 1, cur_bit_idx, op);
         cur_bit_idx += OPCODE_BITLEN;

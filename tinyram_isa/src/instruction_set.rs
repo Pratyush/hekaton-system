@@ -1,22 +1,6 @@
 //! Defines the types used to represent instructions in our CPU
 
-/// An index to a register
-pub(crate) type RegIdx = Word;
-// Maximum number of registers in our arch
-pub(crate) const NUM_REGS: u32 = 1 << REGIDX_BITLEN;
-pub(crate) const REGIDX_BITLEN: usize = 6;
-
-// Maximum number of opcodes in our ISA
-pub(crate) const NUM_OPCODES: u32 = 1 << OPCODE_BITLEN;
-pub(crate) const OPCODE_BITLEN: usize = 4;
-
-// Machine Code Type
-pub(crate) type Mc = u64;
-pub(crate) const MC_BITLEN: usize = core::mem::size_of::<Mc>() * 8;
-
-/// The size of the slots in our CPU's register
-pub(crate) type Word = u32;
-pub(crate) const WORD_BITLEN: usize = core::mem::size_of::<Word>() * 8;
+use crate::{RegIdx, Word};
 
 /// A CPU instruction
 #[derive(Debug, Eq, PartialEq)]
