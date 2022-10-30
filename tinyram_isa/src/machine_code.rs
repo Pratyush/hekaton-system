@@ -34,13 +34,12 @@ impl Op {
         match mc_opcode(machine_code) {
             Add | Or => Op::decode_rrr(machine_code),
             Cmpe | Not => Op::decode_rr(machine_code),
-            Cjmp => Op::decode_r(machine_code),
+            Cjmp | Answer => Op::decode_r(machine_code),
             Loadw | Storew => Op::decode_rrw(machine_code),
-            Halt => Op::Halt,
         }
     }
 
-    // Decodes instructions that take in 3 registers, i.e., Nor, Add, and Beq
+    // Decodes instructions that take in 3 registers
     fn decode_rrr(mc: Mc) -> Self {
         let mut cur_bit_idx = 0;
 
@@ -81,7 +80,6 @@ impl Op {
     }
 
     // Decodes instructions that take in 2 registers
-    // Jalr
     fn decode_rr(mc: Mc) -> Self {
         let mut cur_bit_idx = 0;
 
@@ -124,7 +122,7 @@ impl Op {
         let opcode = mc_opcode(mc);
         cur_bit_idx += OPCODE_BITLEN;
 
-        let reg1 = mc.bit_range(cur_bit_idx + REGIDX_BITLEN - 1, cur_bit_idx);
+        let reg = mc.bit_range(cur_bit_idx + REGIDX_BITLEN - 1, cur_bit_idx);
         cur_bit_idx += REGIDX_BITLEN;
 
         // Check that the rest of the instruction is all 0s. This isn't strictly necessary but it
@@ -133,12 +131,13 @@ impl Op {
         assert_eq!(rest, 0);
 
         match opcode {
-            Opcode::Cjmp => Op::Cjmp { target: reg1 },
+            Opcode::Cjmp => Op::Cjmp { target: reg },
+            Opcode::Answer => Op::Answer { reg },
             _ => panic!("decode_r got an opcode {:?}", opcode),
         }
     }
 
-    // Decodes instructions that take two registers and a word, i.e., Lw, and Sw
+    // Decodes instructions that take two registers and a word
     fn decode_rrw(mc: Mc) -> Self {
         let mut cur_bit_idx = 0;
 
@@ -189,12 +188,11 @@ impl Op {
             Op::Storew { dest, base, offset } => Op::encode_rrw(dest, base, offset, opcode),
             Op::Cmpe { reg1, reg2 } => Op::encode_rr(reg1, reg2, opcode),
             Op::Cjmp { target } => Op::encode_r(target, opcode),
-            Op::Halt => Op::encode_(opcode),
+            Op::Answer { reg } => Op::encode_r(reg, opcode),
         };
     }
 
     // Encodes instructions that take in 3 registers
-    // Nor, Add, Beq
     fn encode_rrr(reg1: RegIdx, reg2: RegIdx, reg3: RegIdx, op: u32) -> Mc {
         Op::regidx_valid(reg1);
         Op::regidx_valid(reg2);
@@ -218,7 +216,6 @@ impl Op {
     }
 
     // Encodes instructions that take in 2 registers
-    // Jalr
     fn encode_rr(reg1: RegIdx, reg2: RegIdx, op: u32) -> Mc {
         Op::regidx_valid(reg1);
         Op::regidx_valid(reg2);
@@ -251,7 +248,6 @@ impl Op {
     }
 
     // Encodes instructions that take two registers and a word
-    // Lw, Sw
     fn encode_rrw(reg1: RegIdx, reg2: RegIdx, offset: Word, op: u32) -> Mc {
         Op::regidx_valid(reg1);
         Op::regidx_valid(reg2);
@@ -270,12 +266,6 @@ impl Op {
 
         mc.set_bit_range(cur_bit_idx + REGIDX_BITLEN - 1, cur_bit_idx, reg1);
         return mc;
-    }
-
-    // Encodes instructions that take in no parameters
-    // Halt, No-Op
-    fn encode_(op: u32) -> Mc {
-        return op as Mc;
     }
 
     // Panics if a Register Index overflows its allocated space in machine code
@@ -305,7 +295,9 @@ mod tests {
         for _ in 0..100 {
             // Make random test cases
             let test_cases = [
-                Op::Halt,
+                Op::Answer {
+                    reg: gen_regidx(&mut rng),
+                },
                 Op::Cmpe {
                     reg1: gen_regidx(&mut rng),
                     reg2: gen_regidx(&mut rng),

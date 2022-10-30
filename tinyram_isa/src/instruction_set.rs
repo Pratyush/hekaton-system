@@ -42,8 +42,8 @@ pub enum Op {
     /// If `flag` is set, sets `pc = *target`. Else does nothing.
     Cjmp { target: RegIdx },
 
-    /// Stops the CPU
-    Halt,
+    /// Stops the CPU and returns *reg
+    Answer { reg: RegIdx },
 }
 
 impl Op {
@@ -56,7 +56,7 @@ impl Op {
             &Op::Storew { .. } => Opcode::Storew,
             &Op::Cmpe { .. } => Opcode::Cmpe,
             &Op::Cjmp { .. } => Opcode::Cjmp,
-            &Op::Halt { .. } => Opcode::Halt,
+            &Op::Answer { .. } => Opcode::Answer,
         }
     }
 }
@@ -70,7 +70,7 @@ pub enum Opcode {
     Storew = 4,
     Cmpe = 5,
     Cjmp = 6,
-    Halt = 7,
+    Answer = 7,
 }
 
 impl TryFrom<u8> for Opcode {
@@ -85,7 +85,7 @@ impl TryFrom<u8> for Opcode {
             4 => Ok(Opcode::Storew),
             5 => Ok(Opcode::Cmpe),
             6 => Ok(Opcode::Cjmp),
-            7 => Ok(Opcode::Halt),
+            7 => Ok(Opcode::Answer),
             _ => Err(()),
         }
     }
