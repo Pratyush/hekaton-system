@@ -13,7 +13,16 @@ pub trait Word:
     + BitXor<Output = Self>
     + BitAnd<Output = Self>
 {
+    type Signed: Eq + Ord + Copy;
     const BIT_SIZE: u32;
+    const MAX: Self;
+
+    /// Convert `self` to a `BIT_SIZE`-bit signed integer.
+    fn to_signed(self) -> Self::Signed;
+
+    /// Returns `Some(self + 1)` if `self != Self::MAX`.
+    /// Returns `None` otherwise.
+    fn checked_increment(self) -> Option<Self>;
 
     /// Computes the sum of `self` and `other`, and returns the carry bit (if any).
     fn carrying_add(self, other: Self) -> (Self, bool);
@@ -52,9 +61,19 @@ pub trait Word:
 }
 
 macro_rules! impl_word {
-    ($word: ty, $double_word: ty, $bit_size: expr) => {
+    ($word: ty, $double_word: ty, $signed: ty, $double_signed: ty, $bit_size: expr) => {
         impl Word for $word {
+            type Signed = $signed;
             const BIT_SIZE: u32 = $bit_size;
+            const MAX: Self = <$word>::MAX;
+
+            fn to_signed(self) -> Self::Signed {
+                self as Self::Signed
+            }
+
+            fn checked_increment(self) -> Option<Self> {
+                self.checked_add(1)
+            }
 
             fn carrying_add(self, other: Self) -> (Self, bool) {
                 let result = self as $double_word + other as $double_word;
@@ -77,7 +96,7 @@ macro_rules! impl_word {
             }
 
             fn signed_mul_high(self, other: Self) -> (Self, bool) {
-                let result = ((self as $double_word) as i128) * ((other as $double_word) as i128);
+                let result: $double_signed = (self as $double_signed) * (other as $double_signed);
                 ((result >> $bit_size) as Self, (result >> $bit_size) != 0)
             }
 
@@ -110,7 +129,7 @@ macro_rules! impl_word {
     };
 }
 
-impl_word!(u8, u16, 8);
-impl_word!(u16, u32, 16);
-impl_word!(u32, u64, 32);
-impl_word!(u64, u128, 64);
+impl_word!(u8, u16, i8, i16, 8);
+impl_word!(u16, u32, i16, i32, 16);
+impl_word!(u32, u64, i32, i64, 32);
+impl_word!(u64, u128, i64, i128, 64);

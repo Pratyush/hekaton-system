@@ -136,13 +136,16 @@ pub enum Inst<W: Word> {
 }
 
 impl<W: Word> Inst<W> {
-    pub fn execute<const NUM_REGS: usize>(
+    /// Executes the given instruction. without necessarily updating the program counter.
+    /// This method only updates the program counter if `self` is one of `Inst::Jmp`, `Inst::CJmp`, or `Inst::CNJmp`.
+    fn execute<const NUM_REGS: usize>(
         &self,
         cpu_state: &mut CPUState<NUM_REGS, W>,
         memory: &mut DataMemory,
         program_memory: &mut ProgramMemory<W>,
     ) {
         match self {
+            // Arithmetic instructions
             Inst::And { in1, in2, out } => {
                 let in1 = in1.value(&cpu_state.registers);
                 let in2 = in2.value(&cpu_state.registers);
@@ -225,7 +228,78 @@ impl<W: Word> Inst<W> {
                 cpu_state.registers[out.0 as usize] = result;
                 cpu_state.condition_flag = flag;
             }
+            // Comparison instructions
+            Inst::CmpE { in1, in2 } => {
+                let in1 = in1.value(&cpu_state.registers);
+                let in2 = in2.value(&cpu_state.registers);
+                cpu_state.condition_flag = in1 == in2;
+            }
+            Inst::CmpA { in1, in2 } => {
+                let in1 = in1.value(&cpu_state.registers);
+                let in2 = in2.value(&cpu_state.registers);
+                cpu_state.condition_flag = in1 > in2;
+            }
+            Inst::CmpAE { in1, in2 } => {
+                let in1 = in1.value(&cpu_state.registers);
+                let in2 = in2.value(&cpu_state.registers);
+                cpu_state.condition_flag = in1 >= in2;
+            }
+            Inst::CmpG { in1, in2 } => {
+                let in1 = in1.value(&cpu_state.registers).to_signed();
+                let in2 = in2.value(&cpu_state.registers).to_signed();
+                cpu_state.condition_flag = in1 > in2;
+            }
+            Inst::CmpGE { in1, in2 } => {
+                let in1 = in1.value(&cpu_state.registers).to_signed();
+                let in2 = in2.value(&cpu_state.registers).to_signed();
+                cpu_state.condition_flag = in1 >= in2;
+            }
+            // Move instructions
+            Inst::Mov { in1, out } => {
+                let in1 = in1.value(&cpu_state.registers);
+                cpu_state.registers[out.0 as usize] = in1;
+            }
+            Inst::CMov { in1, out } => {
+                let in1 = in1.value(&cpu_state.registers);
+                if cpu_state.condition_flag {
+                    cpu_state.registers[out.0 as usize] = in1;
+                }
+            }
+            // Jump instructions
+            Inst::Jmp { in1 } => {
+                let in1 = in1.value(&cpu_state.registers);
+                cpu_state.program_counter = in1;
+            }
+            Inst::CJmp { in1 } => {
+                if cpu_state.condition_flag {
+                    let in1 = in1.value(&cpu_state.registers);
+                    cpu_state.program_counter = in1;
+                }
+            }
+            Inst::CNJmp { in1 } => {
+                if !cpu_state.condition_flag {
+                    let in1 = in1.value(&cpu_state.registers);
+                    cpu_state.program_counter = in1;
+                }
+            }
             _ => todo!(),
+        }
+    }
+
+    /// Executes the given instruction, and updates the program counter.
+    pub fn execute_and_update_pc<const NUM_REGS: usize>(
+        &mut self,
+        cpu_state: &mut CPUState<NUM_REGS, W>,
+        memory: &mut DataMemory,
+        program_memory: &mut ProgramMemory<W>,
+    ) {
+        let old_pc = cpu_state.program_counter;
+        self.execute(cpu_state, memory, program_memory);
+        if cpu_state.program_counter == old_pc {
+            cpu_state
+                .program_counter
+                .checked_increment()
+                .expect("Program counter overflow");
         }
     }
 }
