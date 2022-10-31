@@ -1,5 +1,5 @@
 [package]
-name = "tinyram_isa"
+name = "tinyram-isa"
 version = "0.1.0"
 edition = "2021"
 
