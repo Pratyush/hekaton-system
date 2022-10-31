@@ -36,7 +36,7 @@ mod test {
         _loop:   not r12, r0\n\
         jmp _3lite // hello world \n\n   \
         cmpe r12, 1337\n\
-        xor r1, r3, _loop\n\
+        xor r1, r3, _loop\
         ";
         let sample_parsing = TinyRamParser::parse(Rule::file, sample_file).unwrap();
         println!("program parse == {:?}", sample_parsing);

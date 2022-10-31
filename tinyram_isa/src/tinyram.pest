@@ -46,11 +46,10 @@ comment = ${ "//" ~ (!(NEWLINE | EOI) ~ ANY)* }
 
 // A line is a label, followed by an optional instruction, followed by an optional comment
 any_instr = { i_instr | ir_instr | ri_instr | rri_instr }
-full_instr = { WHITESPACE* ~ (label ~ ":")? ~ any_instr }
+label_and_colon = @{ label ~ ":" }
+full_instr = { WHITESPACE* ~ label_and_colon? ~ any_instr }
 line = { full_instr? ~ comment? }
 
 // A file is made up of newline-delimited lines
-line_plus_newlines = { line ~ NEWLINE+ }
-line_at_end = { line? ~ EOI }
-lines = { (line_plus_newlines* ~ EOI) | line_at_end }
-file = { SOI ~ header ~ NEWLINE* ~ lines }
+lines = { NEWLINE+ ~ line }
+file = { SOI ~ header ~ lines* ~ EOI }
