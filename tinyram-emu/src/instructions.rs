@@ -190,11 +190,41 @@ impl<W: Word> Inst<W> {
                 cpu_state.registers[out.0 as usize] = result;
                 cpu_state.condition_flag = overflow;
             }
-            Inst::SMulH { in1, in2, out } => {}
-            Inst::UDiv { in1, in2, out } => {}
-            Inst::UMod { in1, in2, out } => {}
-            Inst::Shl { in1, in2, out } => {}
-            Inst::Shr { in1, in2, out } => {}
+            Inst::SMulH { in1, in2, out } => {
+                let in1 = in1.value(&cpu_state.registers);
+                let in2 = in2.value(&cpu_state.registers);
+                let (result, overflow) = in1.signed_mul_high(in2);
+                cpu_state.registers[out.0 as usize] = result;
+                cpu_state.condition_flag = overflow;
+            }
+            Inst::UDiv { in1, in2, out } => {
+                let in1 = in1.value(&cpu_state.registers);
+                let in2 = in2.value(&cpu_state.registers);
+                let (result, overflow) = in1.checked_div(in2);
+                cpu_state.registers[out.0 as usize] = result;
+                cpu_state.condition_flag = overflow;
+            }
+            Inst::UMod { in1, in2, out } => {
+                let in1 = in1.value(&cpu_state.registers);
+                let in2 = in2.value(&cpu_state.registers);
+                let (result, overflow) = in1.checked_rem(in2);
+                cpu_state.registers[out.0 as usize] = result;
+                cpu_state.condition_flag = overflow;
+            }
+            Inst::Shl { in1, in2, out } => {
+                let in1 = in1.value(&cpu_state.registers);
+                let in2 = in2.value(&cpu_state.registers);
+                let (result, overflow) = in1.shl(in2);
+                cpu_state.registers[out.0 as usize] = result;
+                cpu_state.condition_flag = overflow;
+            }
+            Inst::Shr { in1, in2, out } => {
+                let in1 = in1.value(&cpu_state.registers);
+                let in2 = in2.value(&cpu_state.registers);
+                let (result, flag) = in1.shr(in2);
+                cpu_state.registers[out.0 as usize] = result;
+                cpu_state.condition_flag = flag;
+            }
             _ => todo!(),
         }
     }
