@@ -1,4 +1,4 @@
-use crate::{word::Word, instructions::Inst};
+use crate::{instructions::Inst, word::Word};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DataMemory(Vec<u8>);

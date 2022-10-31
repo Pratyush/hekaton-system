@@ -174,10 +174,10 @@ impl Op {
         Op::regidx_valid(reg1);
         Op::regidx_valid(reg2);
         Op::regidx_valid(reg3);
-        
+
         let mut cur_bit_idx = 0;
-        let mut mc:Mc = 0;
-        
+        let mut mc: Mc = 0;
+
         mc.set_bit_range(cur_bit_idx + OPCODE_BITLEN - 1, cur_bit_idx, op);
         cur_bit_idx += OPCODE_BITLEN;
 
@@ -199,8 +199,8 @@ impl Op {
         Op::regidx_valid(reg2);
 
         let mut cur_bit_idx = 0;
-        let mut mc:Mc = 0;
-        
+        let mut mc: Mc = 0;
+
         mc.set_bit_range(cur_bit_idx + OPCODE_BITLEN - 1, cur_bit_idx, op);
         cur_bit_idx += OPCODE_BITLEN;
 
@@ -218,7 +218,7 @@ impl Op {
         Op::regidx_valid(reg2);
 
         let mut cur_bit_idx = 0;
-        let mut mc:Mc = 0;
+        let mut mc: Mc = 0;
 
         mc.set_bit_range(cur_bit_idx + OPCODE_BITLEN - 1, cur_bit_idx, op);
         cur_bit_idx += OPCODE_BITLEN;
