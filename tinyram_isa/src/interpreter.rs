@@ -1,21 +1,21 @@
 use std::collections::HashMap;
-
-use crate::{constants::NUM_REGS, Mc, RamIdx, RegIdx, Word};
+use crate::{constants::{NUM_REGS, MC_BITLEN, WORD_BITLEN}, Mc, RamIdx, RegIdx, Word};
+use bitfield::BitRange;
 
 /// The set of all `NUM_REGS` many registers
 type Registers = Vec<Word>;
 
 /// RAM is a sparse array
-type Ram = HashMap<Word, Word>;
+type Ram = HashMap<RamIdx, Word>;
 
 /// An element of the CPU's execution trace
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 enum MachineStateTransition {
-    RamLoad(RamIdx),
+    FlagSet(bool),
     RamSet(RamIdx, Word),
     RegSet(RegIdx, Word),
     PcSet(RamIdx),
-    Answer(RegIdx),
+    Answer(Word),
 }
 
 #[derive(Default)]
@@ -35,14 +35,48 @@ impl MachineState {
     /// `MachineStateTransition::StorePc`, then this will also increment `pc` by `MC_BITLEN /
     /// WORD_BITLEN` (e.g., by 2 when words are `u32` and instructions are `u64`)
     fn apply_transition(&mut self, t: &MachineStateTransition) {
-        unimplemented!()
+        match *t{
+            MachineStateTransition::FlagSet(flag) => {
+                self.flag = flag;
+                self.inc_pc();
+            },
+            MachineStateTransition::RamSet(RamIdx, Word) => {
+                self.ram.insert(RamIdx,Word);
+                self.inc_pc();
+            },
+            MachineStateTransition::RegSet(RegIdx, Word) => {
+                self.regs[RegIdx as usize]=Word;
+                self.inc_pc();
+            },
+            MachineStateTransition::PcSet(RamIdx) => {
+                self.pc = *self.ram.get(&RamIdx).unwrap() as RamIdx;
+            },
+            MachineStateTransition::Answer(Word) => (),
+        }
+    }
+
+    fn inc_pc(&mut self) {
+        self.pc = self.pc + (MC_BITLEN as RamIdx)/(WORD_BITLEN as RamIdx);
     }
 
     /// Creates a state where the `pc` is 0, `regs` are 0, and `ram` is initialized with the given
-    /// program. Each two-word machine code instruction is written in big-endian order to the
+    /// program. Each multi-word machine code instruction is written in big-endian order to the
     /// beginning of the RAM.
     fn new(program: &[Mc]) -> Self {
-        unimplemented!()
+        let mut ram:HashMap<RamIdx, Word> = HashMap::new();
+        let mut ramIdx:RamIdx = 0;
+        let words_per_mc:RamIdx = (MC_BITLEN as RamIdx)/(WORD_BITLEN as RamIdx);
+
+        // Places machine code into RAM, splitting the machine code into words
+        for mc in program.iter() {
+            for i in 0..words_per_mc {
+                let word = mc.bit_range(i as usize*MC_BITLEN,i as usize*(MC_BITLEN+1)-1);
+                ram.insert(ramIdx, word);
+                ramIdx=ramIdx+1;
+            }
+        }
+
+        return MachineState{pc: 0, flag: false, regs: vec![0, NUM_REGS], ram};
     }
 }
 
