@@ -1,6 +1,8 @@
 use std::collections::HashMap;
-use crate::{constants::{NUM_REGS, MC_BITLEN, WORD_BITLEN}, Mc, RamIdx, RegIdx, Word};
-use bitfield::BitRange;
+use crate::constants::{NUM_REGS, MC_BITLEN, WORD_BITLEN};
+use crate::{Mc, RamIdx, RegIdx, Word};
+use crate::instruction_set::{Op};
+use bitfield::{BitRange, BitRangeMut};
 
 /// The set of all `NUM_REGS` many registers
 type Registers = Vec<Word>;
@@ -40,18 +42,18 @@ impl MachineState {
                 self.flag = flag;
                 self.inc_pc();
             },
-            MachineStateTransition::RamSet(RamIdx, Word) => {
-                self.ram.insert(RamIdx,Word);
+            MachineStateTransition::RamSet(ram_idx, word) => {
+                self.ram.insert(ram_idx,word);
                 self.inc_pc();
             },
-            MachineStateTransition::RegSet(RegIdx, Word) => {
-                self.regs[RegIdx as usize]=Word;
+            MachineStateTransition::RegSet(reg_idx, word) => {
+                self.regs[reg_idx as usize]=word;
                 self.inc_pc();
             },
-            MachineStateTransition::PcSet(RamIdx) => {
-                self.pc = *self.ram.get(&RamIdx).unwrap() as RamIdx;
+            MachineStateTransition::PcSet(ram_idx) => {
+                self.pc = *self.ram.get(&ram_idx).unwrap() as RamIdx;
             },
-            MachineStateTransition::Answer(Word) => (),
+            MachineStateTransition::Answer(_) => (),
         }
     }
 
@@ -64,33 +66,67 @@ impl MachineState {
     /// beginning of the RAM.
     fn new(program: &[Mc]) -> Self {
         let mut ram:HashMap<RamIdx, Word> = HashMap::new();
-        let mut ramIdx:RamIdx = 0;
-        let words_per_mc:RamIdx = (MC_BITLEN as RamIdx)/(WORD_BITLEN as RamIdx);
+        let mut ram_idx:RamIdx = 0;
+        let words_per_mc:usize = MC_BITLEN/WORD_BITLEN;
 
         // Places machine code into RAM, splitting the machine code into words
         for mc in program.iter() {
             for i in 0..words_per_mc {
-                let word = mc.bit_range(i as usize*MC_BITLEN,i as usize*(MC_BITLEN+1)-1);
-                ram.insert(ramIdx, word);
-                ramIdx=ramIdx+1;
+                let word = mc.bit_range((i+1)*WORD_BITLEN-1,i*WORD_BITLEN);
+                ram.insert(ram_idx, word);
+                ram_idx = ram_idx + 1;
             }
         }
-
         return MachineState{pc: 0, flag: false, regs: vec![0, NUM_REGS], ram};
     }
 }
 
 /// Executes the given instruction, updating the registers and RAM. Returns a memory trace item,
 /// and a `bool` indicating whether we have reached a halt instruction
-fn tick(
-    MachineState {
-        pc,
-        flag,
-        regs,
-        ram,
-    }: &MachineState,
-) -> MachineStateTransition {
-    unimplemented!()
+fn tick(state: &mut MachineState) -> MachineStateTransition {
+    let MachineState{pc, flag, regs, ram} = state;
+    // Rebuild machine code from word
+    let mut mc_instr:Mc = 0;
+    let words_per_mc:usize = MC_BITLEN/WORD_BITLEN;
+    for i in 0..words_per_mc {
+        mc_instr.set_bit_range((i+1)*WORD_BITLEN-1,i*WORD_BITLEN, ram[&(*pc+i as Word)]); 
+    }
+
+    let op:Op = Op::from_mc(mc_instr);
+
+    let tr = match op {
+        Op::Add {src1, src2, dest} => MachineStateTransition::RegSet(
+                        dest,
+                        regs[src1 as usize]+regs[src2.as_word() as usize]),
+
+        Op::Or {src1, src2, dest} => MachineStateTransition::RegSet(
+                        dest,
+                        regs[src1 as usize]|regs[src2.as_word() as usize]),
+        Op::Xor {src1, src2, dest} => MachineStateTransition::RegSet(
+                        dest,
+                        regs[src1 as usize]^regs[src2.as_word() as usize]),
+        Op::Cmpe {src1, src2} => MachineStateTransition::FlagSet(
+                        regs[src1 as usize]==regs[src2.as_word() as usize]),
+        Op::Not {src, dest} => MachineStateTransition::RegSet(
+                        dest,
+                        regs[src.as_word() as usize]),
+        Op::Loadw {src, dest} => MachineStateTransition::RegSet(
+                            dest,
+                            ram[&(src.as_word() as RamIdx)]),
+        Op::Storew {src, dest} => MachineStateTransition::RamSet(
+                            dest.as_word(),
+                            regs[src as usize]),
+        Op::Jmp {target} => MachineStateTransition::PcSet(
+                            regs[target.as_word() as usize]),
+        Op::Cjmp {target} => if *flag {MachineStateTransition::PcSet(
+                                regs[target.as_word() as usize])}
+                                else {MachineStateTransition::PcSet(*pc)}
+        Op::Answer {src} => MachineStateTransition::Answer(
+                                regs[src.as_word() as usize]),
+    };
+    
+    state.apply_transition(&tr);
+    return tr;
 }
 
 /// Runs the given machine code until the program halts. Returns a trace of of every step of the
@@ -102,7 +138,7 @@ fn run_program(program: &[Mc]) -> Vec<MachineStateTransition> {
     // Run until we see a `MachineStateTransition::Answer`
     loop {
         // Do a tick and then apply the operation
-        let trace_item = tick(&state);
+        let trace_item = tick(&mut state);
         state.apply_transition(&trace_item);
 
         // Save the operation
@@ -211,7 +247,6 @@ mod test {
         let machine_code: Vec<Mc> = assembly.iter().map(|op| op.to_mc()).collect();
         let transcript = run_program(&machine_code);
         let output = transcript[transcript.len() - 1];
-
         assert_eq!(output, MachineStateTransition::Answer(acc));
     }
 }
