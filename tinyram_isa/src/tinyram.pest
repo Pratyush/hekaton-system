@@ -2,10 +2,10 @@
 WHITESPACE = _{ " " | "\t" }
 
 // The TinyRAM header has almost no leeway in parsing
-header = ${ "; TinyRAM V=2.000 M=" ~ arch ~ " W=" ~ word_size ~ " K=" ~ num_regs }
+header = ${ "; TinyRAM V=2.000 M=" ~ arch ~ " W=" ~ word_bitlen ~ " K=" ~ num_regs }
 // Harvard or Von-Neumman architecture
 arch = { "hv" | "vn" }
-word_size = { ASCII_DIGIT+ }
+word_bitlen = { ASCII_DIGIT+ }
 num_regs = { ASCII_DIGIT+ }
 
 // A register is rX where X is a digit
@@ -46,8 +46,8 @@ comment = ${ "//" ~ (!(NEWLINE | EOI) ~ ANY)* }
 
 // A line is a label, followed by an optional instruction, followed by an optional comment
 any_instr = { i_instr | ir_instr | ri_instr | rri_instr }
-label_and_colon = @{ label ~ ":" }
-full_instr = { WHITESPACE* ~ label_and_colon? ~ any_instr }
+label_def = ${ label ~ ":" }
+full_instr = { WHITESPACE* ~ label_def? ~ any_instr }
 line = { full_instr? ~ comment? }
 
 // A file is made up of newline-delimited lines
