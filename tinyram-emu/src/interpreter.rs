@@ -364,7 +364,7 @@ mod test {
         //
         // addr             code
         // ----  ---------------------------
-        //       ; TinyRam V=2.000 M=vn W=32 K=8
+        //       ; TinyRam V=2.000 M=hv W=32 K=8
         // 0x00  _loop: add  reg0, reg0 1     ; incr i
         // 0x01         add  reg2, reg2 1     ; incr mul3_ctr
         // 0x02         cmpe reg0, 100        ; if i == 100:
@@ -379,11 +379,16 @@ mod test {
         //
         // 0x0a   _end: answer reg1           ; Return acc
 
+        let arch = TinyRamArch::Harvard;
+
         let reg0 = RegIdx(0);
         let reg1 = RegIdx(1);
         let reg2 = RegIdx(2);
 
-        let arch = TinyRamArch::Harvard;
+        let label_loop = imm(0x00);
+        let label_acc = imm(0x07);
+        let label_end = imm(0x0a);
+
         let assembly = [
             Instr::Add {
                 out: reg0,
@@ -399,15 +404,13 @@ mod test {
                 in1: reg0,
                 in2: imm(100),
             },
-            Instr::CJmp {
-                in1: ImmOrRegister::Imm(0x0a),
-            },
+            Instr::CJmp { in1: label_end },
             Instr::CmpE {
                 in1: reg2,
                 in2: imm(3),
             },
-            Instr::CJmp { in1: imm(0x07) },
-            Instr::Jmp { in1: imm(0x00) },
+            Instr::CJmp { in1: label_acc },
+            Instr::Jmp { in1: label_loop },
             Instr::Add {
                 out: reg1,
                 in1: reg1,
@@ -418,7 +421,7 @@ mod test {
                 in1: reg2,
                 in2: ImmOrRegister::Register(reg2),
             },
-            Instr::Jmp { in1: imm(0x00) },
+            Instr::Jmp { in1: label_loop },
             Instr::Answer {
                 in1: ImmOrRegister::Register(reg1),
             },
