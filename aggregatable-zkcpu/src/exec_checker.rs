@@ -1,4 +1,4 @@
-use crate::common::*;
+use crate::{common::*, word::WordVar};
 
 use core::cmp::Ordering;
 
@@ -7,6 +7,7 @@ use ark_r1cs_std::{
     boolean::Boolean,
     eq::EqGadget,
     fields::{fp::FpVar, FieldVar},
+    uint8::UInt8,
 };
 use ark_relations::r1cs::SynthesisError;
 
@@ -46,23 +47,35 @@ impl<F: PrimeField> ExecTickMemDataKind<F> {
 /// Represents the decoded instruction and register information used to LOAD or STORE in a small
 /// tick. `Load` doesn't carry the thing loaded because that has to come from outside the CPU, from
 /// the memory.
-pub(crate) struct ExecTickMemData<F: PrimeField> {
+pub(crate) struct ExecTickMemData<W: WordVar<F>, F: PrimeField> {
     /// The kind of data this is. A LOAD, a STORE, or a no-op
     pub(crate) kind: ExecTickMemDataKind<F>,
     /// The RAM index loaded from or stored into. This is not checked when kind == no-op
-    pub(crate) idx: RamIdxVar<F>,
+    pub(crate) idx: RamIdxVar<W>,
     /// The value stored into RAM. This is not checked when kind == no-op or LOAD
-    pub(crate) stored_word: WordVar<F>,
+    pub(crate) stored_word: W,
+}
+
+fn decode_instr<F: PrimeField, W: WordVar<F>>(
+    encoded_instr: &W,
+) -> (
+    OpcodeVar<F>,
+    RegIdxVar<F>,
+    RegIdxVar<F>,
+    ImmOrRegisterVar<W, F>,
+) {
+    unimplemented!()
 }
 
 /// Runs a single CPU tick with the given program counter, instruction, registers, and word loaded
 /// from memory (if `instr isn't a `lw`, then the word is ignored). Returns the updated program
 /// counter, updated set of registers, and a description of what, if any, memory operation occured.
-pub(crate) fn exec_checker<F: PrimeField>(
-    pc: &PcVar<F>,
-    instr: &WordVar<F>,
-    regs: &RegistersVar<F>,
-    opt_loaded_val: &WordVar<F>,
-) -> (PcVar<F>, RegistersVar<F>, ExecTickMemData<F>) {
+pub(crate) fn exec_checker<W: WordVar<F>, F: PrimeField>(
+    pc: &PcVar<W>,
+    instr: &W,
+    regs: &RegistersVar<W>,
+    opt_loaded_val: &W,
+) -> (PcVar<W>, RegistersVar<W>, ExecTickMemData<W, F>) {
+    let (opcode, reg1, reg2, imm_or_reg) = decode_instr(instr);
     unimplemented!()
 }

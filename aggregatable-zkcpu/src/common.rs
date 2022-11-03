@@ -1,26 +1,29 @@
 //! Contains data pub(crate) types used in various parts of the ZKCPU
 
-use ark_r1cs_std::{fields::fp::FpVar, uint32::UInt32};
+use crate::word::WordVar;
+use ark_ff::PrimeField;
+use ark_r1cs_std::{boolean::Boolean, uint8::UInt8};
 
-/// An index into RAM
-pub(crate) type RamIdx = u32;
-/// An index into RAM, in ZK land
-pub(crate) type RamIdxVar<F> = FpVar<F>;
-
-/// Program counter
-pub(crate) type Pc = RamIdx;
 /// Program counter, in ZK land
-pub(crate) type PcVar<F> = RamIdxVar<F>;
+pub(crate) type PcVar<W> = W;
 
-/// A CPU word
-pub(crate) type Word = u32;
-/// A CPU word, in ZK land
-pub(crate) type WordVar<F> = UInt32<F>;
+/// An instruction opcode, in ZK land
+pub(crate) type OpcodeVar<F> = UInt8<F>;
 
-/// A CPU instruction
-pub(crate) type Instr = Word;
-/// A CPU instruction, in ZK land
-pub(crate) type InstrVar<F> = WordVar<F>;
+/// An index into the registers, in ZK land
+pub(crate) type RegIdxVar<F> = UInt8<F>;
+
+/// An index into RAM, in ZK land
+pub(crate) type RamIdxVar<W> = W;
 
 /// The set of CPU registers
-pub(crate) type RegistersVar<F> = Vec<WordVar<F>>;
+pub(crate) type RegistersVar<W> = Vec<W>;
+
+pub(crate) struct ImmOrRegisterVar<W, F>
+where
+    W: WordVar<F>,
+    F: PrimeField,
+{
+    is_imm: Boolean<F>,
+    val: W,
+}

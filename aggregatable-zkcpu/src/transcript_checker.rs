@@ -1,4 +1,10 @@
-use crate::{common::*, exec_checker::*};
+use crate::{
+    common::*,
+    exec_checker::{exec_checker, ExecTickMemData},
+    word::WordVar,
+};
+
+use tinyram_emu::word::Word;
 
 use core::cmp::Ordering;
 
@@ -13,7 +19,7 @@ use ark_r1cs_std::{
 use ark_relations::r1cs::SynthesisError;
 
 /// A timestamp in the memory access transcript
-type Timestamp = u32;
+type Timestamp = u64;
 /// A timestamp in the memory access transcript, in ZK land
 type TimestampVar<F> = FpVar<F>;
 
@@ -78,7 +84,7 @@ type MemOpKindVar<F> = Boolean<F>;
 
 /// An entry in the transcript of RAM accesses
 #[derive(Clone)]
-enum TranscriptEntry {
+enum TranscriptEntry<W: Word> {
     /// If there are more ticks than memory accesses, we pad out the transcript
     Padding,
 
@@ -89,20 +95,22 @@ enum TranscriptEntry {
         /// LOAD or STORE
         op: MemOpKind,
         /// Either the index being loaded from or stored to
-        ramidx: RamIdx,
+        ramidx: W,
         /// The value being loaded or stored
-        val: Word,
+        val: W,
     },
 }
 
 /// This is the placeholder transcript entry that MUST begin the memory-ordered transcript. This is
 /// never interpreted by the program, and its encoded values do not represent memory state.
-fn transcript_starting_entry(real_transcript: &[TranscriptEntry]) -> TranscriptEntry {
+fn transcript_starting_entry<W: Word>(
+    real_transcript: &[TranscriptEntry<W>],
+) -> TranscriptEntry<W> {
     // If you repeat the first item of the real transcript, it is always consistent
     real_transcript[0].clone()
 }
 
-impl TranscriptEntry {
+impl<W: Word> TranscriptEntry<W> {
     /// Encodes this transcript entry as a field element for the purpose representation as a
     /// coefficient in a polynomial
     fn as_ff<F: Field>(&self) -> F {
@@ -118,7 +126,7 @@ impl TranscriptEntry {
 }
 
 /// An entry in the transcript of RAM accesses
-struct TranscriptEntryVar<F: PrimeField> {
+struct TranscriptEntryVar<W: WordVar<F>, F: PrimeField> {
     /// Tells whether or not this entry is padding
     is_padding: Boolean<F>,
     /// The timestamp of this entry. This is guaranteed to be less than 32 bits.
@@ -126,12 +134,12 @@ struct TranscriptEntryVar<F: PrimeField> {
     /// LOAD or STORE
     op: MemOpKindVar<F>,
     /// Either the index being loaded from or stored to
-    ram_idx: RamIdxVar<F>,
+    ram_idx: W,
     /// The value being loaded or stored
-    val: WordVar<F>,
+    val: W,
 }
 
-impl<F: PrimeField> TranscriptEntryVar<F> {
+impl<W: WordVar<F>, F: PrimeField> TranscriptEntryVar<W, F> {
     /// Returns whether this memory operation is a LOAD
     fn is_load(&self) -> Result<Boolean<F>, SynthesisError> {
         self.op
@@ -157,7 +165,7 @@ fn uint32_to_fpvar<F: PrimeField>(x: &UInt32<F>) -> Result<FpVar<F>, SynthesisEr
     Ok(acc)
 }
 
-impl<F: PrimeField> TranscriptEntryVar<F> {
+impl<W: WordVar<F>, F: PrimeField> TranscriptEntryVar<W, F> {
     /// Encodes this transcript entry as a field element. `is_init` says whether this entry is part
     /// of the initial memory or not.
     fn as_ff(&self, is_init: bool) -> Result<FpVar<F>, SynthesisError> {
@@ -188,12 +196,12 @@ impl<F: PrimeField> TranscriptEntryVar<F> {
 
         // Encode `ram_idx`. Make sure it's 32 bits. Then shift by 32.
         let shift_var = FpVar::<F>::Constant(F::from(1u64 << shift));
-        acc += &self.ram_idx * shift_var;
+        acc += &self.ram_idx.to_fpvar() * shift_var;
         shift += 32;
 
         // Encode `val`
         let shift_var = FpVar::<F>::Constant(F::from(1u64 << shift));
-        acc += uint32_to_fpvar(&self.val)? * shift_var;
+        acc += self.val.to_fpvar() * shift_var;
 
         Ok(acc)
     }
@@ -214,14 +222,14 @@ struct TranscriptCheckerEvals<F: PrimeField> {
 
 /// This function checks the time- and mem-sorted transcripts for consistency. It also accumulates
 /// both transcripts into their respective polynomial evaluations.
-fn transcript_checker<F: PrimeField>(
-    regs: &RegistersVar<F>,
+fn transcript_checker<W: WordVar<F>, F: PrimeField>(
+    regs: &RegistersVar<W>,
     chal: &FpVar<F>,
-    pc_load: &TranscriptEntryVar<F>,
-    mem_op: &TranscriptEntryVar<F>,
-    mem_tr_adj_pair: (&TranscriptEntryVar<F>, &TranscriptEntryVar<F>),
+    pc_load: &TranscriptEntryVar<W, F>,
+    mem_op: &TranscriptEntryVar<W, F>,
+    mem_tr_adj_pair: (&TranscriptEntryVar<W, F>, &TranscriptEntryVar<W, F>),
     evals: &TranscriptCheckerEvals<F>,
-) -> Result<(PcVar<F>, RegistersVar<F>, TranscriptCheckerEvals<F>), SynthesisError> {
+) -> Result<(PcVar<W>, RegistersVar<W>, TranscriptCheckerEvals<F>), SynthesisError> {
     // pc_load occurs at time t
     let t = &pc_load.timestamp;
     // mem_op, if defined, occurs at time t
@@ -271,7 +279,9 @@ fn transcript_checker<F: PrimeField>(
     let opt_loaded_val = &mem_op.val;
 
     // Run the CPU for one tick
-    let (new_pc, new_regs, exec_mem_data) = exec_checker(pc, instr, regs, opt_loaded_val);
+    //let (new_pc, new_regs, exec_mem_data) = exec_checker(pc, instr, regs, opt_loaded_val);
+    let (new_pc, new_regs, exec_mem_data): (PcVar<W>, RegistersVar<W>, ExecTickMemData<W, F>) =
+        exec_checker(pc, instr, regs, opt_loaded_val);
 
     // Check well-formedness of the mem data
     exec_mem_data.kind.enforce_well_formed()?;
@@ -312,7 +322,10 @@ fn transcript_checker<F: PrimeField>(
     // Check that this is sorted by memory idx then time. That is, check
     //       prev.ram_idx < cur.ram_idx
     //     ∨ (prev.ram_idx == cur.ram_idx ∧ prev.timestamp < cur.timestamp);
-    let ram_idx_has_incrd = prev.ram_idx.is_cmp(&cur.ram_idx, Ordering::Less, false)?;
+    let ram_idx_has_incrd =
+        prev.ram_idx
+            .to_fpvar()
+            .is_cmp(&cur.ram_idx.to_fpvar(), Ordering::Less, false)?;
     let ram_idx_is_eq = prev.ram_idx.is_eq(&cur.ram_idx)?;
     let t_has_incrd = prev
         .timestamp
