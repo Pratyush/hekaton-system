@@ -1,141 +1,256 @@
-use crate::register::{Register, RegisterOrImm};
+use crate::register::{ImmOrRegister, RegIdx};
 use crate::{
     memory::{DataMemory, ProgramMemory},
     program_state::CPUState,
     word::Word,
 };
 
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum Opcode {
+    And = 0b00000,
+    Or,
+    Xor,
+    Not,
+    Add,
+    Sub,
+    MulL,
+    UMulH,
+    SMulH,
+    UDiv,
+    UMod,
+    Shl,
+    Shr,
+    CmpE,
+    CmpA,
+    CmpAE,
+    CmpG,
+    CmpGE,
+    Mov,
+    CMov,
+    Jmp,
+    CJmp,
+    CNJmp,
+    StoreB = 0b11010,
+    LoadB,
+    StoreW,
+    LoadW,
+    Read,
+    Answer,
+}
+
+impl TryFrom<u8> for Opcode {
+    type Error = ();
+
+    fn try_from(input: u8) -> Result<Opcode, ()> {
+        use Opcode::*;
+
+        let table = [
+            (And as u8, And),
+            (Or as u8, Or),
+            (Xor as u8, Xor),
+            (Not as u8, Not),
+            (Add as u8, Add),
+            (Sub as u8, Sub),
+            (MulL as u8, MulL),
+            (UMulH as u8, UMulH),
+            (SMulH as u8, SMulH),
+            (UDiv as u8, UDiv),
+            (UMod as u8, UMod),
+            (Shl as u8, Shl),
+            (Shr as u8, Shr),
+            (CmpE as u8, CmpE),
+            (CmpA as u8, CmpA),
+            (CmpAE as u8, CmpAE),
+            (CmpG as u8, CmpG),
+            (CmpGE as u8, CmpGE),
+            (Mov as u8, Mov),
+            (CMov as u8, CMov),
+            (Jmp as u8, Jmp),
+            (CJmp as u8, CJmp),
+            (CNJmp as u8, CNJmp),
+            (StoreB as u8, StoreB),
+            (LoadB as u8, LoadB),
+            (StoreW as u8, StoreW),
+            (LoadW as u8, LoadW),
+            (Read as u8, Read),
+            (Answer as u8, Answer),
+        ];
+
+        table
+            .iter()
+            .find_map(|(byte, var)| if input == *byte { Some(*var) } else { None })
+            .ok_or(())
+    }
+}
+
+impl<W: Word> Instr<W> {
+    pub fn opcode(&self) -> Opcode {
+        use Instr::*;
+        match &self {
+            And { .. } => Opcode::And,
+            Or { .. } => Opcode::Or,
+            Xor { .. } => Opcode::Xor,
+            Not { .. } => Opcode::Not,
+            Add { .. } => Opcode::Add,
+            Sub { .. } => Opcode::Sub,
+            MulL { .. } => Opcode::MulL,
+            UMulH { .. } => Opcode::UMulH,
+            SMulH { .. } => Opcode::SMulH,
+            UDiv { .. } => Opcode::UDiv,
+            UMod { .. } => Opcode::UMod,
+            Shl { .. } => Opcode::Shl,
+            Shr { .. } => Opcode::Shr,
+            CmpE { .. } => Opcode::CmpE,
+            CmpA { .. } => Opcode::CmpA,
+            CmpAE { .. } => Opcode::CmpAE,
+            CmpG { .. } => Opcode::CmpG,
+            CmpGE { .. } => Opcode::CmpGE,
+            Mov { .. } => Opcode::Mov,
+            CMov { .. } => Opcode::CMov,
+            Jmp { .. } => Opcode::Jmp,
+            CJmp { .. } => Opcode::CJmp,
+            CNJmp { .. } => Opcode::CNJmp,
+            StoreB { .. } => Opcode::StoreB,
+            LoadB { .. } => Opcode::LoadB,
+            StoreW { .. } => Opcode::StoreW,
+            LoadW { .. } => Opcode::LoadW,
+            Read { .. } => Opcode::Read,
+            Answer { .. } => Opcode::Answer,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Inst<W: Word> {
+pub enum Instr<W: Word> {
     // Arithmetic instructions
     And {
-        in1: Register,
-        in2: RegisterOrImm<W>,
-        out: Register,
+        in1: RegIdx,
+        in2: ImmOrRegister<W>,
+        out: RegIdx,
     },
     Or {
-        in1: Register,
-        in2: RegisterOrImm<W>,
-        out: Register,
+        in1: RegIdx,
+        in2: ImmOrRegister<W>,
+        out: RegIdx,
     },
     Xor {
-        in1: Register,
-        in2: RegisterOrImm<W>,
-        out: Register,
+        in1: RegIdx,
+        in2: ImmOrRegister<W>,
+        out: RegIdx,
     },
     Not {
-        in1: RegisterOrImm<W>,
-        out: Register,
+        in1: ImmOrRegister<W>,
+        out: RegIdx,
     },
     Add {
-        in1: Register,
-        in2: RegisterOrImm<W>,
-        out: Register,
+        in1: RegIdx,
+        in2: ImmOrRegister<W>,
+        out: RegIdx,
     },
     Sub {
-        in1: Register,
-        in2: RegisterOrImm<W>,
-        out: Register,
+        in1: RegIdx,
+        in2: ImmOrRegister<W>,
+        out: RegIdx,
     },
     MulL {
-        in1: Register,
-        in2: RegisterOrImm<W>,
-        out: Register,
+        in1: RegIdx,
+        in2: ImmOrRegister<W>,
+        out: RegIdx,
     },
     UMulH {
-        in1: Register,
-        in2: RegisterOrImm<W>,
-        out: Register,
+        in1: RegIdx,
+        in2: ImmOrRegister<W>,
+        out: RegIdx,
     },
     SMulH {
-        in1: Register,
-        in2: RegisterOrImm<W>,
-        out: Register,
+        in1: RegIdx,
+        in2: ImmOrRegister<W>,
+        out: RegIdx,
     },
     UDiv {
-        in1: Register,
-        in2: RegisterOrImm<W>,
-        out: Register,
+        in1: RegIdx,
+        in2: ImmOrRegister<W>,
+        out: RegIdx,
     },
     UMod {
-        in1: Register,
-        in2: RegisterOrImm<W>,
-        out: Register,
+        in1: RegIdx,
+        in2: ImmOrRegister<W>,
+        out: RegIdx,
     },
     Shl {
-        in1: Register,
-        in2: RegisterOrImm<W>,
-        out: Register,
+        in1: RegIdx,
+        in2: ImmOrRegister<W>,
+        out: RegIdx,
     },
     Shr {
-        in1: Register,
-        in2: RegisterOrImm<W>,
-        out: Register,
+        in1: RegIdx,
+        in2: ImmOrRegister<W>,
+        out: RegIdx,
     },
     // Compare instructions
     CmpE {
-        in1: Register,
-        in2: RegisterOrImm<W>,
+        in1: RegIdx,
+        in2: ImmOrRegister<W>,
     },
     CmpA {
-        in1: Register,
-        in2: RegisterOrImm<W>,
+        in1: RegIdx,
+        in2: ImmOrRegister<W>,
     },
     CmpAE {
-        in1: Register,
-        in2: RegisterOrImm<W>,
+        in1: RegIdx,
+        in2: ImmOrRegister<W>,
     },
     CmpG {
-        in1: Register,
-        in2: RegisterOrImm<W>,
+        in1: RegIdx,
+        in2: ImmOrRegister<W>,
     },
     CmpGE {
-        in1: Register,
-        in2: RegisterOrImm<W>,
+        in1: RegIdx,
+        in2: ImmOrRegister<W>,
     },
     Mov {
-        in1: RegisterOrImm<W>,
-        out: Register,
+        in1: ImmOrRegister<W>,
+        out: RegIdx,
     },
     CMov {
-        in1: RegisterOrImm<W>,
-        out: Register,
+        in1: ImmOrRegister<W>,
+        out: RegIdx,
     },
     Jmp {
-        in1: RegisterOrImm<W>,
+        in1: ImmOrRegister<W>,
     },
     CJmp {
-        in1: RegisterOrImm<W>,
+        in1: ImmOrRegister<W>,
     },
     CNJmp {
-        in1: RegisterOrImm<W>,
+        in1: ImmOrRegister<W>,
     },
     StoreB {
-        in1: Register,
-        out: RegisterOrImm<W>,
+        in1: RegIdx,
+        out: ImmOrRegister<W>,
     },
     LoadB {
-        in1: W,
-        out: Register,
+        in1: ImmOrRegister<W>,
+        out: RegIdx,
     },
     StoreW {
-        in1: Register,
-        out: W,
+        in1: RegIdx,
+        out: ImmOrRegister<W>,
     },
     LoadW {
-        in1: W,
-        out: Register,
+        in1: ImmOrRegister<W>,
+        out: RegIdx,
     },
     Read {
-        in1: W,
-        out: Register,
+        in1: ImmOrRegister<W>,
+        out: RegIdx,
     },
     Answer {
-        in1: W,
+        in1: ImmOrRegister<W>,
     },
 }
 
-impl<W: Word> Inst<W> {
+impl<W: Word> Instr<W> {
     /// Executes the given instruction. without necessarily updating the program counter.
     /// This method only updates the program counter if `self` is one of `Inst::Jmp`, `Inst::CJmp`, or `Inst::CNJmp`.
     fn execute<const NUM_REGS: usize>(
@@ -146,82 +261,82 @@ impl<W: Word> Inst<W> {
     ) {
         match self {
             // Arithmetic instructions
-            Inst::And { in1, in2, out } => {
+            Instr::And { in1, in2, out } => {
                 let in1 = in1.value(&cpu_state.registers);
                 let in2 = in2.value(&cpu_state.registers);
                 cpu_state.registers[out.0 as usize] = in1 & in2;
             }
-            Inst::Or { in1, in2, out } => {
+            Instr::Or { in1, in2, out } => {
                 let in1 = in1.value(&cpu_state.registers);
                 let in2 = in2.value(&cpu_state.registers);
                 cpu_state.registers[out.0 as usize] = in1 | in2;
             }
-            Inst::Xor { in1, in2, out } => {
+            Instr::Xor { in1, in2, out } => {
                 let in1 = in1.value(&cpu_state.registers);
                 let in2 = in2.value(&cpu_state.registers);
                 cpu_state.registers[out.0 as usize] = in1 ^ in2;
             }
-            Inst::Not { in1, out } => {
+            Instr::Not { in1, out } => {
                 let in1 = in1.value(&cpu_state.registers);
                 cpu_state.registers[out.0 as usize] = !in1;
             }
-            Inst::Add { in1, in2, out } => {
+            Instr::Add { in1, in2, out } => {
                 let in1 = in1.value(&cpu_state.registers);
                 let in2 = in2.value(&cpu_state.registers);
                 let (result, overflow) = in1.carrying_add(in2);
                 cpu_state.registers[out.0 as usize] = result;
                 cpu_state.condition_flag = overflow;
             }
-            Inst::Sub { in1, in2, out } => {
+            Instr::Sub { in1, in2, out } => {
                 let in1 = in1.value(&cpu_state.registers);
                 let in2 = in2.value(&cpu_state.registers);
                 let (result, borrow) = in1.borrowing_sub(in2);
                 cpu_state.registers[out.0 as usize] = result;
                 cpu_state.condition_flag = borrow;
             }
-            Inst::MulL { in1, in2, out } => {
+            Instr::MulL { in1, in2, out } => {
                 let in1 = in1.value(&cpu_state.registers);
                 let in2 = in2.value(&cpu_state.registers);
                 let (result, overflow) = in1.mul_low(in2);
                 cpu_state.registers[out.0 as usize] = result;
                 cpu_state.condition_flag = overflow;
             }
-            Inst::UMulH { in1, in2, out } => {
+            Instr::UMulH { in1, in2, out } => {
                 let in1 = in1.value(&cpu_state.registers);
                 let in2 = in2.value(&cpu_state.registers);
                 let (result, overflow) = in1.mul_high(in2);
                 cpu_state.registers[out.0 as usize] = result;
                 cpu_state.condition_flag = overflow;
             }
-            Inst::SMulH { in1, in2, out } => {
+            Instr::SMulH { in1, in2, out } => {
                 let in1 = in1.value(&cpu_state.registers);
                 let in2 = in2.value(&cpu_state.registers);
                 let (result, overflow) = in1.signed_mul_high(in2);
                 cpu_state.registers[out.0 as usize] = result;
                 cpu_state.condition_flag = overflow;
             }
-            Inst::UDiv { in1, in2, out } => {
+            Instr::UDiv { in1, in2, out } => {
                 let in1 = in1.value(&cpu_state.registers);
                 let in2 = in2.value(&cpu_state.registers);
                 let (result, overflow) = in1.checked_div(in2);
                 cpu_state.registers[out.0 as usize] = result;
                 cpu_state.condition_flag = overflow;
             }
-            Inst::UMod { in1, in2, out } => {
+            Instr::UMod { in1, in2, out } => {
                 let in1 = in1.value(&cpu_state.registers);
                 let in2 = in2.value(&cpu_state.registers);
                 let (result, overflow) = in1.checked_rem(in2);
                 cpu_state.registers[out.0 as usize] = result;
                 cpu_state.condition_flag = overflow;
             }
-            Inst::Shl { in1, in2, out } => {
+            Instr::Shl { in1, in2, out } => {
                 let in1 = in1.value(&cpu_state.registers);
                 let in2 = in2.value(&cpu_state.registers);
                 let (result, overflow) = in1.shl(in2);
                 cpu_state.registers[out.0 as usize] = result;
                 cpu_state.condition_flag = overflow;
             }
-            Inst::Shr { in1, in2, out } => {
+            Instr::Shr { in1, in2, out } => {
                 let in1 = in1.value(&cpu_state.registers);
                 let in2 = in2.value(&cpu_state.registers);
                 let (result, flag) = in1.shr(in2);
@@ -229,54 +344,54 @@ impl<W: Word> Inst<W> {
                 cpu_state.condition_flag = flag;
             }
             // Comparison instructions
-            Inst::CmpE { in1, in2 } => {
+            Instr::CmpE { in1, in2 } => {
                 let in1 = in1.value(&cpu_state.registers);
                 let in2 = in2.value(&cpu_state.registers);
                 cpu_state.condition_flag = in1 == in2;
             }
-            Inst::CmpA { in1, in2 } => {
+            Instr::CmpA { in1, in2 } => {
                 let in1 = in1.value(&cpu_state.registers);
                 let in2 = in2.value(&cpu_state.registers);
                 cpu_state.condition_flag = in1 > in2;
             }
-            Inst::CmpAE { in1, in2 } => {
+            Instr::CmpAE { in1, in2 } => {
                 let in1 = in1.value(&cpu_state.registers);
                 let in2 = in2.value(&cpu_state.registers);
                 cpu_state.condition_flag = in1 >= in2;
             }
-            Inst::CmpG { in1, in2 } => {
+            Instr::CmpG { in1, in2 } => {
                 let in1 = in1.value(&cpu_state.registers).to_signed();
                 let in2 = in2.value(&cpu_state.registers).to_signed();
                 cpu_state.condition_flag = in1 > in2;
             }
-            Inst::CmpGE { in1, in2 } => {
+            Instr::CmpGE { in1, in2 } => {
                 let in1 = in1.value(&cpu_state.registers).to_signed();
                 let in2 = in2.value(&cpu_state.registers).to_signed();
                 cpu_state.condition_flag = in1 >= in2;
             }
             // Move instructions
-            Inst::Mov { in1, out } => {
+            Instr::Mov { in1, out } => {
                 let in1 = in1.value(&cpu_state.registers);
                 cpu_state.registers[out.0 as usize] = in1;
             }
-            Inst::CMov { in1, out } => {
+            Instr::CMov { in1, out } => {
                 let in1 = in1.value(&cpu_state.registers);
                 if cpu_state.condition_flag {
                     cpu_state.registers[out.0 as usize] = in1;
                 }
             }
             // Jump instructions
-            Inst::Jmp { in1 } => {
+            Instr::Jmp { in1 } => {
                 let in1 = in1.value(&cpu_state.registers);
                 cpu_state.program_counter = in1;
             }
-            Inst::CJmp { in1 } => {
+            Instr::CJmp { in1 } => {
                 if cpu_state.condition_flag {
                     let in1 = in1.value(&cpu_state.registers);
                     cpu_state.program_counter = in1;
                 }
             }
-            Inst::CNJmp { in1 } => {
+            Instr::CNJmp { in1 } => {
                 if !cpu_state.condition_flag {
                     let in1 = in1.value(&cpu_state.registers);
                     cpu_state.program_counter = in1;

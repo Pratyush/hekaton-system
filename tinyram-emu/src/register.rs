@@ -1,25 +1,66 @@
 use crate::word::Word;
 
+/// An index into the CPU registers
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Register(pub u64);
+pub struct RegIdx(pub u8);
 
-impl Register {
+impl RegIdx {
     pub fn value<W: Word>(&self, registers: &[W]) -> W {
         registers[self.0 as usize]
     }
 }
 
+/// In TinyRAM, some instruction inputs are interpreted as either a register index or an immediate
+/// (i.e., a constant). This enum captures that functionality.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RegisterOrImm<W: Word> {
-    Register(u64),
+pub enum ImmOrRegister<W: Word> {
     Imm(W),
+    Register(RegIdx),
 }
 
-impl<W: Word> RegisterOrImm<W> {
+impl<W: Word> ImmOrRegister<W> {
+    /// Makes a new immediate or register. Will error if `is_imm == true` and `val` exceeds
+    /// `W::MAX`
+    pub fn new(val: u64, is_imm: bool) -> Result<Self, ()> {
+        if is_imm {
+            W::try_from(val).map(ImmOrRegister::Imm).map_err(|_| ())
+        } else {
+            u8::try_from(val)
+                .map(|b| ImmOrRegister::Register(RegIdx(b)))
+                .map_err(|_| ())
+        }
+    }
+
+    /// Returns whether this is an Immediate value
+    pub fn is_imm(&self) -> bool {
+        match self {
+            ImmOrRegister::Imm(_) => true,
+            _ => false,
+        }
+    }
+
+    /*
+    pub fn as_word(&self) -> W {
+        match self {
+            ImmOrRegister::Imm(w) => *w,
+            ImmOrRegister::Register(RegIdx(r)) => W::from(*r),
+        }
+    }
+    */
+
     pub fn value(&self, registers: &[W]) -> W {
         match self {
-            RegisterOrImm::Register(reg) => registers[*reg as usize],
-            RegisterOrImm::Imm(imm) => *imm,
+            ImmOrRegister::Register(reg) => registers[reg.0 as usize],
+            ImmOrRegister::Imm(imm) => *imm,
+        }
+    }
+}
+
+impl<W: Word> From<ImmOrRegister<W>> for u64 {
+    fn from(x: ImmOrRegister<W>) -> u64 {
+        match x {
+            ImmOrRegister::Imm(w) => w.into(),
+            ImmOrRegister::Register(RegIdx(r)) => r.into(),
         }
     }
 }

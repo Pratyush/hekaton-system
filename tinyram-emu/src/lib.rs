@@ -1,3 +1,4 @@
+pub mod encoding;
 pub mod input_tape;
 pub mod instructions;
 pub mod memory;

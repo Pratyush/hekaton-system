@@ -12,9 +12,11 @@ pub trait Word:
     + BitOr<Output = Self>
     + BitXor<Output = Self>
     + BitAnd<Output = Self>
+    + TryFrom<u64>
+    + Into<u64>
 {
     type Signed: Eq + Ord + Copy;
-    const BIT_SIZE: u32;
+    const BITLEN: u32;
     const MAX: Self;
 
     /// Convert `self` to a `BIT_SIZE`-bit signed integer.
@@ -64,7 +66,8 @@ macro_rules! impl_word {
     ($word: ty, $double_word: ty, $signed: ty, $double_signed: ty, $bit_size: expr) => {
         impl Word for $word {
             type Signed = $signed;
-            const BIT_SIZE: u32 = $bit_size;
+
+            const BITLEN: u32 = $bit_size;
             const MAX: Self = <$word>::MAX;
 
             fn to_signed(self) -> Self::Signed {
