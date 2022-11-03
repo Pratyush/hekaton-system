@@ -17,7 +17,9 @@ pub trait Word:
     + Into<u64>
 {
     type Signed: Eq + Ord + Copy;
-    const BITLEN: u32;
+    const BITLEN: usize;
+    /// The number of bytes an instruction takes up. It's 2 words.
+    const INSTR_BYTELEN: usize = 2 * Self::BITLEN / 8;
     const MAX: Self;
 
     /// Convert from `u64`. Fails if the value exceeds `W::MAX`
@@ -73,7 +75,7 @@ macro_rules! impl_word {
         impl Word for $word {
             type Signed = $signed;
 
-            const BITLEN: u32 = $bit_size;
+            const BITLEN: usize = $bit_size;
             const MAX: Self = <$word>::MAX;
 
             fn to_signed(self) -> Self::Signed {

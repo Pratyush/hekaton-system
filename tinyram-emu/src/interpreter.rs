@@ -262,7 +262,11 @@ pub fn run_program<W: Word, const NUM_REGS: usize>(
 
             let serialized_program: BTreeMap<W, u8> = program
                 .iter()
-                .flat_map(|instr| instr.to_bytes::<NUM_REGS>())
+                .flat_map(|instr| {
+                    let mut buf = vec![0u8; W::INSTR_BYTELEN];
+                    instr.to_bytes::<NUM_REGS>(&mut buf);
+                    buf
+                })
                 .enumerate()
                 .map(|(i, b)| (W::from_u64(i as u64).unwrap(), b))
                 .collect();
@@ -291,21 +295,19 @@ pub fn run_program<W: Word, const NUM_REGS: usize>(
                 // Collect 2 words of bytes starting at pc. 16 is the upper bound on the number of
                 // bytes
                 let pc = cpu_state.program_counter;
-                let mut encoded_instr = [0u8; 16];
-                for i in 0..bytes_per_instr {
-                    let (next_idx, overflow) = pc.carrying_add(W::from_u64(i).unwrap());
-                    if overflow {
-                        panic!("program counter overflow");
-                    }
+                let encoded_instr: Vec<u8> = (0..bytes_per_instr)
+                    .map(|i| {
+                        let (next_idx, overflow) = pc.carrying_add(W::from_u64(i).unwrap());
+                        if overflow {
+                            panic!("program counter overflow");
+                        }
 
-                    // Now get the byte and put it in the encoded buffer. We pad the left side of
-                    // the buffer with 0s as needed. This is because it's always just a big-endian
-                    // representation of a u128
-                    let byte = data_memory.0.get(&next_idx).expect("illegal memory access");
-                    encoded_instr[(bytes_per_instr - i) as usize] = *byte;
-                }
+                        // Now get the byte
+                        *data_memory.0.get(&next_idx).expect("illegal memory access")
+                    })
+                    .collect();
 
-                Instr::<W>::from_bytes::<NUM_REGS>(encoded_instr)
+                Instr::<W>::from_bytes::<NUM_REGS>(&encoded_instr)
             }
         };
 
@@ -362,72 +364,75 @@ mod test {
         //     reg1 -> acc
         //     reg2 -> mul3_ctr
         //
-        // addr             code
-        // ----  ---------------------------
-        //       ; TinyRam V=2.000 M=hv W=32 K=8
-        // 0x00  _loop: add  reg0, reg0 1     ; incr i
-        // 0x01         add  reg2, reg2 1     ; incr mul3_ctr
-        // 0x02         cmpe reg0, 100        ; if i == 100:
-        // 0x03         cjmp _end             ;     jump to end
-        // 0x04         cmpe reg2, 3          ; else if mul3_ctr == 3:
-        // 0x05         cjmp _acc             ;     jump to acc
-        // 0x06         jmp  _loop            ; else jump to beginning
+        // hv addr  vn addr             code
+        // -------  -------  ---------------------------
+        //                   ; TinyRam V=2.000 M=X W=32 K=8
+        //                     (where X = hv or vn)
+        //    0x00     0x00  _loop: add  reg0, reg0 1        ; incr i
+        //    0x01     0x08         add  reg2, reg2 1        ; incr mul3_ctr
+        //    0x02     0x10         cmpe reg0, 100           ; if i == 100:
+        //    0x03     0x18         cjmp _end                ;     jump to end
+        //    0x04     0x20         cmpe reg2, 3             ; else if mul3_ctr == 3:
+        //    0x05     0x28         cjmp _acc                ;     jump to acc
+        //    0x06     0x30         jmp  _loop               ; else jump to beginning
         //
-        // 0x07   _acc: add reg1, reg1, reg0  ; Accumulate i into acc
-        // 0x08         xor reg2, reg2, reg2  ; Clear mul3_ctr
-        // 0x09         jmp loop              ; Jump back to the loop
+        //    0x07     0x38   _acc: add reg1, reg1, reg0     ; Accumulate i into acc
+        //    0x08     0x40         xor reg2, reg2, reg2     ; Clear mul3_ctr
+        //    0x09     0x48         jmp loop                 ; Jump back to the loop
         //
-        // 0x0a   _end: answer reg1           ; Return acc
-
-        let arch = TinyRamArch::Harvard;
+        //    0x0a     0x50   _end: answer reg1              ; Return acc
 
         let reg0 = RegIdx(0);
         let reg1 = RegIdx(1);
         let reg2 = RegIdx(2);
 
-        let label_loop = imm(0x00);
-        let label_acc = imm(0x07);
-        let label_end = imm(0x0a);
+        let hv_labels = (imm(0x00), imm(0x07), imm(0x0a));
+        let vn_labels = (imm(0x00), imm(0x38), imm(0x50));
 
-        let assembly = [
-            Instr::Add {
-                out: reg0,
-                in1: reg0,
-                in2: imm(1),
-            },
-            Instr::Add {
-                out: reg2,
-                in1: reg2,
-                in2: imm(1),
-            },
-            Instr::CmpE {
-                in1: reg0,
-                in2: imm(100),
-            },
-            Instr::CJmp { in1: label_end },
-            Instr::CmpE {
-                in1: reg2,
-                in2: imm(3),
-            },
-            Instr::CJmp { in1: label_acc },
-            Instr::Jmp { in1: label_loop },
-            Instr::Add {
-                out: reg1,
-                in1: reg1,
-                in2: ImmOrRegister::Register(reg0),
-            },
-            Instr::Xor {
-                out: reg2,
-                in1: reg2,
-                in2: ImmOrRegister::Register(reg2),
-            },
-            Instr::Jmp { in1: label_loop },
-            Instr::Answer {
-                in1: ImmOrRegister::Register(reg1),
-            },
-        ];
+        for (arch, (label_loop, label_acc, label_end)) in [
+            (TinyRamArch::Harvard, hv_labels),
+            (TinyRamArch::VonNeumann, vn_labels),
+        ] {
+            let assembly = [
+                Instr::Add {
+                    out: reg0,
+                    in1: reg0,
+                    in2: imm(1),
+                },
+                Instr::Add {
+                    out: reg2,
+                    in1: reg2,
+                    in2: imm(1),
+                },
+                Instr::CmpE {
+                    in1: reg0,
+                    in2: imm(100),
+                },
+                Instr::CJmp { in1: label_end },
+                Instr::CmpE {
+                    in1: reg2,
+                    in2: imm(3),
+                },
+                Instr::CJmp { in1: label_acc },
+                Instr::Jmp { in1: label_loop },
+                Instr::Add {
+                    out: reg1,
+                    in1: reg1,
+                    in2: ImmOrRegister::Register(reg0),
+                },
+                Instr::Xor {
+                    out: reg2,
+                    in1: reg2,
+                    in2: ImmOrRegister::Register(reg2),
+                },
+                Instr::Jmp { in1: label_loop },
+                Instr::Answer {
+                    in1: ImmOrRegister::Register(reg1),
+                },
+            ];
 
-        let (output, _mem_trace) = run_program::<W, NUM_REGS>(arch, &assembly);
-        assert_eq!(u64::from(output), acc);
+            let (output, _mem_trace) = run_program::<W, NUM_REGS>(arch, &assembly);
+            assert_eq!(u64::from(output), acc);
+        }
     }
 }

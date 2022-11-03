@@ -27,10 +27,17 @@ impl<W: Word> Instr<W> {
      *  op is 5 bits long, with canonical OpCodes defined above.
      */
 
-    /// Creates an Op out of machine code. Panics if the instruction is invalid.
-    pub fn from_bytes<const NUM_REGS: usize>(bytes: [u8; 16]) -> Self {
+    /// Creates an Op out of machine code. Panics if `bytes.len() != W::INSTR_BYTELEN` or if the
+    /// instruction is invalid.
+    pub fn from_bytes<const NUM_REGS: usize>(bytes: &[u8]) -> Self {
         use Opcode::*;
-        let instr = u128::from_be_bytes(bytes);
+        assert!(bytes.len() == W::INSTR_BYTELEN);
+
+        let instr = {
+            let mut buf = [0u8; 16];
+            buf[16 - bytes.len()..16].copy_from_slice(bytes);
+            u128::from_be_bytes(buf)
+        };
 
         // Decode the instruction. reg1 is the register (if any) that is modified, and reg2 is the
         // register (if any) that is not modified.
@@ -71,7 +78,7 @@ impl<W: Word> Instr<W> {
             Jmp => Instr::Jmp { in1: imm_or_reg },
             CJmp => Instr::CJmp { in1: imm_or_reg },
             Answer => Instr::Answer { in1: imm_or_reg },
-            _ => todo!(),
+            _ => panic!("cannot decode {:?}", opcode),
         }
     }
 
@@ -115,8 +122,10 @@ impl<W: Word> Instr<W> {
         (RegIdx(reg1), RegIdx(reg2), imm_or_reg, opcode)
     }
 
-    // Converts our operation to machine code
-    pub fn to_bytes<const NUM_REGS: usize>(&self) -> [u8; 16] {
+    // Converts our operation to machine code. Panics if `buf.len() != W::INSTR_BYTELEN`.
+    pub fn to_bytes<const NUM_REGS: usize>(&self, out: &mut [u8]) {
+        assert!(out.len() == W::INSTR_BYTELEN);
+
         let opcode = self.opcode() as u8;
         let reg0 = RegIdx(0);
 
@@ -134,7 +143,8 @@ impl<W: Word> Instr<W> {
             _ => todo!(),
         };
 
-        instr.to_be_bytes()
+        let encoding = instr.to_be_bytes();
+        out.copy_from_slice(&encoding[16 - out.len()..16]);
     }
 
     // Encodes an instruction
@@ -255,8 +265,9 @@ mod tests {
 
             // Test equality after an encode-decode round trip
             for tc in test_cases {
-                let bytes = tc.to_bytes::<NUM_REGS>();
-                let new_tc = Instr::<W>::from_bytes::<NUM_REGS>(bytes);
+                let mut bytes = [0u8; W::INSTR_BYTELEN];
+                tc.to_bytes::<NUM_REGS>(&mut bytes);
+                let new_tc = Instr::<W>::from_bytes::<NUM_REGS>(&bytes);
                 assert_eq!(*tc, new_tc);
             }
         }
