@@ -1,7 +1,9 @@
 use crate::{instructions::Instr, word::Word};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DataMemory(Vec<u8>);
+use std::collections::BTreeMap;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ProgramMemory<W: Word>(Vec<Instr<W>>);
+#[derive(Default, Debug, Clone, PartialEq, Eq)]
+pub struct DataMemory<W: Word>(pub(crate) BTreeMap<W, u8>);
+
+#[derive(Default, Debug, Clone, PartialEq, Eq)]
+pub struct ProgramMemory<W: Word>(pub(crate) Vec<Instr<W>>);

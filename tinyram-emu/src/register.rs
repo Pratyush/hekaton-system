@@ -39,15 +39,6 @@ impl<W: Word> ImmOrRegister<W> {
         }
     }
 
-    /*
-    pub fn as_word(&self) -> W {
-        match self {
-            ImmOrRegister::Imm(w) => *w,
-            ImmOrRegister::Register(RegIdx(r)) => W::from(*r),
-        }
-    }
-    */
-
     pub fn value(&self, registers: &[W]) -> W {
         match self {
             ImmOrRegister::Register(reg) => registers[reg.0 as usize],

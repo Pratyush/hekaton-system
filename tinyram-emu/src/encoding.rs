@@ -28,7 +28,7 @@ impl<W: Word> Instr<W> {
      */
 
     /// Creates an Op out of machine code. Panics if the instruction is invalid.
-    pub fn from_bytes<const NUM_REGS: u8>(bytes: [u8; 16]) -> Self {
+    pub fn from_bytes<const NUM_REGS: usize>(bytes: [u8; 16]) -> Self {
         use Opcode::*;
         let instr = u128::from_be_bytes(bytes);
 
@@ -76,8 +76,8 @@ impl<W: Word> Instr<W> {
     }
 
     // Decodes an instruction
-    fn decode<const NUM_REGS: u8>(instr: u128) -> (RegIdx, RegIdx, ImmOrRegister<W>, Opcode) {
-        let regidx_bitlen = f32::from(NUM_REGS).log2().ceil() as usize;
+    fn decode<const NUM_REGS: usize>(instr: u128) -> (RegIdx, RegIdx, ImmOrRegister<W>, Opcode) {
+        let regidx_bitlen = f32::from(NUM_REGS as u8).log2().ceil() as usize;
 
         let mut cur_bit_idx = 0;
 
@@ -116,7 +116,7 @@ impl<W: Word> Instr<W> {
     }
 
     // Converts our operation to machine code
-    pub fn to_bytes<const NUM_REGS: u8>(&self) -> [u8; 16] {
+    pub fn to_bytes<const NUM_REGS: usize>(&self) -> [u8; 16] {
         let opcode = self.opcode() as u8;
         let reg0 = RegIdx(0);
 
@@ -138,7 +138,7 @@ impl<W: Word> Instr<W> {
     }
 
     // Encodes an instruction
-    fn encode<const NUM_REGS: u8>(
+    fn encode<const NUM_REGS: usize>(
         reg1: RegIdx,
         reg2: RegIdx,
         imm_or_reg: ImmOrRegister<W>,
@@ -148,7 +148,7 @@ impl<W: Word> Instr<W> {
         Self::regidx_valid::<NUM_REGS>(reg1.0);
         Self::regidx_valid::<NUM_REGS>(reg2.0);
 
-        let regidx_bitlen = f32::from(NUM_REGS).log2().ceil() as usize;
+        let regidx_bitlen = f32::from(NUM_REGS as u8).log2().ceil() as usize;
 
         let mut cur_bit_idx = 0;
         let mut instr: u128 = 0;
@@ -179,9 +179,9 @@ impl<W: Word> Instr<W> {
     }
 
     // Panics if a Register Index overflows its allocated space in machine code
-    fn regidx_valid<const NUM_REGS: u8>(regidx: u8) {
+    fn regidx_valid<const NUM_REGS: usize>(regidx: u8) {
         // Note we enumerate our registers [0,...,NUM_REGS-1]
-        if regidx >= NUM_REGS {
+        if regidx as usize >= NUM_REGS {
             panic!("Register Index exceeds our number of registers");
         }
     }
@@ -194,11 +194,11 @@ mod tests {
 
     use rand::Rng;
 
-    const NUM_REGS: u8 = 16;
+    const NUM_REGS: usize = 16;
     type W = u32;
 
     fn gen_regidx<R: Rng>(mut rng: R) -> RegIdx {
-        RegIdx(rng.gen_range(0..NUM_REGS))
+        RegIdx(rng.gen_range(0..NUM_REGS) as u8)
     }
 
     fn gen_imm_or_regidx<R: Rng>(mut rng: R) -> ImmOrRegister<W> {
@@ -206,7 +206,7 @@ mod tests {
         if is_imm {
             ImmOrRegister::Imm(rng.gen_range(0..=W::MAX))
         } else {
-            ImmOrRegister::Register(RegIdx(rng.gen_range(0..NUM_REGS)))
+            ImmOrRegister::Register(gen_regidx(&mut rng))
         }
     }
 

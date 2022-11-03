@@ -3,6 +3,7 @@ use std::ops::{BitAnd, BitOr, BitXor, Div, Not, Rem};
 
 pub trait Word:
     Debug
+    + Default
     + Eq
     + Ord
     + Copy
@@ -18,6 +19,11 @@ pub trait Word:
     type Signed: Eq + Ord + Copy;
     const BITLEN: u32;
     const MAX: Self;
+
+    /// Convert from `u64`. Fails if the value exceeds `W::MAX`
+    fn from_u64(val: u64) -> Result<Self, ()> {
+        Self::try_from(val).map_err(|_| ())
+    }
 
     /// Convert `self` to a `BIT_SIZE`-bit signed integer.
     fn to_signed(self) -> Self::Signed;
