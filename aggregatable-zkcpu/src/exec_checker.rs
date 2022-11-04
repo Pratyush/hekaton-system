@@ -1,7 +1,7 @@
 use crate::{
     common::*,
     util::{arr_set, uint8_to_fpvar},
-    word::WordVar,
+    word::{DoubleWordVar, WordVar},
 };
 
 use core::cmp::Ordering;
@@ -103,7 +103,7 @@ impl<W: WordVar<F>, F: PrimeField> CondSelectGadget<F> for ExecTickMemData<W, F>
 /// Decodes an encoded instruction into an opcode, 2 registers, and an immediate-or-register. The
 /// registers (including the imm-or-reg if applicable) are guaranteed to be less than `NUM_REGS`.
 fn decode_instr<const NUM_REGS: usize, W: WordVar<F>, F: PrimeField>(
-    encoded_instr: &W,
+    encoded_instr: &DoubleWordVar<W>,
 ) -> Result<
     (
         OpcodeVar<F>,
@@ -193,7 +193,7 @@ impl<W: WordVar<F>, F: PrimeField> CondSelectGadget<F> for CpuState<W, F> {
 /// counter, updated set of registers, and a description of what, if any, memory operation occured.
 pub(crate) fn exec_checker<const NUM_REGS: usize, W: WordVar<F>, F: PrimeField>(
     cpu_state: &CpuState<W, F>,
-    instr: &W,
+    instr: &DoubleWordVar<W>,
     opt_loaded_val: &W,
 ) -> Result<(CpuState<W, F>, ExecTickMemData<W, F>), SynthesisError> {
     // Prepare to run all the instructions. This will hold them all. At the end, we'll use the

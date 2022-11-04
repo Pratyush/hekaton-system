@@ -183,12 +183,12 @@ impl<W: WordVar<F>, F: PrimeField> TranscriptEntryVar<W, F> {
 
         // Encode `ram_idx`. Make sure it's 32 bits. Then shift by 32.
         let shift_var = FpVar::<F>::Constant(F::from(1u64 << shift));
-        acc += &self.ram_idx.to_fpvar()? * shift_var;
+        acc += &self.ram_idx.as_fpvar()? * shift_var;
         shift += 32;
 
         // Encode `val`
         let shift_var = FpVar::<F>::Constant(F::from(1u64 << shift));
-        acc += self.val.to_fpvar()? * shift_var;
+        acc += self.val.as_fpvar()? * shift_var;
 
         Ok(acc)
     }
@@ -260,7 +260,8 @@ fn transcript_checker<const NUM_REGS: usize, W: WordVar<F>, F: PrimeField>(
 
     // Unpack the LOAD at the program counter
     let pc = &pc_load.ram_idx;
-    let instr = &pc_load.val;
+    let instr = todo!(); // TODO: Deal with the fact that pcload is 2 words, not one
+                         //let instr = &pc_load.val;
 
     // If instr is a `lw`, then it needs the value from memory
     let opt_loaded_val = &mem_op.val;
@@ -311,8 +312,8 @@ fn transcript_checker<const NUM_REGS: usize, W: WordVar<F>, F: PrimeField>(
     //     ∨ (prev.ram_idx == cur.ram_idx ∧ prev.timestamp < cur.timestamp);
     let ram_idx_has_incrd =
         prev.ram_idx
-            .to_fpvar()?
-            .is_cmp(&cur.ram_idx.to_fpvar()?, Ordering::Less, false)?;
+            .as_fpvar()?
+            .is_cmp(&cur.ram_idx.as_fpvar()?, Ordering::Less, false)?;
     let ram_idx_is_eq = prev.ram_idx.is_eq(&cur.ram_idx)?;
     let t_has_incrd = prev
         .timestamp

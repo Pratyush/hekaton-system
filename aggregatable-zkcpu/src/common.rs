@@ -77,7 +77,7 @@ impl<W: WordVar<F>, F: PrimeField> ImmOrRegisterVar<W, F> {
         &self,
     ) -> Result<Vec<Boolean<F>>, SynthesisError> {
         let selector_bitlen = f32::from(NUM_REGS as u16).log2().ceil() as usize;
-        let mut bits = self.val.to_bits_be();
+        let mut bits = self.val.as_be_bits();
         // Select the bottom selector_bitlen bits
         Ok(bits.split_off(W::BITLEN - selector_bitlen))
     }
@@ -93,7 +93,7 @@ impl<W: WordVar<F>, F: PrimeField> ImmOrRegisterVar<W, F> {
         // Check that, if this is a regsiter index, it is less than NUM_REGS
         let num_regs = FpVar::Constant(F::from(NUM_REGS as u64));
         imm_val
-            .to_fpvar()?
+            .as_fpvar()?
             .is_cmp(&num_regs, Ordering::Less, false)?
             .conditional_enforce_equal(&Boolean::TRUE, &self.is_imm.not())?;
 
