@@ -68,8 +68,8 @@ impl<W: WordVar<F>, F: PrimeField> Default for ExecTickMemData<W, F> {
     fn default() -> Self {
         ExecTickMemData {
             kind: ExecTickMemDataKind(ExecTickMemDataKind::no_mem()),
-            idx: RamIdxVar::default(),
-            stored_word: RamIdxVar::default(),
+            idx: RamIdxVar::<W>::zero(),
+            stored_word: W::zero(),
         }
     }
 }
@@ -100,14 +100,31 @@ impl<W: WordVar<F>, F: PrimeField> CondSelectGadget<F> for ExecTickMemData<W, F>
     }
 }
 
-fn decode_instr<F: PrimeField, W: WordVar<F>>(
+/// Decodes an encoded instruction into an opcode, 2 registers, and an immediate-or-register. The
+/// registers (including the imm-or-reg if applicable) are guaranteed to be less than `NUM_REGS`.
+fn decode_instr<const NUM_REGS: usize, W: WordVar<F>, F: PrimeField>(
     encoded_instr: &W,
-) -> (
-    OpcodeVar<F>,
-    RegIdxVar<F>,
-    RegIdxVar<F>,
-    ImmOrRegisterVar<W, F>,
-) {
+) -> Result<
+    (
+        OpcodeVar<F>,
+        RegIdxVar<F>,
+        RegIdxVar<F>,
+        ImmOrRegisterVar<W, F>,
+    ),
+    SynthesisError,
+> {
+    let reg1: RegIdxVar<F> = unimplemented!();
+    let reg2: RegIdxVar<F> = unimplemented!();
+    let imm_or_reg: ImmOrRegisterVar<W, F> = unimplemented!();
+
+    let num_regs = FpVar::constant(F::from(NUM_REGS as u64));
+
+    // Check that the registers are within range
+    reg1.to_fpvar()?
+        .enforce_cmp(&num_regs, Ordering::Less, false)?;
+    reg2.to_fpvar()?
+        .enforce_cmp(&num_regs, Ordering::Less, false)?;
+
     unimplemented!()
 }
 
@@ -174,7 +191,7 @@ impl<W: WordVar<F>, F: PrimeField> CondSelectGadget<F> for CpuState<W, F> {
 /// Runs a single CPU tick with the given program counter, instruction, registers, and word loaded
 /// from memory (if `instr isn't a `lw`, then the word is ignored). Returns the updated program
 /// counter, updated set of registers, and a description of what, if any, memory operation occured.
-pub(crate) fn exec_checker<W: WordVar<F>, F: PrimeField>(
+pub(crate) fn exec_checker<const NUM_REGS: usize, W: WordVar<F>, F: PrimeField>(
     cpu_state: &CpuState<W, F>,
     instr: &W,
     opt_loaded_val: &W,
@@ -192,7 +209,7 @@ pub(crate) fn exec_checker<W: WordVar<F>, F: PrimeField>(
         regs,
         answer,
     } = cpu_state;
-    let (opcode, reg1, reg2, imm_or_reg) = decode_instr(instr);
+    let (opcode, reg1, reg2, imm_or_reg) = decode_instr::<NUM_REGS, _, _>(instr)?;
 
     // Create the default next program counter, which is the one that's incremented
     let (incrd_pc, pc_overflow) = pc.checked_increment();
@@ -203,12 +220,13 @@ pub(crate) fn exec_checker<W: WordVar<F>, F: PrimeField>(
     // Read the registers
     // reg1 (if used) is always the output register. So we don't need to read that
     // reg2 (if used) is always a secondary input
-    let reg2_val = W::conditionally_select_power_of_two_vector(&reg2.to_bits_be()?, regs)?;
+    let reg2_val = reg2.value::<NUM_REGS, _>(&regs)?;
     // imm_or_reg is always present
     let imm_or_reg_val = {
-        // We read imm_or_reg as both a register and an immediate, and then select the correct one
-        let reg_val =
-            W::conditionally_select_power_of_two_vector(&imm_or_reg.val.to_bits_be()?, regs)?;
+        let reg_val = W::conditionally_select_power_of_two_vector(
+            &imm_or_reg.as_selector::<NUM_REGS>()?,
+            regs,
+        )?;
         let imm_val = imm_or_reg.val.clone();
 
         W::conditionally_select(&imm_or_reg.is_imm, &imm_val, &reg_val)?
@@ -219,8 +237,8 @@ pub(crate) fn exec_checker<W: WordVar<F>, F: PrimeField>(
     for opcode in opcodes {
         match opcode {
             Add => {
-                let (output_val, new_flag) = reg2_val.carrying_add(imm_or_reg_val)?;
-                let new_regs = arr_set(&regs, &uint8_to_fpvar(&reg1)?, &output_val)?;
+                let (output_val, new_flag) = reg2_val.carrying_add(&imm_or_reg_val)?;
+                let new_regs = arr_set(&regs, &reg1.to_fpvar()?, &output_val)?;
 
                 // Save the resulting CPU state. The PC is incremented (need to check overflow),
                 // and the flag and registers are new.
@@ -246,8 +264,8 @@ pub(crate) fn exec_checker<W: WordVar<F>, F: PrimeField>(
                 };
             }
             Jmp => {
-                // Let pc' = imm_or_reg_val
-                let new_pc = imm_or_reg_val;
+                // Set the new PC to be the imm-or-reg
+                let new_pc = imm_or_reg_val.clone();
 
                 // Save the resulting CPU state. The PC is changed.
                 all_output_states[Jmp as usize] = CpuState {
@@ -281,7 +299,7 @@ pub(crate) fn exec_checker<W: WordVar<F>, F: PrimeField>(
                     regs: regs.clone(),
                     answer: CpuAnswer {
                         is_set: Boolean::TRUE,
-                        val: imm_or_reg_val,
+                        val: imm_or_reg_val.clone(),
                     },
                 };
             }

@@ -209,7 +209,7 @@ struct TranscriptCheckerEvals<F: PrimeField> {
 
 /// This function checks the time- and mem-sorted transcripts for consistency. It also accumulates
 /// both transcripts into their respective polynomial evaluations.
-fn transcript_checker<W: WordVar<F>, F: PrimeField>(
+fn transcript_checker<const NUM_REGS: usize, W: WordVar<F>, F: PrimeField>(
     cpu_state: &CpuState<W, F>,
     chal: &FpVar<F>,
     pc_load: &TranscriptEntryVar<W, F>,
@@ -267,7 +267,8 @@ fn transcript_checker<W: WordVar<F>, F: PrimeField>(
 
     // Run the CPU for one tick
     //let (new_pc, new_regs, exec_mem_data) = exec_checker(pc, instr, regs, opt_loaded_val);
-    let (new_cpu_state, exec_mem_data) = exec_checker(cpu_state, instr, opt_loaded_val)?;
+    let (new_cpu_state, exec_mem_data) =
+        exec_checker::<NUM_REGS, _, _>(cpu_state, instr, opt_loaded_val)?;
 
     // Check well-formedness of the mem data
     exec_mem_data.kind.enforce_well_formed()?;
