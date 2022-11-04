@@ -212,7 +212,7 @@ pub(crate) fn exec_checker<const NUM_REGS: usize, W: WordVar<F>, F: PrimeField>(
     let (opcode, reg1, reg2, imm_or_reg) = decode_instr::<NUM_REGS, _, _>(instr)?;
 
     // Create the default next program counter, which is the one that's incremented
-    let (incrd_pc, pc_overflow) = pc.checked_increment();
+    let (incrd_pc, pc_overflow) = pc.checked_increment()?;
 
     use tinyram_emu::instructions::Opcode::*;
     let opcodes = [Add, CmpE, Jmp, CJmp, Answer];
