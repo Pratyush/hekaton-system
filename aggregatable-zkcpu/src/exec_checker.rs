@@ -112,7 +112,7 @@ fn decode_instr<F: PrimeField, W: WordVar<F>>(
 }
 
 #[derive(Clone)]
-struct Answer<W, F>
+struct CpuAnswer<W, F>
 where
     W: WordVar<F>,
     F: PrimeField,
@@ -121,7 +121,7 @@ where
     val: W,
 }
 
-impl<W: WordVar<F>, F: PrimeField> CondSelectGadget<F> for Answer<W, F> {
+impl<W: WordVar<F>, F: PrimeField> CondSelectGadget<F> for CpuAnswer<W, F> {
     fn conditionally_select(
         cond: &Boolean<F>,
         true_value: &Self,
@@ -130,7 +130,7 @@ impl<W: WordVar<F>, F: PrimeField> CondSelectGadget<F> for Answer<W, F> {
         let is_set = Boolean::conditionally_select(cond, &true_value.is_set, &false_value.is_set)?;
         let val = W::conditionally_select(cond, &true_value.val, &false_value.val)?;
 
-        Ok(Answer { is_set, val })
+        Ok(CpuAnswer { is_set, val })
     }
 }
 
@@ -143,7 +143,7 @@ where
     pc: PcVar<W>,
     flag: Boolean<F>,
     regs: RegistersVar<W>,
-    answer: Answer<W, F>,
+    answer: CpuAnswer<W, F>,
 }
 
 impl<W: WordVar<F>, F: PrimeField> CondSelectGadget<F> for CpuState<W, F> {
@@ -198,7 +198,7 @@ pub(crate) fn exec_checker<W: WordVar<F>, F: PrimeField>(
     let (incrd_pc, pc_overflow) = pc.checked_increment();
 
     use tinyram_emu::instructions::Opcode::*;
-    let opcodes = [Add, CmpE, CJmp, Answer];
+    let opcodes = [Add, CmpE, Jmp, CJmp, Answer];
 
     // Read the registers
     // reg1 (if used) is always the output register. So we don't need to read that
@@ -224,12 +224,65 @@ pub(crate) fn exec_checker<W: WordVar<F>, F: PrimeField>(
 
                 // Save the resulting CPU state. The PC is incremented (need to check overflow),
                 // and the flag and registers are new.
-                pc_overflow.enforce_equal(&Boolean::FALSE)?;
                 all_output_states[Add as usize] = CpuState {
                     pc: incrd_pc.clone(),
                     flag: new_flag,
                     regs: new_regs,
                     answer: answer.clone(),
+                };
+            }
+            CmpE => {
+                // Compare the two input values
+                let new_flag = reg2_val.is_eq(&imm_or_reg_val)?;
+
+                // Save the resulting CPU state. The PC is incremented (need to check overflow),
+                // and the flag is new
+                pc_overflow.enforce_equal(&Boolean::FALSE)?;
+                all_output_states[CmpE as usize] = CpuState {
+                    pc: incrd_pc.clone(),
+                    flag: new_flag,
+                    regs: regs.clone(),
+                    answer: answer.clone(),
+                };
+            }
+            Jmp => {
+                // Let pc' = imm_or_reg_val
+                let new_pc = imm_or_reg_val;
+
+                // Save the resulting CPU state. The PC is changed.
+                all_output_states[Jmp as usize] = CpuState {
+                    pc: new_pc,
+                    flag: flag.clone(),
+                    regs: regs.clone(),
+                    answer: answer.clone(),
+                };
+            }
+            CJmp => {
+                // Let pc' = imm_or_reg_val if flag is set. Otherwise, let pc' = pc + 1
+                let new_pc = PcVar::conditionally_select(&flag, &imm_or_reg_val, &incrd_pc)?;
+
+                // Check that incrd pc, if used, didn't overflow
+                let used_incrd_pc = flag.not();
+                let relevant_pc_overflow = pc_overflow.and(&used_incrd_pc)?;
+                relevant_pc_overflow.enforce_equal(&Boolean::FALSE)?;
+
+                // Save the resulting CPU state. The PC is changed.
+                all_output_states[CJmp as usize] = CpuState {
+                    pc: new_pc,
+                    flag: flag.clone(),
+                    regs: regs.clone(),
+                    answer: answer.clone(),
+                };
+            }
+            Answer => {
+                all_output_states[Answer as usize] = CpuState {
+                    pc: incrd_pc.clone(),
+                    flag: flag.clone(),
+                    regs: regs.clone(),
+                    answer: CpuAnswer {
+                        is_set: Boolean::TRUE,
+                        val: imm_or_reg_val,
+                    },
                 };
             }
             _ => unimplemented!(),
