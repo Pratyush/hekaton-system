@@ -24,6 +24,6 @@ where
     W: WordVar<F>,
     F: PrimeField,
 {
-    is_imm: Boolean<F>,
-    val: W,
+    pub(crate) is_imm: Boolean<F>,
+    pub(crate) val: W,
 }

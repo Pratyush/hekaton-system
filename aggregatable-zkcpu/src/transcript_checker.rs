@@ -1,6 +1,6 @@
 use crate::{
     common::*,
-    exec_checker::{exec_checker, ExecTickMemData},
+    exec_checker::{exec_checker, CpuState, ExecTickMemData},
     word::WordVar,
 };
 
@@ -152,19 +152,6 @@ impl<W: WordVar<F>, F: PrimeField> TranscriptEntryVar<W, F> {
     }
 }
 
-fn uint32_to_fpvar<F: PrimeField>(x: &UInt32<F>) -> Result<FpVar<F>, SynthesisError> {
-    let bits = x.to_bits_le();
-    let zero = FpVar::<F>::zero();
-
-    let mut acc = FpVar::<F>::zero();
-    for (i, bit) in bits.iter().enumerate() {
-        let cur_pow_2 = FpVar::Constant(F::from(1u64 << i));
-        acc += FpVar::conditionally_select(&bit, &cur_pow_2, &zero)?;
-    }
-
-    Ok(acc)
-}
-
 impl<W: WordVar<F>, F: PrimeField> TranscriptEntryVar<W, F> {
     /// Encodes this transcript entry as a field element. `is_init` says whether this entry is part
     /// of the initial memory or not.
@@ -223,13 +210,13 @@ struct TranscriptCheckerEvals<F: PrimeField> {
 /// This function checks the time- and mem-sorted transcripts for consistency. It also accumulates
 /// both transcripts into their respective polynomial evaluations.
 fn transcript_checker<W: WordVar<F>, F: PrimeField>(
-    regs: &RegistersVar<W>,
+    cpu_state: &CpuState<W, F>,
     chal: &FpVar<F>,
     pc_load: &TranscriptEntryVar<W, F>,
     mem_op: &TranscriptEntryVar<W, F>,
     mem_tr_adj_pair: (&TranscriptEntryVar<W, F>, &TranscriptEntryVar<W, F>),
     evals: &TranscriptCheckerEvals<F>,
-) -> Result<(PcVar<W>, RegistersVar<W>, TranscriptCheckerEvals<F>), SynthesisError> {
+) -> Result<(CpuState<W, F>, TranscriptCheckerEvals<F>), SynthesisError> {
     // pc_load occurs at time t
     let t = &pc_load.timestamp;
     // mem_op, if defined, occurs at time t
@@ -280,8 +267,7 @@ fn transcript_checker<W: WordVar<F>, F: PrimeField>(
 
     // Run the CPU for one tick
     //let (new_pc, new_regs, exec_mem_data) = exec_checker(pc, instr, regs, opt_loaded_val);
-    let (new_pc, new_regs, exec_mem_data): (PcVar<W>, RegistersVar<W>, ExecTickMemData<W, F>) =
-        exec_checker(pc, instr, regs, opt_loaded_val);
+    let (new_cpu_state, exec_mem_data) = exec_checker(cpu_state, instr, opt_loaded_val)?;
 
     // Check well-formedness of the mem data
     exec_mem_data.kind.enforce_well_formed()?;
@@ -362,5 +348,5 @@ fn transcript_checker<W: WordVar<F>, F: PrimeField>(
         .tr_init_accessed
         .conditionally_update(&is_new_load, &cur_as_initmem, chal)?;
 
-    Ok((new_pc, new_regs, new_evals))
+    Ok((new_cpu_state, new_evals))
 }
