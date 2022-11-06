@@ -39,9 +39,22 @@ impl<W: Word> ImmOrRegister<W> {
         }
     }
 
+    /// Returns the value of this `ImmOrRegister` relative to the register set. If this is an
+    /// `Imm`, then the internal value is returned. Otherwise, the relevant register value is
+    /// returned.
     pub fn value(&self, registers: &[W]) -> W {
         match self {
             ImmOrRegister::Register(reg) => registers[reg.0 as usize],
+            ImmOrRegister::Imm(imm) => *imm,
+        }
+    }
+
+    /// Returns internal value of this `ImmOrRegister`. It can be either a constant or a reigster
+    /// index.
+    pub fn raw(&self) -> W {
+        match self {
+            // This unwrap is ok because reg.0 is a u8, which is always representable as a Word
+            ImmOrRegister::Register(reg) => W::from_u64(reg.0 as u64).unwrap(),
             ImmOrRegister::Imm(imm) => *imm,
         }
     }

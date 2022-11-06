@@ -16,6 +16,10 @@ ark-relations = { version = "0.3", default-features = false }
 ark-serialize = { version = "0.3", default-features = false }
 tinyram-emu = { path = "../tinyram-emu" }
 
+[dev-dependencies]
+rand = "0.8.5"
+ark-bls12-381 = "0.3.0"
+
 [features]
 default = ["asm", "parallel"]
 std = ["ark-ff/std","ark-poly/std", "ark-r1cs-std/std", "ark-serialize/std", "ark-relations/std"]

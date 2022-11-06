@@ -41,7 +41,7 @@ impl<W: Word> Instr<W> {
 
         // Decode the instruction. reg1 is the register (if any) that is modified, and reg2 is the
         // register (if any) that is not modified.
-        let (reg1, reg2, imm_or_reg, opcode) = Self::decode::<NUM_REGS>(instr);
+        let (opcode, reg1, reg2, imm_or_reg) = Self::decode::<NUM_REGS>(instr);
 
         match opcode {
             Add => Instr::Add {
@@ -83,7 +83,9 @@ impl<W: Word> Instr<W> {
     }
 
     // Decodes an instruction
-    fn decode<const NUM_REGS: usize>(instr: u128) -> (RegIdx, RegIdx, ImmOrRegister<W>, Opcode) {
+    pub fn decode<const NUM_REGS: usize>(
+        instr: u128,
+    ) -> (Opcode, RegIdx, RegIdx, ImmOrRegister<W>) {
         let regidx_bitlen = f32::from(NUM_REGS as u8).log2().ceil() as usize;
 
         let mut cur_bit_idx = 0;
@@ -119,7 +121,7 @@ impl<W: Word> Instr<W> {
         Self::regidx_valid::<NUM_REGS>(reg1);
         Self::regidx_valid::<NUM_REGS>(reg2);
 
-        (RegIdx(reg1), RegIdx(reg2), imm_or_reg, opcode)
+        (opcode, RegIdx(reg1), RegIdx(reg2), imm_or_reg)
     }
 
     // Converts our operation to machine code. Panics if `buf.len() != W::INSTR_BYTELEN`.
@@ -130,16 +132,16 @@ impl<W: Word> Instr<W> {
         let reg0 = RegIdx(0);
 
         let instr = match *self {
-            Instr::Add { in1, in2, out } => Self::encode::<NUM_REGS>(out, in1, in2, opcode),
-            Instr::Or { in1, in2, out } => Self::encode::<NUM_REGS>(out, in1, in2, opcode),
-            Instr::Xor { in1, in2, out } => Self::encode::<NUM_REGS>(out, in1, in2, opcode),
-            Instr::Not { in1, out } => Self::encode::<NUM_REGS>(out, reg0, in1, opcode),
-            Instr::LoadW { in1, out } => Self::encode::<NUM_REGS>(out, reg0, in1, opcode),
-            Instr::StoreW { in1, out } => Self::encode::<NUM_REGS>(reg0, in1, out, opcode),
-            Instr::CmpE { in1, in2 } => Self::encode::<NUM_REGS>(reg0, in1, in2, opcode),
-            Instr::Jmp { in1 } => Self::encode::<NUM_REGS>(reg0, reg0, in1, opcode),
-            Instr::CJmp { in1 } => Self::encode::<NUM_REGS>(reg0, reg0, in1, opcode),
-            Instr::Answer { in1 } => Self::encode::<NUM_REGS>(reg0, reg0, in1, opcode),
+            Instr::Add { in1, in2, out } => Self::encode::<NUM_REGS>(opcode, out, in1, in2),
+            Instr::Or { in1, in2, out } => Self::encode::<NUM_REGS>(opcode, out, in1, in2),
+            Instr::Xor { in1, in2, out } => Self::encode::<NUM_REGS>(opcode, out, in1, in2),
+            Instr::Not { in1, out } => Self::encode::<NUM_REGS>(opcode, out, reg0, in1),
+            Instr::LoadW { in1, out } => Self::encode::<NUM_REGS>(opcode, out, reg0, in1),
+            Instr::StoreW { in1, out } => Self::encode::<NUM_REGS>(opcode, reg0, in1, out),
+            Instr::CmpE { in1, in2 } => Self::encode::<NUM_REGS>(opcode, reg0, in1, in2),
+            Instr::Jmp { in1 } => Self::encode::<NUM_REGS>(opcode, reg0, reg0, in1),
+            Instr::CJmp { in1 } => Self::encode::<NUM_REGS>(opcode, reg0, reg0, in1),
+            Instr::Answer { in1 } => Self::encode::<NUM_REGS>(opcode, reg0, reg0, in1),
             _ => todo!(),
         };
 
@@ -149,10 +151,10 @@ impl<W: Word> Instr<W> {
 
     // Encodes an instruction
     fn encode<const NUM_REGS: usize>(
+        opcode: u8,
         reg1: RegIdx,
         reg2: RegIdx,
         imm_or_reg: ImmOrRegister<W>,
-        opcode: u8,
     ) -> u128 {
         // Validate the register values
         Self::regidx_valid::<NUM_REGS>(reg1.0);

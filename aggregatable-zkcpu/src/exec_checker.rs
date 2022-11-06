@@ -320,3 +320,121 @@ pub(crate) fn exec_checker<const NUM_REGS: usize, W: WordVar<F>, F: PrimeField>(
 
     Ok((out_state, out_mem_op))
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    use tinyram_emu::{
+        instructions::Instr,
+        register::{ImmOrRegister, RegIdx},
+        word::Word,
+    };
+
+    use ark_bls12_381::Fr;
+    use ark_r1cs_std::uint32::UInt32;
+    use ark_r1cs_std::R1CSVar;
+    use rand::Rng;
+
+    const NUM_REGS: usize = 16;
+    type F = Fr;
+    type WV = UInt32<F>;
+    type W = <WV as WordVar<F>>::NativeWord;
+
+    fn gen_regidx<R: Rng>(mut rng: R) -> RegIdx {
+        RegIdx(rng.gen_range(0..NUM_REGS) as u8)
+    }
+
+    fn gen_imm_or_regidx<R: Rng>(mut rng: R) -> ImmOrRegister<W> {
+        let is_imm = rng.gen();
+        if is_imm {
+            ImmOrRegister::Imm(rng.gen_range(0..=W::MAX))
+        } else {
+            ImmOrRegister::Register(gen_regidx(&mut rng))
+        }
+    }
+
+    // Tests that ZK decoding is compatible with the native decoder
+    #[test]
+    fn test_decode() {
+        let mut rng = rand::thread_rng();
+
+        // Test 100 test cases of each kind of instruction
+        for _ in 0..100 {
+            // Make random test cases
+            let test_cases: &[Instr<W>] = &[
+                Instr::Answer {
+                    in1: gen_imm_or_regidx(&mut rng),
+                },
+                Instr::CmpE {
+                    in1: gen_regidx(&mut rng),
+                    in2: gen_imm_or_regidx(&mut rng),
+                },
+                Instr::Or {
+                    in1: gen_regidx(&mut rng),
+                    in2: gen_imm_or_regidx(&mut rng),
+                    out: gen_regidx(&mut rng),
+                },
+                Instr::Add {
+                    in1: gen_regidx(&mut rng),
+                    in2: gen_imm_or_regidx(&mut rng),
+                    out: gen_regidx(&mut rng),
+                },
+                Instr::Not {
+                    in1: gen_imm_or_regidx(&mut rng),
+                    out: gen_regidx(&mut rng),
+                },
+                Instr::CJmp {
+                    in1: gen_imm_or_regidx(&mut rng),
+                },
+                Instr::LoadW {
+                    in1: gen_imm_or_regidx(&mut rng),
+                    out: gen_regidx(&mut rng),
+                },
+                Instr::StoreW {
+                    in1: gen_regidx(&mut rng),
+                    out: gen_imm_or_regidx(&mut rng),
+                },
+            ];
+
+            // Test equality after an encode-decode round trip
+            for tc in test_cases {
+                // Encode the instruction to bytes
+                let mut encoded_instr = [0u8; W::INSTR_BYTELEN];
+                tc.to_bytes::<NUM_REGS>(&mut encoded_instr);
+
+                // Split the encoded instruction bytes into two. This is the encoded first and
+                // second word
+                let (word0, word1) = {
+                    const WORD_BYTELEN: usize = W::BITLEN / 8;
+                    let mut w0_buf = [0u8; WORD_BYTELEN];
+                    let mut w1_buf = [0u8; WORD_BYTELEN];
+                    w0_buf.copy_from_slice(&encoded_instr[..WORD_BYTELEN]);
+                    w1_buf.copy_from_slice(&encoded_instr[WORD_BYTELEN..]);
+                    (W::from_be_bytes(w0_buf), W::from_be_bytes(w1_buf))
+                };
+
+                // Witness those words and decode them in ZK
+                let word0_var = WV::constant(word0);
+                let word1_var = WV::constant(word1);
+                let (opcode_var, reg1_var, reg2_var, imm_or_reg_var) =
+                    decode_instr::<NUM_REGS, _, _>(&(word0_var, word1_var)).unwrap();
+
+                // Now decode normally
+                let instr_as_u128 = {
+                    let mut buf = [0u8; 16];
+                    buf[16 - encoded_instr.len()..16].copy_from_slice(&encoded_instr);
+                    u128::from_be_bytes(buf)
+                };
+                let (opcode, reg1, reg2, imm_or_reg) =
+                    Instr::<W>::decode::<NUM_REGS>(instr_as_u128);
+
+                // Compare the decodings
+                assert_eq!(opcode_var.value().unwrap(), opcode as u8);
+                assert_eq!(reg1_var.0.value().unwrap(), reg1.0);
+                assert_eq!(reg2_var.0.value().unwrap(), reg2.0);
+                assert_eq!(imm_or_reg_var.val.value().unwrap(), imm_or_reg.raw());
+            }
+        }
+    }
+}

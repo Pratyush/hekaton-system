@@ -17,7 +17,7 @@ pub(crate) type PcVar<W> = W;
 pub(crate) type OpcodeVar<F> = UInt8<F>;
 
 /// An index into the registers, in ZK land
-pub(crate) struct RegIdxVar<F: PrimeField>(UInt8<F>);
+pub(crate) struct RegIdxVar<F: PrimeField>(pub(crate) UInt8<F>);
 
 impl<F: PrimeField> RegIdxVar<F> {
     pub(crate) fn to_bits_be(&self) -> Result<Vec<Boolean<F>>, SynthesisError> {
