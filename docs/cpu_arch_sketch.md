@@ -15,10 +15,10 @@ This notation is used in the pseudocode and the diagram.
 
 ```rust
 // An index into RAM or ROM
-type ram_idx = usize;
+type RamIdx = Word;
 // Program counter
-type Pc = usize;
-type Instruction = Word;
+type Pc = RamIdx;
+type Instruction = DWord;
 
 /// An entry in the transcript of RAM accesses
 struct TranscriptEntry {
@@ -27,11 +27,11 @@ struct TranscriptEntry {
     // The timestamp of this entry
     t: usize,
     // LOAD or STORE
-    op: enum { Load, Store },
+    op: { Load, Store },
     // Either the index being loaded from or stored to
-    ram_idx: ram_idx,
-    // The value being loaded or stored
-    val: Word,
+    ram_idx: RamIdx,
+    // The line being loaded or stored
+    line: FieldElem,
 }
 
 /// This is the placeholder transcript entry that MUST begin the memory-ordered transcript. Indexing
@@ -41,7 +41,7 @@ const TRANSCRIPT_START = TranscriptEntry::Entry {
     op: LOAD,
     ram_idx: 0,
     val: 0,
-}
+};
 
 impl TranscriptEntry {
     /// Encodes this transcript entry as a field element for the purpose of hashing or
@@ -52,14 +52,31 @@ impl TranscriptEntry {
     /// representation as a coefficient in a polynomial. The `_notime` variant does not include the
     /// timestamp in the representation
     fn to_ff_notime(&self) -> FieldElem;
+
+    /// Extracts the byte at the given RAM index, returning it and an error flag. `err = true` if
+    /// the lines of `idx` and `self.ram_idx` are not equal.
+    fn select_byte(&self, idx: RamIdx) -> (DWord, bool);
+
+    /// Extracts the word at the given RAM index, returning it and an error flag. Ignores the low
+    /// bits of `idx` denoting sub-word precision. `err = true` if the lines of `idx` and
+    /// `self.ram_idx` are not equal, or the low bits of `self.ram_idx` denoting word precision are
+    /// not all 0.
+    fn select_word(&self, idx: RamIdx) -> (DWord, bool);
+
+    /// Extracts the dword starting at the given RAM index, returning it and an error flag. Ignores
+    /// the low bits of `idx` denoting sub-word precision. `err = true` if lines of `idx` and
+    /// `self.ram_idx` are not equal, or the low bits of `self.ram_idx` denoting word precision are
+    /// not all 0.
+    fn select_dword(&self, idx: RamIdx) -> DWord;
 }
 
 /// Represents the decoded instruction and register information used to LOAD or STORE in a small
 /// tick. `Load` doesn't carry the thing loaded because that has to come from outside the CPU, from
 /// the memory.
 enum SmallTickMemData {
-    Load(ram_idx),
-    Store(ram_idx, Word),
+    Load(RamIdx),
+    StoreW(RamIdx, Word),
+    StoreB(RamIdx, u8),
     NoMemOp,
 }
 
@@ -93,18 +110,68 @@ impl RunningEval {
 }
 
 // Computes a CPU tick. Every tick can do any op, including LOAD and a STORE. The returned index
-// `i` is a function of `instr`. `loaded_val` represents the value at the `i`, if this instruction
+// `i` is a function of `instr`. `mem_op` represents the value at the `i`, if this instruction
 // is a LOAD.
 //
-// Returns `(new_regs, new_pc, mem_data)`, where `new_regs` is the new set of registers, `new_pc`
-// is the updated program counter, and `mem_data` contains the decoded instruction and associated
-// register values regarding any LOADs or STOREs that happened in this tick.
+// Returns `(new_regs, new_pc)`, where `new_regs` is the new set of registers and `new_pc` is the
+// updated program counter.
 fn smalltick(
     pc: Pc<F>,
     instr: EncodedInstruction<F>,
     regs: Registers<F>,
-    loaded_val: Option<Word>,
-) -> (Registers, Pc, SmallTickMemData);
+    mem_op: TranscriptEntry<F>,
+) -> (Registers, Pc) {
+    // Store (regs, pc, err) for each possible instruction
+    let all_possible_results = [(Registers, Pc, Bool); 32];
+
+    // Parse instr as every possible instruction
+
+    // A simple one is add
+    let (dest, in1, in2) = instr.as_add();
+    let word1 = in1.value(regs);
+    let word2 = in2.value(regs);
+    let new_regs = regs.set_val(dest, word1 + word2);
+    let new_pc = pc;
+    let err = false;
+    all_possible_results[0] = (new_regs, new_pc, err);
+
+    // ...
+
+    // Now do LoadW
+    // Unpack values
+    (dest, in1) = instr.as_loadw();
+    let idx = in1.value(regs);
+    // If mem_op isn't a load and isn't this index, this is a mismatch in the transcript vs the
+    // execution. This is an error.
+    let (loaded_word, err) = mem_op.select_word(idx);
+    // Save the new values
+    let new_regs = regs.set_val(dest, loaded_word);
+    let new_pc = pc;
+    all_possible_results[1] = (new_regs, new_pc, err);
+
+    // StoreW
+    // Unpack values
+    (dest, in1) = instr.as_storew();
+    let idx = dest.value(regs);
+    let word_to_store = in1.value(regs);
+    // Get the word that this operation allegedly stores and ensure that it's equal to the value in
+    // the register
+    let (stored_word, mut err) = mem_op.select_word(idx);
+    err |= word_to_store != stored_word
+    // Save the new values
+    let new_regs = regs.set_val(dest, loaded_word);
+    let new_pc = pc;
+    all_possible_results[2] = (new_regs, new_pc, err);
+
+    // ...
+
+    // Select the correct set of registers etc.
+    let (new_regs, new_pc, err) = all_possible_results.get_val(instr.opcode);
+    // Ensure that this operation didn't have an error
+    assert !err
+
+    return (new_regs, new_pc)
+}
 
 
 struct BigtickRunningEvals {
@@ -143,24 +210,15 @@ fn bigtick(
     assert_if_exists mem_op.t  == t + 1;
     assert pc_load.op          == LOAD;
 
-    // Check that the instruction LOAD was at the index given
-    assert pc_load.ramdix == pc;
-
     // Ensure that padding entries are LOADs. Allowing STOREs is a soundness issue: padding entries
     // aren't subject to the SmallTickMemData comparison below, so a STORE on a no-op would still
     // make it into the mem transcript and cause it to believe a real STORE happened.
-    assert !mem_op.is_padding ∨ (mem_op.op == LOAD)
+    assert !mem_op.is_padding ∨ (mem_op.op == LOAD);
 
+    // Get the instruction from the PC load
+    let instr = pc_load.select_dword(pc);
     // Do a CPU tick
-    let instr = pc_load.val;
-    let loaded_word = mem_op.val or None
-    let (new_regs, new_pc, mem_data) = smalltick(instr, regs, loaded_word);
-
-    // Make sure the idx we LOADed or STOREd was indeed what the CPU wanted
-    match mem_op.op {
-        Some(Load)  => assert mem_data == SmallTickMemData::Load(memop.ram_idx),
-        Some(Store) => assert_mem_data == SmallTickMemData::Store(memop.ram_idx, memop.val),
-    }
+    let (new_regs, new_pc) = smalltick(instr, regs, mem_op);
 
     //
     // Now accumulate the transcript entries into the time-ordered hashes and polynomials
