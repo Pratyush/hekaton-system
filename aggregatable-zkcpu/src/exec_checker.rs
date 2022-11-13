@@ -4,6 +4,7 @@ use crate::{
     word::{DoubleWordVar, WordVar},
 };
 
+use std::cmp::min;
 use core::cmp::Ordering;
 
 use ark_ff::PrimeField;
@@ -113,11 +114,23 @@ fn decode_instr<const NUM_REGS: usize, W: WordVar<F>, F: PrimeField>(
     ),
     SynthesisError,
 > {
-    let reg1: RegIdxVar<F> = unimplemented!();
-    let reg2: RegIdxVar<F> = unimplemented!();
-    let imm_or_reg: ImmOrRegisterVar<W, F> = unimplemented!();
 
     let num_regs = FpVar::constant(F::from(NUM_REGS as u64));
+    //let bitlen_reg: usize = (NUM_REGS as f32).log2().ceil() as usize;
+    let mut cur_bit_idx: usize = 0;
+    let opcode: OpcodeVar<F> = unimplemented!();
+
+    let imm_or_reg: ImmOrRegisterVar<W, F> = unimplemented!();
+    cur_bit_idx += W::BITLEN;
+
+    let reg1: RegIdxVar<F> = unimplemented!();
+    cur_bit_idx += RegIdxVar::<F>::BITLEN;
+
+    let reg2: RegIdxVar<F> = unimplemented!();
+    cur_bit_idx += RegIdxVar::<F>::BITLEN;
+
+    let is_imm: Boolean<F> = unimplemented!();
+    cur_bit_idx += 1;
 
     // Check that the registers are within range
     reg1.to_fpvar()?
@@ -126,6 +139,32 @@ fn decode_instr<const NUM_REGS: usize, W: WordVar<F>, F: PrimeField>(
         .enforce_cmp(&num_regs, Ordering::Less, false)?;
 
     unimplemented!()
+}
+
+/// Returns the subsection [start, end) of a DoubleWordVar, as Vec<Boolean<F>>
+fn bit_range<const NUM_REGS: usize, W: WordVar<F>, F: PrimeField>(
+    bits: &DoubleWordVar<W>,
+    start: usize,
+    end: usize
+) -> Vec<Boolean<F>>
+{
+    let (word1, word2) = bits;
+    let word1 = word1.as_be_bits();
+    let word2 = word2.as_be_bits();
+    let mut to_return: Vec<Boolean<F>> = vec![];
+    let mut x:usize = 0;
+
+    for i in start..min(end, word1.len()) {        
+        to_return[x] = word1[i].clone();
+        x += 1;
+    }
+
+    for i in 0..end-W::BITLEN {
+        to_return[x] = word2[i].clone();
+        x += 1;
+    }
+
+    return to_return;
 }
 
 #[derive(Clone)]

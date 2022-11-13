@@ -34,6 +34,9 @@ pub trait WordVar<F: PrimeField>: Debug + EqGadget<F> + CondSelectGadget<F> {
     /// Convert `self` to its big-endian bit representation
     fn as_be_bits(&self) -> Vec<Boolean<F>>;
 
+    /// Convert from bit-endian bit representation to `self'
+    fn from_be_bits(bits: Vec<Boolean<F>>) -> Self;
+
     /// Returns `(self + 1, overflow)`
     fn checked_increment(&self) -> Result<(Self, Boolean<F>), SynthesisError> {
         self.carrying_add(&Self::one())
@@ -64,6 +67,10 @@ macro_rules! impl_word {
                 let mut v = self.to_bits_le();
                 v.reverse();
                 v
+            }
+
+            fn from_be_bits(bits: Vec<Boolean<F>>) -> Self {
+                todo!();
             }
 
             fn carrying_add(&self, other: &Self) -> Result<(Self, Boolean<F>), SynthesisError> {
@@ -106,6 +113,10 @@ impl<F: PrimeField> WordVar<F> for UInt8<F> {
 
     fn as_be_bits(&self) -> Vec<Boolean<F>> {
         <Self as ToBitsGadget<F>>::to_bits_be(&self).unwrap()
+    }
+
+    fn from_be_bits(bits: Vec<Boolean<F>>) -> Self {
+        todo!();
     }
 
     fn carrying_add(&self, other: &Self) -> Result<(Self, Boolean<F>), SynthesisError> {

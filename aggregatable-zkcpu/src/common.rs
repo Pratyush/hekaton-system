@@ -14,14 +14,36 @@ use ark_relations::r1cs::SynthesisError;
 pub(crate) type PcVar<W> = W;
 
 /// An instruction opcode, in ZK land
-pub(crate) type OpcodeVar<F> = UInt8<F>;
+pub(crate) struct OpcodeVar<F: PrimeField>(pub(crate) UInt8<F>);
+
+impl<F: PrimeField> OpcodeVar<F> {
+    pub(crate) const BITLEN:usize = todo!();
+
+    pub(crate) fn to_bits_be(&self) -> Result<Vec<Boolean<F>>, SynthesisError> {
+        self.0.to_bits_be()
+    }
+
+    pub(crate) fn value(&self) -> Option<u8> {
+        todo!();
+    }
+
+    pub(crate) fn from_bits_be(bits: Vec<Boolean<F>>) -> Self {
+        todo!();
+    }
+}
 
 /// An index into the registers, in ZK land
 pub(crate) struct RegIdxVar<F: PrimeField>(pub(crate) UInt8<F>);
 
 impl<F: PrimeField> RegIdxVar<F> {
+    pub(crate) const BITLEN:usize = todo!();
+
     pub(crate) fn to_bits_be(&self) -> Result<Vec<Boolean<F>>, SynthesisError> {
         self.0.to_bits_be()
+    }
+
+    pub(crate) fn from_bits_be(bits: Vec<Boolean<F>>) -> Self {
+        todo!();
     }
 
     /// Returns the least significant `⌈log₂ NUM_REGS⌉` bits of this index. This is so it can be
