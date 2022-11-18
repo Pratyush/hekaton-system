@@ -119,7 +119,8 @@ fn decode_instr<const NUM_REGS: usize, W: WordVar<F>, F: PrimeField>(
     let bitlen_reg: usize = (NUM_REGS as f32).log2().ceil() as usize;
     let mut cur_bit_idx: usize = 0;
     let opcode: OpcodeVar<F> = OpcodeVar::<F>::from_bits_be(bit_range::<NUM_REGS, W, F>(encoded_instr, cur_bit_idx, cur_bit_idx+OpcodeVar::<F>::BITLEN));
-
+    cur_bit_idx += OpcodeVar::<F>::BITLEN;
+    
     let imm_or_reg = bit_range::<NUM_REGS, W, F>(encoded_instr, cur_bit_idx, cur_bit_idx+W::BITLEN);
     cur_bit_idx += W::BITLEN;
 
