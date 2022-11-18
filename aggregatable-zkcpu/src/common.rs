@@ -17,7 +17,7 @@ pub(crate) type PcVar<W> = W;
 pub(crate) struct OpcodeVar<F: PrimeField>(pub(crate) UInt8<F>);
 
 impl<F: PrimeField> OpcodeVar<F> {
-    pub(crate) const BITLEN:usize = todo!();
+    pub(crate) const BITLEN:usize = 5;
 
     pub(crate) fn to_bits_be(&self) -> Result<Vec<Boolean<F>>, SynthesisError> {
         self.0.to_bits_be()
@@ -36,8 +36,6 @@ impl<F: PrimeField> OpcodeVar<F> {
 pub(crate) struct RegIdxVar<F: PrimeField>(pub(crate) UInt8<F>);
 
 impl<F: PrimeField> RegIdxVar<F> {
-    pub(crate) const BITLEN:usize = todo!();
-
     pub(crate) fn to_bits_be(&self) -> Result<Vec<Boolean<F>>, SynthesisError> {
         self.0.to_bits_be()
     }
