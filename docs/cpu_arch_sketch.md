@@ -28,7 +28,7 @@ type TapeIdx = Word;
 type Pc = RamIdx;
 type Instruction = DWord;
 
-/// An entry in the transcript of RAM accesses
+/// An entry in the transcript of RAM accesses. We load/store data at dword granularity
 struct TranscriptEntry {
     // A flag denoting whether this is a padding entry
     is_padding: Boolean,
@@ -40,8 +40,8 @@ struct TranscriptEntry {
     // The index being loaded from, stored to, or read from the public tape. When used as a RAM
     // index, this is line-aligned, meaning the low bits specifying individual words MUST be 0.
     idx: Word,
-    // The line being loaded or stored
-    line: Vec<Word>,
+    // The dword being loaded or stored
+    dword: DWord,
 }
 
 /// This is the placeholder transcript entry that MUST begin the memory-ordered transcript.
@@ -64,25 +64,29 @@ impl TranscriptEntry {
     fn to_ff_notime(&self) -> FieldElem;
 
     // Extracts the byte at the given RAM index, returning it and an error flag. `err = true` iff
-    // the lines of `idx` and `self.idx` are not equal, or `self.is_padding == true`.
-    fn select_byte(&self, idx: RamIdx) -> (DWord, Boolean);
+    // `self.idx` and the high (non-byte-precision) bits of `idx` are not equal, or
+    // `self.is_padding == true`.
+    fn select_byte(&self, idx: RamIdx) -> (UInt8, Boolean);
 
     // Extracts the word at the given RAM index, returning it and an error flag. Ignores the low
-    // bits of `idx` denoting sub-word precision. `err = true` iff the lines of `idx` and
-    // `self.idx` are not equal, or the low bits of `self.idx` denoting word precision are
-    // not all 0, or `self.is_padding == true`.
+    // bits of `idx` denoting sub-word precision. `err = true` iff `self.idx` and the high
+    // (non-byte- or word-precision) bits of `idx` are not equal, or the low bits of `self.idx` are
+    // not all 0, or `self.padding == true`.
     fn select_word(&self, idx: RamIdx) -> (Word, Boolean);
 
-    // Extracts the dword starting at the given RAM index, returning it and an error flag. Ignores
-    // the low bits of `idx` denoting sub-word precision. `err = true` iff the lines of `idx` and
-    // `self.idx` are not equal, or the low bits of `self.idx` denoting word precision are
-    // not all 0, or `self.is_padding == true`.
-    fn select_dword(&self, idx: RamIdx) -> (DWord, Boolean);
+    // Extracts the dword at the given RAM index, returning it and an error flag. Ignores the low
+    // bits of `idx` denoting sub-word precision. `err = true` iff `self.idx` and the high
+    // (non-byte- or word-precision) bits of `idx` are not equal, or the low bits of `self.idx` are
+    // not all 0, or `self.padding == true`.
+    //
+    // NOTE: This will return an `err` if it receives an `idx` that is not dword-aligned. This is
+    // good, because we only allow PC to be dword-aligned
+    fn select_dword(&self, idx: RamIdx) -> (Word, Boolean);
 
     // Extracts the word from an input tape (of given length) at the given index (which, recall,
     // refers to words, not bytes). Returns `(word, end, err)`, where `word` is the loaded word,
     // `end` denotes that the tape had already ended and no value was read, and `err == true` iff
-    // the lines of `self.idx` and `idx` are not equal.
+    // `self.idx` and the high (non-word-precision) bits of `idx` are not equal.
     fn read_tape(&self, idx: TapeIdx, len: usize) -> (Word, Boolean, Boolean);
 }
 
