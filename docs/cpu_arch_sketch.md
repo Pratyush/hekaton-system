@@ -79,11 +79,11 @@ impl TranscriptEntry {
     // not all 0, or `self.is_padding == true`.
     fn select_dword(&self, idx: RamIdx) -> (DWord, Boolean);
 
-    // Extracts the word from the primary input tape (of given length) at the given index (which,
-    // recall, refers to words, not bytes). Returns `(word, end, err)`, where `word` is the loaded
-    // word, `end` denotes that the tape had already ended and no value was read, and `err ==
-    // true` iff the lines of `self.idx` and `idx` are not equal. When `end` is set, `word = 0`.
-    fn read_tape(idx: TapeIdx, len: usize) -> (Word, Boolean, Boolean);
+    // Extracts the word from an input tape (of given length) at the given index (which, recall,
+    // refers to words, not bytes). Returns `(word, end, err)`, where `word` is the loaded word,
+    // `end` denotes that the tape had already ended and no value was read, and `err == true` iff
+    // the lines of `self.idx` and `idx` are not equal.
+    fn read_tape(&self, idx: TapeIdx, len: usize) -> (Word, Boolean, Boolean);
 }
 
 // Represents the running hash and polynomial evaluation of a transcript, i.e., `time_tr_hash =
@@ -139,20 +139,55 @@ struct CpuState {
     aux_tape_idx: RamIdx,
 }
 
-// Computes a CPU tick. Every tick can do any op. `metadata` contains the public data about the current
+struct DecodedInstruction {
+    reg1: UInt8,
+    reg2: UInt8,
+    imm_or_reg: Word,
+}
+
+// Computes the given CPU instruction. `metadata` contains the public data about the current
 // program. `instr` is the current instruction. `state` is the current CPU state. `mem_op` is the
-// transcript entry corresponding to this tick's memory operation, if there is one (if not, then
-// we enforce `mem_op.is_padding == true`).
+// transcript entry corresponding to this tick's memory operation, if there is one (if not, then we
+// enforce `mem_op.is_padding == true`).
 //
-// Returns the new CPU state
-fn smalltick(
-    metadata: ProgramData,
+// Returns the new CPU state and a flag indicating whether a verification error occurred
+fn full_exec_checker(
+    metadata: ProgramData ,
     instr: EncodedInstruction,
     state: CpuState,
     mem_op: TranscriptEntry,
 ) -> CpuState {
-    // Store (state, err) for each possible instruction
-    let all_possible_states = [(CpuState, Bool); 32];
+    // Decode the instruction
+    let (given_op, instr_args) = instr.decode();
+
+    // Parse instr as every possible instruction. Store (state, err) for each possible instruction
+    let mut all_possible_states = [(CpuState, Bool); 32];
+    for op in ALL_OPCODES {
+        all_possible_results[op] = exec_checker(metadata, op, instr_args, state, mem_op);
+    }
+
+    // Select the correct new state
+    let (new_state, err) = all_possible_results.select(given_op);
+    // Ensure that this operation ran successfully
+    assert !err
+
+    new_state
+}
+
+// Computes the CPU instruction defined by `op` and `instr_args`, where `op` is a native value that
+// can be `match`ed over. `metadata` contains the public data about the current program. `instr` is
+// the current instruction. `state` is the current CPU state. `mem_op` is the transcript entry
+// corresponding to this tick's memory operation, if there is one (if not, then we enforce
+// `mem_op.is_padding == true`).
+//
+// Returns the new CPU state and a flag indicating whether a verification error occurred
+fn exec_checker(
+    metadata: ProgramData, // Native value
+    op: Opcode,            // Native value
+    instr_args: InstrArgs,
+    state: CpuState,
+    mem_op: TranscriptEntry,
+) -> CpuState {
 
     let pc_step_size = match metadata.arch {
         Harvard => 1,
@@ -162,114 +197,130 @@ fn smalltick(
     // Unpack the state
     let CpuState { pc, flag, regs, primary_tape_idx, aux_tape_idx } = state;
 
-    // Parse instr as every possible instruction
+    match op {
+        Add => {
+            // Rename the args for clarity
+            let dest = instr.reg1;
+            let in1 = instr.reg2;
+            let in2 = instr.imm_or_reg;
 
-    // A simple one is add
-    let (dest, in1, in2) = instr.as_add();
-    let word1 = in1.value(regs);
-    let word2 = in2.value(regs);
-    let (sum, overflow) = word1.add(word2);
-    // Save the values
-    let new_state = CpuState {
-        pc: pc + pc_step_size,
-        flag: overflow,
-        regs: regs.set_val(dest, sum),
-        primary_tape_idx,
-        aux_tape_idx,
+            let word1 = in1.value(regs);
+            let word2 = in2.value(regs);
+            let (sum, overflow) = word1.add(word2);
+            // Save the values
+            let new_state = CpuState {
+                pc: pc + pc_step_size,
+                flag: overflow,
+                regs: regs.set_val(dest, sum),
+                primary_tape_idx,
+                aux_tape_idx,
+            }
+            let err = !mem_op.is_padding;
+            (new_state, err)
+
+        }
+
+        LoadW => {
+            // Rename the args for clarity
+            let dest = instr.reg1;
+            let in1 = instr.imm_or_reg;
+
+            let idx = in1.value(regs);
+            // If mem_op isn't a load or isn't this index, this is a mismatch in the transcript vs the
+            // execution. This is an error.
+            let (loaded_word, err) = mem_op.select_word(idx);
+            err |= mem_op.op != Load;
+            // Ensure that this load isn't padding. This is the only place we have to check this, since
+            // transcript_checker ensures the only padding mem ops that are allowed are loads.
+            err |= mem_op.is_padding;
+            // Return the new values
+            let new_state = CpuState {
+                pc: pc + pc_step_size,
+                flag,
+                regs: regs.set_val(dest, loaded_word),
+                primary_tape_idx,
+                aux_tape_idx,
+            }
+            all_possible_results[Load as usize] = (new_state, err);
+        }
+
+        StoreW => {
+            // Rename the args for clarity
+            let dest = instr.imm_or_reg;
+            let in1 = instr.reg2;
+
+            let idx = dest.value(regs);
+            let word_to_store = in1.value(regs);
+            // Get the word that this operation allegedly stores and ensure that it's equal to the value in
+            // the register.
+            let (stored_word, mut err) = mem_op.select_word(idx);
+            err |= word_to_store != stored_word;
+            err |= mem_op.op != Store;
+            // Return the new values. Nothing but the PC has changed
+            let new_state = CpuState {
+                pc: pc + pc_step_size,
+                flag,
+                regs,
+                primary_tape_idx,
+                aux_tape_idx,
+            }
+            (new_state, err)
+        }
+
+        Read => {
+            // Rename the args for clarity
+            let dest = instr.reg1;
+            let in1 = instr.imm_or_reg;
+
+            // The only valid tapes are 0 (primary) and 1 (aux). If anything but the bottom bit is
+            // set, then the tape is invalid and we return the default response.
+            let tape_ty = in1.value(regs);
+            let tape_is_valid = tape_ty.bits[1..].or().not();
+            // Convert to boolean now that we have the out-of-range bit
+            let tape_ty: Boolean = tape_ty[0];
+
+            // Mux the correct tape idx and length, as well as the expected memory op type
+            let tape_idx = [primary_tape_idx, aux_tape_idx].select(tape_ty);
+            let tape_len = [metadata.primary_tape_len, metadata.aux_tape_len].select(tape_ty);
+            let mem_op_type = [ReadPrimary, ReadAux].select(tape_ty);
+
+            // Read the word from the tape. This will error iff the mem op's index doesn't match the
+            // given tape index
+            let (read_word, new_flag, mut err) = mem_op.read_tape(tape_idx, tape_len);
+            err |= mem_op.op == mem_op_type;
+
+            // Move the appropriate tape head
+            let new_primary_tape_idx = primary_tape_idx + [1, 0].select(tape_ty);
+            let new_aux_tape_idx = aux_tape_idx + [0, 1].select(tape_ty);
+
+            // Define the state and err flags, assuming the tape choice was valid
+            let err_tapevalid = err;
+            let new_state_tapevalid = CpuState {
+                pc: pc + pc_step_size,
+                flag: new_flag,
+                regs: regs.set_val(dest, read_word),
+                primary_tape_idx: new_primary_tape_idx,
+                aux_tape_idx: new_aux_tape_idx,
+            }
+
+            // Define the state and err flags assuming the tape choice was invalid. Spec says you
+            // return 0, and set the flag
+            let err_tapeinvalid = Boolean::FALSE;
+            let new_state_tapeinvalid = CpuState {
+                pc: pc + pc_step_size,
+                flag: Boolean::TRUE,
+                regs: regs.set_val(dest, Word::ZERO),
+                primary_tape_idx: primary_tape_idx,
+                aux_tape_idx: aux_tape_idx,
+            };
+
+            [
+                (new_state_tapeinvalid, new_err_tapeinvalid),
+                (new_state_tapevalid, err_tapevalid),
+            ]
+            .select(tape_is_valid)
+        }
     }
-    let err = !mem_op.is_padding;
-    all_possible_results[Add as usize] = (new_state, err);
-
-    // ...
-
-    // Now do LoadW
-    // Unpack values
-    (dest, in1) = instr.as_loadw();
-    let idx = in1.value(regs);
-    // If mem_op isn't a load or isn't this index, this is a mismatch in the transcript vs the
-    // execution. This is an error.
-    let (loaded_word, err) = mem_op.select_word(idx);
-    err |= mem_op.op != Load;
-    // Ensure that this load isn't padding. This is the only place we have to check this, since
-    // transcript_checker ensures the only padding mem ops that are allowed are loads.
-    err |= mem_op.is_padding;
-    // Save the new values
-    let new_state = CpuState {
-        pc: pc + pc_step_size,
-        flag,
-        regs: regs.set_val(dest, loaded_word),
-        primary_tape_idx,
-        aux_tape_idx,
-    }
-    all_possible_results[Load as usize] = (new_state, err);
-
-    // StoreW
-    // Unpack values
-    (dest, in1) = instr.as_storew();
-    let idx = dest.value(regs);
-    let word_to_store = in1.value(regs);
-    // Get the word that this operation allegedly stores and ensure that it's equal to the value in
-    // the register.
-    let (stored_word, mut err) = mem_op.select_word(idx);
-    err |= word_to_store != stored_word;
-    err |= mem_op.op != Store;
-    // Save the new values. Nothing but the PC has changed
-    let new_state = CpuState {
-        pc: pc + pc_step_size,
-        flag,
-        regs,
-        primary_tape_idx,
-        aux_tape_idx,
-    }
-    all_possible_results[Store as usize] = (new_state, err);
-
-    // Read
-    // Unpack values
-    (dest, in1) = instr.as_storew();
-    let tape_ty = in1.value(regs);
-    let mut new_primary_tape_idx = primary_tape_idx;
-    let mut new_aux_tape_idx = aux_tape_idx;
-    // We do different things based on the value of tape_ty. In reality, this will be a mux
-    let (read_word, new_flag, err) = if tape_ty == PrimaryTape {
-        // Read the word from the tape. This will error iff the mem op's index doesn't match the
-        // given tape index
-        let (word, flag, mut err) = mem_op.read_tape(primary_tape_idx, metadata.primary_tape_len);
-        err |= mem_op.op == ReadPrimary;
-        // Move the tape head
-        new_primary_tape_idx += 1;
-        (word, flag, err)
-    } else if tape_ty == AuxTape {
-        // Read the word from the tape. This will error iff the mem op's index doesn't match the
-        // given tape index
-        let (word, flag, err) = mem_op.read_aux_tape(aux_tape_idx, metadata.aux_tape_len);
-        err |= mem_op.op == ReadAux;
-        // Move the tape head
-        new_aux_tape_idx += 1;
-        (word, flag, err)
-    } else {
-        // If this is an invalid read, then the mem op better be padding. Return 0 and set the
-        // flag, as per the spec.
-        let err = !mem_op.is_padding;
-        (0, true, err)
-    };
-    // Save the new values
-    let new_state = CpuState {
-        pc: pc + pc_step_size,
-        flag: new_flag,
-        regs: regs.set_val(dest, read_word),
-        primary_tape_idx: new_primary_tape_idx,
-        aux_tape_idx: new_aux_tape_idx,
-    }
-    all_possible_results[Read as usize] = (new_state, err);
-
-    // ...
-
-    // Select the correct set of registers etc.
-    let (new_state, err) = all_possible_results.get_val(instr.opcode);
-    // Ensure that this operation didn't have an error
-    assert !err
-
-    new_state
 }
 
 
@@ -312,14 +363,14 @@ fn bigtick(
     assert pc_load.op          == load;
 
     // Ensure that padding entries are loads. Allowing stores is a soundness issue: padding entries
-    // aren't subject to the SmallTickMemData comparison below, so a store on a no-op would still
+    // aren't subject to the exec_checkerMemData comparison below, so a store on a no-op would still
     // make it into the mem transcript and cause it to believe a real store happened.
     assert !mem_op.is_padding ∨ (mem_op.op == load);
 
     // Get the instruction from the PC load
     let instr = pc_load.select_dword(pc);
     // Do a CPU tick
-    let (new_regs, new_pc) = smalltick(instr, regs, tape_idx, mem_op);
+    let (new_regs, new_pc) = full_exec_checker(instr, regs, tape_idx, mem_op);
 
     //
     // Now accumulate the transcript entries into the time-ordered hashes and polynomials
