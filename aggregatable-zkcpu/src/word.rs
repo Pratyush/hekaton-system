@@ -1,5 +1,6 @@
 use core::{
     fmt::Debug,
+    marker::PhantomData,
     ops::{BitAnd, BitOr, BitXor, Div, Not, Rem},
 };
 
@@ -15,7 +16,27 @@ use ark_r1cs_std::{
 };
 use ark_relations::r1cs::SynthesisError;
 
-pub type DoubleWordVar<W> = (W, W);
+pub struct DoubleWordVar<W: WordVar<F>, F: PrimeField> {
+    w0: W,
+    w1: W,
+    _marker: PhantomData<F>,
+}
+
+impl<W: WordVar<F>, F: PrimeField> DoubleWordVar<W, F> {
+    /// Creates a `DoubleWordVar` from two `Word`s
+    pub(crate) fn new(dword: (W, W)) -> Self {
+        Self {
+            w0: dword.0,
+            w1: dword.1,
+            _marker: PhantomData,
+        }
+    }
+
+    /// Returns the bits of this dword in little-endian order
+    pub(crate) fn as_le_bits(&self) -> Vec<Boolean<F>> {
+        [self.w1.as_le_bits(), self.w0.as_le_bits()].concat()
+    }
+}
 
 pub trait WordVar<F: PrimeField>: Debug + EqGadget<F> + CondSelectGadget<F> {
     type NativeWord: tinyram_emu::word::Word;
@@ -34,8 +55,11 @@ pub trait WordVar<F: PrimeField>: Debug + EqGadget<F> + CondSelectGadget<F> {
     /// Convert `self` to its big-endian bit representation
     fn as_be_bits(&self) -> Vec<Boolean<F>>;
 
-    /// Convert from bit-endian bit representation to `self'
-    fn from_be_bits(bits: Vec<Boolean<F>>) -> Self;
+    /// Convert `self` to its little-endian bit representation
+    fn as_le_bits(&self) -> Vec<Boolean<F>>;
+
+    /// Convert from little-endian bit representation to `self'
+    fn from_le_bits(bits: &[Boolean<F>]) -> Self;
 
     /// Returns `(self + 1, overflow)`
     fn checked_increment(&self) -> Result<(Self, Boolean<F>), SynthesisError> {
@@ -63,14 +87,18 @@ macro_rules! impl_word {
                 Boolean::le_bits_to_fp_var(&self.to_bits_le())
             }
 
+            fn as_le_bits(&self) -> Vec<Boolean<F>> {
+                self.to_bits_le()
+            }
+
             fn as_be_bits(&self) -> Vec<Boolean<F>> {
                 let mut v = self.to_bits_le();
                 v.reverse();
                 v
             }
 
-            fn from_be_bits(bits: Vec<Boolean<F>>) -> Self {
-                todo!();
+            fn from_le_bits(bits: &[Boolean<F>]) -> Self {
+                Self::from_bits_le(bits)
             }
 
             fn carrying_add(&self, other: &Self) -> Result<(Self, Boolean<F>), SynthesisError> {
@@ -111,12 +139,16 @@ impl<F: PrimeField> WordVar<F> for UInt8<F> {
         Boolean::le_bits_to_fp_var(&self.to_bits_le().unwrap())
     }
 
+    fn as_le_bits(&self) -> Vec<Boolean<F>> {
+        <Self as ToBitsGadget<F>>::to_bits_le(&self).unwrap()
+    }
+
     fn as_be_bits(&self) -> Vec<Boolean<F>> {
         <Self as ToBitsGadget<F>>::to_bits_be(&self).unwrap()
     }
 
-    fn from_be_bits(bits: Vec<Boolean<F>>) -> Self {
-        todo!();
+    fn from_le_bits(bits: &[Boolean<F>]) -> Self {
+        Self::from_bits_le(bits)
     }
 
     fn carrying_add(&self, other: &Self) -> Result<(Self, Boolean<F>), SynthesisError> {

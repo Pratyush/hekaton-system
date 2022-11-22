@@ -4,8 +4,8 @@ use crate::{
     word::{DoubleWordVar, WordVar},
 };
 
-use std::cmp::min;
 use core::cmp::Ordering;
+use std::cmp::min;
 
 use ark_ff::PrimeField;
 use ark_r1cs_std::{
@@ -104,7 +104,7 @@ impl<W: WordVar<F>, F: PrimeField> CondSelectGadget<F> for ExecTickMemData<W, F>
 /// Decodes an encoded instruction into an opcode, 2 registers, and an immediate-or-register. The
 /// registers (including the imm-or-reg if applicable) are guaranteed to be less than `NUM_REGS`.
 fn decode_instr<const NUM_REGS: usize, W: WordVar<F>, F: PrimeField>(
-    encoded_instr: &DoubleWordVar<W>,
+    encoded_instr: &DoubleWordVar<W, F>,
 ) -> Result<
     (
         OpcodeVar<F>,
@@ -114,28 +114,40 @@ fn decode_instr<const NUM_REGS: usize, W: WordVar<F>, F: PrimeField>(
     ),
     SynthesisError,
 > {
-
     let num_regs = FpVar::constant(F::from(NUM_REGS as u64));
-    let bitlen_reg: usize = (NUM_REGS as f32).log2().ceil() as usize;
+    let regidx_bitlen: usize = (NUM_REGS as f32).log2().ceil() as usize;
+    let instr_bits: Vec<Boolean<F>> = encoded_instr.as_le_bits();
+
     let mut cur_bit_idx: usize = 0;
-    let opcode: OpcodeVar<F> = OpcodeVar::<F>::from_bits_be(bit_range::<NUM_REGS, W, F>(encoded_instr, cur_bit_idx, cur_bit_idx+OpcodeVar::<F>::BITLEN));
+
+    // Structure of an instruction is
+    // 000...0  is_imm  reg1  reg2  imm_or_reg  opcode
+    // <-- MSB                                 LSB -->
+
+    // Extract all the components
+
+    let opcode: OpcodeVar<F> = OpcodeVar::<F>::from_bits_le(
+        &instr_bits[cur_bit_idx..cur_bit_idx + OpcodeVar::<F>::BITLEN],
+    );
     cur_bit_idx += OpcodeVar::<F>::BITLEN;
-    
-    let imm_or_reg = bit_range::<NUM_REGS, W, F>(encoded_instr, cur_bit_idx, cur_bit_idx+W::BITLEN);
+
+    let imm_or_reg_bits = &instr_bits[cur_bit_idx..cur_bit_idx + W::BITLEN];
     cur_bit_idx += W::BITLEN;
 
-    let reg1: RegIdxVar<F> = RegIdxVar::<F>::from_bits_be(bit_range::<NUM_REGS, W, F>(encoded_instr, cur_bit_idx, cur_bit_idx+bitlen_reg));
-    cur_bit_idx += bitlen_reg;
+    let reg1: RegIdxVar<F> =
+        RegIdxVar::<F>::from_bits_le(&instr_bits[cur_bit_idx..cur_bit_idx + regidx_bitlen]);
+    cur_bit_idx += regidx_bitlen;
 
-    let reg2: RegIdxVar<F> = RegIdxVar::<F>::from_bits_be(bit_range::<NUM_REGS, W, F>(encoded_instr, cur_bit_idx, cur_bit_idx+bitlen_reg));
-    cur_bit_idx += bitlen_reg;
+    let reg2: RegIdxVar<F> =
+        RegIdxVar::<F>::from_bits_le(&instr_bits[cur_bit_idx..cur_bit_idx + regidx_bitlen]);
+    cur_bit_idx += regidx_bitlen;
 
-    let is_imm: Boolean<F> = bit_range::<NUM_REGS, W, F>(encoded_instr, cur_bit_idx, cur_bit_idx+1)[0].clone();
-    cur_bit_idx += 1;
+    let is_imm: Boolean<F> = instr_bits[cur_bit_idx].clone();
 
-    let imm_or_reg: ImmOrRegisterVar<W, F> = ImmOrRegisterVar::<W,F>{
-        is_imm: is_imm,
-        val: W::from_be_bits(imm_or_reg),
+    // Make the imm-or-reg from the component bits and type flag
+    let imm_or_reg: ImmOrRegisterVar<W, F> = ImmOrRegisterVar::<W, F> {
+        is_imm,
+        val: W::from_le_bits(imm_or_reg_bits),
     };
 
     // Check that the registers are within range
@@ -145,32 +157,6 @@ fn decode_instr<const NUM_REGS: usize, W: WordVar<F>, F: PrimeField>(
         .enforce_cmp(&num_regs, Ordering::Less, false)?;
 
     return Ok((opcode, reg1, reg2, imm_or_reg));
-}
-
-/// Returns the subsection [start, end) of a DoubleWordVar, as Vec<Boolean<F>>
-fn bit_range<const NUM_REGS: usize, W: WordVar<F>, F: PrimeField>(
-    bits: &DoubleWordVar<W>,
-    start: usize,
-    end: usize
-) -> Vec<Boolean<F>>
-{
-    let (word1, word2) = bits;
-    let word1 = word1.as_be_bits();
-    let word2 = word2.as_be_bits();
-    let mut to_return: Vec<Boolean<F>> = vec![];
-    let mut x:usize = 0;
-
-    for i in start..min(end, word1.len()) {        
-        to_return[x] = word1[i].clone();
-        x += 1;
-    }
-
-    for i in 0..end-W::BITLEN {
-        to_return[x] = word2[i].clone();
-        x += 1;
-    }
-
-    return to_return;
 }
 
 #[derive(Clone)]
@@ -238,7 +224,7 @@ impl<W: WordVar<F>, F: PrimeField> CondSelectGadget<F> for CpuState<W, F> {
 /// counter, updated set of registers, and a description of what, if any, memory operation occured.
 pub(crate) fn exec_checker<const NUM_REGS: usize, W: WordVar<F>, F: PrimeField>(
     cpu_state: &CpuState<W, F>,
-    instr: &DoubleWordVar<W>,
+    instr: &DoubleWordVar<W, F>,
     opt_loaded_val: &W,
 ) -> Result<(CpuState<W, F>, ExecTickMemData<W, F>), SynthesisError> {
     // Prepare to run all the instructions. This will hold them all. At the end, we'll use the
@@ -377,8 +363,8 @@ mod test {
     };
 
     use ark_bls12_381::Fr;
-    use ark_r1cs_std::uint32::UInt32;
-    use ark_r1cs_std::R1CSVar;
+    use ark_r1cs_std::{alloc::AllocVar, uint32::UInt32, R1CSVar};
+    use ark_relations::{ns, r1cs::ConstraintSystem};
     use rand::Rng;
 
     const NUM_REGS: usize = 16;
@@ -443,10 +429,12 @@ mod test {
             ];
 
             // Test equality after an encode-decode round trip
-            for tc in test_cases {
+            for instr in test_cases {
+                let cs = ConstraintSystem::new_ref();
+
                 // Encode the instruction to bytes
                 let mut encoded_instr = [0u8; W::INSTR_BYTELEN];
-                tc.to_bytes::<NUM_REGS>(&mut encoded_instr);
+                instr.to_bytes::<NUM_REGS>(&mut encoded_instr);
 
                 // Split the encoded instruction bytes into two. This is the encoded first and
                 // second word
@@ -460,10 +448,13 @@ mod test {
                 };
 
                 // Witness those words and decode them in ZK
-                let word0_var = WV::constant(word0);
-                let word1_var = WV::constant(word1);
+                let dword_var = {
+                    let word0_var = WV::new_witness(ns!(cs, "word0"), || Ok(word0)).unwrap();
+                    let word1_var = WV::new_witness(ns!(cs, "word1"), || Ok(word1)).unwrap();
+                    DoubleWordVar::new((word0_var, word1_var))
+                };
                 let (opcode_var, reg1_var, reg2_var, imm_or_reg_var) =
-                    decode_instr::<NUM_REGS, _, _>(&(word0_var, word1_var)).unwrap();
+                    decode_instr::<NUM_REGS, _, _>(&dword_var).unwrap();
 
                 // Now decode normally
                 let instr_as_u128 = {

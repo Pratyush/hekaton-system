@@ -6,9 +6,9 @@ use core::cmp::Ordering;
 
 use ark_ff::PrimeField;
 use ark_r1cs_std::{
-    bits::ToBitsGadget, boolean::Boolean, eq::EqGadget, fields::fp::FpVar, uint8::UInt8,
+    bits::ToBitsGadget, boolean::Boolean, eq::EqGadget, fields::fp::FpVar, uint8::UInt8, R1CSVar,
 };
-use ark_relations::r1cs::SynthesisError;
+use ark_relations::r1cs::{ConstraintSystemRef, SynthesisError};
 
 /// Program counter, in ZK land
 pub(crate) type PcVar<W> = W;
@@ -17,31 +17,58 @@ pub(crate) type PcVar<W> = W;
 pub(crate) struct OpcodeVar<F: PrimeField>(pub(crate) UInt8<F>);
 
 impl<F: PrimeField> OpcodeVar<F> {
-    pub(crate) const BITLEN:usize = 5;
+    pub(crate) const BITLEN: usize = 5;
 
     pub(crate) fn to_bits_be(&self) -> Result<Vec<Boolean<F>>, SynthesisError> {
         self.0.to_bits_be()
     }
 
-    pub(crate) fn value(&self) -> Option<u8> {
-        todo!();
+    pub(crate) fn from_bits_le(bits: &[Boolean<F>]) -> Self {
+        assert_eq!(bits.len(), Self::BITLEN);
+
+        // Pad out the remaining bits to get to a byte
+        let mut padded_bits = vec![Boolean::FALSE; 8];
+        padded_bits[..Self::BITLEN].clone_from_slice(bits);
+        Self(UInt8::from_bits_le(&padded_bits))
+    }
+}
+
+impl<F: PrimeField> R1CSVar<F> for OpcodeVar<F> {
+    type Value = u8;
+
+    fn cs(&self) -> ConstraintSystemRef<F> {
+        self.0.cs()
     }
 
-    pub(crate) fn from_bits_be(bits: Vec<Boolean<F>>) -> Self {
-        todo!();
+    fn value(&self) -> Result<Self::Value, SynthesisError> {
+        self.0.value()
     }
 }
 
 /// An index into the registers, in ZK land
+// This is a UInt8 because the number of registers cannot exceed 256
 pub(crate) struct RegIdxVar<F: PrimeField>(pub(crate) UInt8<F>);
 
-impl<F: PrimeField> RegIdxVar<F> {
-    pub(crate) fn to_bits_be(&self) -> Result<Vec<Boolean<F>>, SynthesisError> {
-        self.0.to_bits_be()
+impl<F: PrimeField> R1CSVar<F> for RegIdxVar<F> {
+    type Value = u8;
+
+    fn cs(&self) -> ConstraintSystemRef<F> {
+        self.0.cs()
     }
 
-    pub(crate) fn from_bits_be(bits: Vec<Boolean<F>>) -> Self {
-        todo!();
+    fn value(&self) -> Result<Self::Value, SynthesisError> {
+        self.0.value()
+    }
+}
+
+impl<F: PrimeField> RegIdxVar<F> {
+    pub(crate) fn from_bits_le(bits: &[Boolean<F>]) -> Self {
+        assert!(bits.len() <= 8);
+
+        // Pad out the remaining bits to get to a byte
+        let mut padded_bits = vec![Boolean::FALSE; 8];
+        padded_bits[..bits.len()].clone_from_slice(bits);
+        Self(UInt8::from_bits_le(&padded_bits))
     }
 
     /// Returns the least significant `⌈log₂ NUM_REGS⌉` bits of this index. This is so it can be

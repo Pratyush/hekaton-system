@@ -260,6 +260,8 @@ pub fn run_program<W: Word, const NUM_REGS: usize>(
             // Make sure the program is word-addressable
             assert!(serialized_program_bytelen < (1 << W::BITLEN));
 
+            // The memory is initialized with just the program, starting at address 0. Memory is a
+            // sparse map of addr -> byte
             let serialized_program: BTreeMap<W, u8> = program
                 .iter()
                 .flat_map(|instr| {
