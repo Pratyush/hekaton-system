@@ -134,11 +134,11 @@ fn decode_instr<const NUM_REGS: usize, W: WordVar<F>, F: PrimeField>(
     let imm_or_reg_bits = &instr_bits[cur_bit_idx..cur_bit_idx + W::BITLEN];
     cur_bit_idx += W::BITLEN;
 
-    let reg1: RegIdxVar<F> =
+    let reg2: RegIdxVar<F> =
         RegIdxVar::<F>::from_bits_le(&instr_bits[cur_bit_idx..cur_bit_idx + regidx_bitlen]);
     cur_bit_idx += regidx_bitlen;
 
-    let reg2: RegIdxVar<F> =
+    let reg1: RegIdxVar<F> =
         RegIdxVar::<F>::from_bits_le(&instr_bits[cur_bit_idx..cur_bit_idx + regidx_bitlen]);
     cur_bit_idx += regidx_bitlen;
 
