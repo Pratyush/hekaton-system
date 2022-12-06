@@ -3,6 +3,7 @@ use crate::{
     util::{arr_set, uint8_to_fpvar},
     word::{DoubleWordVar, WordVar},
 };
+use tinyram_emu::instructions::Opcode;
 
 use core::cmp::Ordering;
 use std::cmp::min;
@@ -219,6 +220,92 @@ impl<W: WordVar<F>, F: PrimeField> CondSelectGadget<F> for CpuState<W, F> {
     }
 }
 
+/// A helper to `exec_checker`. This takes a native opcode and its zk parameters, and executes it
+fn run_instr<W: WordVar<F>, F: PrimeField>(
+    op: Opcode,
+    cpu_state: &CpuState<W, F>,
+    reg1: &FpVar<F>,
+    reg2_val: &W,
+    imm_or_reg_val: &W,
+    incrd_pc: &W,
+    pc_overflow: &Boolean<F>,
+) -> Result<CpuState<W, F>, SynthesisError> {
+    let CpuState {
+        pc: _,
+        flag,
+        regs,
+        answer,
+    } = cpu_state;
+
+    use Opcode::*;
+    let new_state = match op {
+        Add => {
+            let (output_val, new_flag) = reg2_val.carrying_add(&imm_or_reg_val)?;
+            let new_regs = arr_set(&regs, reg1, &output_val)?;
+
+            // The PC is incremented (need to check overflow), and the flag and registers are new.
+            CpuState {
+                pc: incrd_pc.clone(),
+                flag: new_flag,
+                regs: new_regs,
+                answer: answer.clone(),
+            }
+        }
+        CmpE => {
+            // Compare the two input values
+            let new_flag = reg2_val.is_eq(&imm_or_reg_val)?;
+
+            //  The PC is incremented (need to check overflow), and the flag is new
+            pc_overflow.enforce_equal(&Boolean::FALSE)?;
+            CpuState {
+                pc: incrd_pc.clone(),
+                flag: new_flag,
+                regs: regs.clone(),
+                answer: answer.clone(),
+            }
+        }
+        Jmp => {
+            // Set the new PC to be the imm-or-reg
+            let new_pc = imm_or_reg_val.clone();
+
+            CpuState {
+                pc: new_pc,
+                flag: flag.clone(),
+                regs: regs.clone(),
+                answer: answer.clone(),
+            }
+        }
+        CJmp => {
+            // Let pc' = imm_or_reg_val if flag is set. Otherwise, let pc' = pc + 1
+            let new_pc = PcVar::conditionally_select(&flag, imm_or_reg_val, &incrd_pc)?;
+
+            // Check that incrd pc, if used, didn't overflow
+            let used_incrd_pc = flag.not();
+            let relevant_pc_overflow = pc_overflow.and(&used_incrd_pc)?;
+            relevant_pc_overflow.enforce_equal(&Boolean::FALSE)?;
+
+            CpuState {
+                pc: new_pc,
+                flag: flag.clone(),
+                regs: regs.clone(),
+                answer: answer.clone(),
+            }
+        }
+        Answer => CpuState {
+            pc: incrd_pc.clone(),
+            flag: flag.clone(),
+            regs: regs.clone(),
+            answer: CpuAnswer {
+                is_set: Boolean::TRUE,
+                val: imm_or_reg_val.clone(),
+            },
+        },
+        _ => unimplemented!(),
+    };
+
+    Ok(new_state)
+}
+
 /// Runs a single CPU tick with the given program counter, instruction, registers, and word loaded
 /// from memory (if `instr isn't a `lw`, then the word is ignored). Returns the updated program
 /// counter, updated set of registers, and a description of what, if any, memory operation occured.
@@ -236,9 +323,9 @@ pub(crate) fn exec_checker<const NUM_REGS: usize, W: WordVar<F>, F: PrimeField>(
     // Unpack the state and decode the instruction
     let CpuState {
         pc,
-        flag,
+        flag: _,
         regs,
-        answer,
+        answer: _,
     } = cpu_state;
     let (opcode, reg1, reg2, imm_or_reg) = decode_instr::<NUM_REGS, _, _>(instr)?;
 
@@ -262,80 +349,21 @@ pub(crate) fn exec_checker<const NUM_REGS: usize, W: WordVar<F>, F: PrimeField>(
 
         W::conditionally_select(&imm_or_reg.is_imm, &imm_val, &reg_val)?
     };
+    let reg1_fp = reg1.to_fpvar()?;
 
     // Go through every opcode, do the operation, and save the results in all_output_states and
     // all_mem_ops
     for opcode in opcodes {
-        match opcode {
-            Add => {
-                let (output_val, new_flag) = reg2_val.carrying_add(&imm_or_reg_val)?;
-                let new_regs = arr_set(&regs, &reg1.to_fpvar()?, &output_val)?;
-
-                // Save the resulting CPU state. The PC is incremented (need to check overflow),
-                // and the flag and registers are new.
-                all_output_states[Add as usize] = CpuState {
-                    pc: incrd_pc.clone(),
-                    flag: new_flag,
-                    regs: new_regs,
-                    answer: answer.clone(),
-                };
-            }
-            CmpE => {
-                // Compare the two input values
-                let new_flag = reg2_val.is_eq(&imm_or_reg_val)?;
-
-                // Save the resulting CPU state. The PC is incremented (need to check overflow),
-                // and the flag is new
-                pc_overflow.enforce_equal(&Boolean::FALSE)?;
-                all_output_states[CmpE as usize] = CpuState {
-                    pc: incrd_pc.clone(),
-                    flag: new_flag,
-                    regs: regs.clone(),
-                    answer: answer.clone(),
-                };
-            }
-            Jmp => {
-                // Set the new PC to be the imm-or-reg
-                let new_pc = imm_or_reg_val.clone();
-
-                // Save the resulting CPU state. The PC is changed.
-                all_output_states[Jmp as usize] = CpuState {
-                    pc: new_pc,
-                    flag: flag.clone(),
-                    regs: regs.clone(),
-                    answer: answer.clone(),
-                };
-            }
-            CJmp => {
-                // Let pc' = imm_or_reg_val if flag is set. Otherwise, let pc' = pc + 1
-                let new_pc = PcVar::conditionally_select(&flag, &imm_or_reg_val, &incrd_pc)?;
-
-                // Check that incrd pc, if used, didn't overflow
-                let used_incrd_pc = flag.not();
-                let relevant_pc_overflow = pc_overflow.and(&used_incrd_pc)?;
-                relevant_pc_overflow.enforce_equal(&Boolean::FALSE)?;
-
-                // Save the resulting CPU state. The PC is changed.
-                all_output_states[CJmp as usize] = CpuState {
-                    pc: new_pc,
-                    flag: flag.clone(),
-                    regs: regs.clone(),
-                    answer: answer.clone(),
-                };
-            }
-            Answer => {
-                all_output_states[Answer as usize] = CpuState {
-                    pc: incrd_pc.clone(),
-                    flag: flag.clone(),
-                    regs: regs.clone(),
-                    answer: CpuAnswer {
-                        is_set: Boolean::TRUE,
-                        val: imm_or_reg_val.clone(),
-                    },
-                };
-            }
-            _ => unimplemented!(),
-        }
+        let new_state = run_instr(
+            opcode,
+            cpu_state,
+            &reg1_fp,
+            &reg2_val,
+            &imm_or_reg_val,
+            &incrd_pc,
+            &pc_overflow,
+        )?;
+        all_output_states[opcode as usize] = new_state;
     }
 
     // Out of all the computed output states and memory operations, pick the ones that correspond
