@@ -16,15 +16,23 @@ use ark_r1cs_std::{
 };
 use ark_relations::r1cs::SynthesisError;
 
-pub struct DoubleWordVar<W: WordVar<F>, F: PrimeField> {
-    w0: W,
-    w1: W,
+pub(crate) type DWord<W> = (W, W);
+
+pub struct DWordVar<W: WordVar<F>, F: PrimeField> {
+    pub(crate) w0: W,
+    pub(crate) w1: W,
     _marker: PhantomData<F>,
 }
 
-impl<W: WordVar<F>, F: PrimeField> DoubleWordVar<W, F> {
+impl<W: WordVar<F>, F: PrimeField> EqGadget<F> for DWordVar<W, F> {
+    fn is_eq(&self, other: &Self) -> Result<Boolean<F>, SynthesisError> {
+        self.w0.is_eq(&other.w0)?.and(&self.w1.is_eq(&other.w1)?)
+    }
+}
+
+impl<W: WordVar<F>, F: PrimeField> DWordVar<W, F> {
     /// Creates a `DoubleWordVar` from two `Word`s
-    pub(crate) fn new(dword: (W, W)) -> Self {
+    pub(crate) fn new(dword: DWord<W>) -> Self {
         Self {
             w0: dword.0,
             w1: dword.1,
@@ -52,13 +60,35 @@ pub trait WordVar<F: PrimeField>: Debug + EqGadget<F> + CondSelectGadget<F> {
     /// Convert `self` to a field element
     fn as_fpvar(&self) -> Result<FpVar<F>, SynthesisError>;
 
-    /// Convert `self` to its big-endian bit representation
-    fn as_be_bits(&self) -> Vec<Boolean<F>>;
-
     /// Convert `self` to its little-endian bit representation
     fn as_le_bits(&self) -> Vec<Boolean<F>>;
 
-    /// Convert from little-endian bit representation to `self'
+    /// Convert `self` to its big-endian bit representation
+    fn as_be_bits(&self) -> Vec<Boolean<F>> {
+        let mut v = self.as_le_bits();
+        v.reverse();
+        v
+    }
+
+    /// Unpacks this Word into its constituent bytes
+    fn unpack(&self) -> Vec<UInt8<F>> {
+        // Unpack simply returns the little-endian byte repr
+        self.as_le_bits()
+            .chunks(8)
+            .map(UInt8::from_bits_le)
+            .collect()
+    }
+
+    // Packs the given byte sequence into this Word. `bytes.len()` MUST equal `Self::Bitlen / 8`
+    fn pack(&self, bytes: &[UInt8<F>]) -> Self {
+        assert_eq!(bytes.len(), Self::BITLEN / 8);
+        // Pack simply puts the bytes into the word in little-endian order
+        let bits: Vec<_> = bytes.iter().flat_map(|b| b.to_bits_le().unwrap()).collect();
+        Self::from_le_bits(&bits)
+    }
+
+    /// Convert from little-endian bit representation to `self'. `bits.len()` MUST be
+    /// `Self::Bitlen`
     fn from_le_bits(bits: &[Boolean<F>]) -> Self;
 
     /// Returns `(self + 1, overflow)`

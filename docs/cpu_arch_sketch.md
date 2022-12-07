@@ -38,7 +38,7 @@ struct TranscriptEntry {
     // read from the public or private input tapes
     op: { Load, Store, ReadPrimary, ReadAux },
     // The index being loaded from, stored to, or read from the public tape. When used as a RAM
-    // index, this is line-aligned, meaning the low bits specifying individual words MUST be 0.
+    // index, this is dword-aligned, meaning the low bits specifying individual words MUST be 0.
     idx: Word,
     // The dword being loaded or stored
     dword: DWord,

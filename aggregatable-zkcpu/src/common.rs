@@ -1,6 +1,6 @@
 //! Contains data pub(crate) types used in various parts of the ZKCPU
 
-use crate::word::WordVar;
+use crate::{util::log2, word::WordVar};
 
 use core::cmp::Ordering;
 
@@ -76,7 +76,7 @@ impl<F: PrimeField> RegIdxVar<F> {
     pub(crate) fn as_selector<const NUM_REGS: usize>(
         &self,
     ) -> Result<Vec<Boolean<F>>, SynthesisError> {
-        let selector_bitlen = f32::from(NUM_REGS as u16).log2().ceil() as usize;
+        let selector_bitlen = log2(NUM_REGS);
         let mut bits = self.0.to_bits_be()?;
         // Select the bottom selector_bitlen bits
         Ok(bits.split_off(8 - selector_bitlen))
@@ -123,7 +123,7 @@ impl<W: WordVar<F>, F: PrimeField> ImmOrRegisterVar<W, F> {
     pub(crate) fn as_selector<const NUM_REGS: usize>(
         &self,
     ) -> Result<Vec<Boolean<F>>, SynthesisError> {
-        let selector_bitlen = f32::from(NUM_REGS as u16).log2().ceil() as usize;
+        let selector_bitlen = log2(NUM_REGS);
         let mut bits = self.val.as_be_bits();
         // Select the bottom selector_bitlen bits
         Ok(bits.split_off(W::BITLEN - selector_bitlen))

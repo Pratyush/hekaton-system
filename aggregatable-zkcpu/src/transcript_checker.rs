@@ -1,10 +1,11 @@
 use crate::{
     common::*,
     exec_checker::{exec_checker, CpuState, ExecTickMemData},
-    word::WordVar,
+    util::log2,
+    word::{DWord, DWordVar, WordVar},
 };
 
-use tinyram_emu::word::Word;
+use tinyram_emu::{word::Word, TinyRamArch};
 
 use core::cmp::Ordering;
 
@@ -15,6 +16,7 @@ use ark_r1cs_std::{
     fields::{fp::FpVar, FieldVar},
     select::CondSelectGadget,
     uint32::UInt32,
+    uint8::UInt8,
 };
 use ark_relations::r1cs::SynthesisError;
 
@@ -64,23 +66,27 @@ impl<F: PrimeField> RunningEvalVar<F> {
 }
 
 /// The kind of memory operation: load or store
-#[derive(Clone)]
+#[derive(Clone, Copy, Debug)]
 enum MemOpKind {
-    Load,
+    /// A memory op corresponding to `loadw` or `loadb`
+    Load = 0,
+    /// A memory op corresponding to `storew` or `storeb`
     Store,
+    /// A memory op corresponding to `read 0`
+    ReadPrimary,
+    /// A memory op corresponding to `read 1`
+    ReadAux,
 }
 
 impl MemOpKind {
-    fn as_bool(&self) -> bool {
-        match self {
-            MemOpKind::Load => false,
-            MemOpKind::Store => false,
-        }
+    // Returns the numerical value of this op as a field element
+    fn as_fp<F: PrimeField>(&self) -> F {
+        F::from(*self as u8)
     }
 }
 
-/// The kind of memory operation: load or store, in ZK land
-type MemOpKindVar<F> = Boolean<F>;
+/// The kind of memory operation: load, store, read primary tape or read aux tape, in ZK land
+type MemOpKindVar<F> = FpVar<F>;
 
 /// An entry in the transcript of RAM accesses
 #[derive(Clone)]
@@ -92,12 +98,13 @@ enum TranscriptEntry<W: Word> {
     Entry {
         /// The timestamp of this entry. This MUST be greater than 0
         t: Timestamp,
-        /// LOAD or STORE
+        /// The operation happening
         op: MemOpKind,
-        /// Either the index being loaded from or stored to
+        // The index being loaded from, stored to, or read from the public tape. When used as a RAM
+        // index, this is dword-aligned, meaning the low bits specifying individual words MUST be 0.
         ramidx: W,
         /// The value being loaded or stored
-        val: W,
+        val: DWord<W>,
     },
 }
 
@@ -129,26 +136,31 @@ impl<W: Word> TranscriptEntry<W> {
 struct TranscriptEntryVar<W: WordVar<F>, F: PrimeField> {
     /// Tells whether or not this entry is padding
     is_padding: Boolean<F>,
-    /// The timestamp of this entry. This is guaranteed to be less than 32 bits.
+    /// The timestamp of this entry. This is at most 64 bits
     timestamp: TimestampVar<F>,
-    /// LOAD or STORE
+    ///
     op: MemOpKindVar<F>,
     /// Either the index being loaded from or stored to
     ram_idx: W,
+    /// `ram_idx` as a field element
+    ram_idx_fp: FpVar<F>,
     /// The value being loaded or stored
-    val: W,
+    val: DWordVar<W, F>,
+    /// `val` as a field element
+    val_fp: FpVar<F>,
 }
 
 impl<W: WordVar<F>, F: PrimeField> TranscriptEntryVar<W, F> {
-    /// Returns whether this memory operation is a LOAD
+    /// Returns whether this memory operation is a load
     fn is_load(&self) -> Result<Boolean<F>, SynthesisError> {
         self.op
-            .is_eq(&MemOpKindVar::Constant(MemOpKind::Load.as_bool()))
+            .is_eq(&MemOpKindVar::Constant(MemOpKind::Load.as_fp()))
     }
 
-    /// Returns whether this memory operation is a STORE
+    /// Returns whether this memory operation is a store
     fn is_store(&self) -> Result<Boolean<F>, SynthesisError> {
-        Ok(self.is_load()?.not())
+        self.op
+            .is_eq(&MemOpKindVar::Constant(MemOpKind::Store.as_fp()))
     }
 }
 
@@ -169,28 +181,50 @@ impl<W: WordVar<F>, F: PrimeField> TranscriptEntryVar<W, F> {
         acc += FpVar::from(self.is_padding.clone()) * shift_var;
         shift += 1;
 
-        // Encode `timestamp`. Make sure it's 32 bits. Then shift by 32.
+        // Encode `timestamp` as 64 bits
         let shift_var = FpVar::<F>::Constant(F::from(1u64 << shift));
-        self.timestamp
-            .enforce_cmp(&FpVar::Constant(F::from(u32::MAX)), Ordering::Less, true)?;
         acc += &self.timestamp * shift_var;
-        shift += 32;
+        shift += 64;
 
         // Encode `op`. Shift by 1.
         let shift_var = FpVar::<F>::Constant(F::from(1u64 << shift));
         acc += FpVar::from(self.op.clone()) * shift_var;
         shift += 1;
 
-        // Encode `ram_idx`. Make sure it's 32 bits. Then shift by 32.
+        // Encode `ram_idx` as 64 bits
         let shift_var = FpVar::<F>::Constant(F::from(1u64 << shift));
         acc += &self.ram_idx.as_fpvar()? * shift_var;
-        shift += 32;
+        shift += 64;
 
-        // Encode `val`
+        // Encode `val` as 64 bits
         let shift_var = FpVar::<F>::Constant(F::from(1u64 << shift));
-        acc += self.val.as_fpvar()? * shift_var;
+        acc += &self.val_fp * shift_var;
 
         Ok(acc)
+    }
+
+    // Extracts the byte at the given RAM index, returning it and an error flag. `err = true` iff
+    // `self.idx` and the high (non-byte-precision) bits of `idx` are not equal, or
+    // `self.is_padding == true`.
+    fn select_byte(&self, idx: W) -> Result<(UInt8<F>, Boolean<F>), SynthesisError> {
+        // Check if this is padding
+        let mut err = self.is_padding.clone();
+
+        // Do the index check. Mask out the bottom bits of idx. We just need to make sure that this
+        // load is the correct dword, i.e., all but the bottom bitmask bits of idx and self.ram_idx
+        // match.
+        let bytes_per_word = W::BITLEN / 8;
+        let bitmask_len = log2(bytes_per_word);
+        let idx_high_bits = idx.as_le_bits().into_iter().skip(bitmask_len);
+        for (b1, b2) in idx_high_bits.zip(self.ram_idx.as_le_bits().into_iter().skip(bitmask_len)) {
+            err = err.or(&b1.is_neq(&b2)?)?;
+        }
+
+        // Now use the low bits of idx to select the correct byte from self.val
+        let val_bytes = [self.val.w0.unpack(), self.val.w1.unpack()].concat();
+        let out = UInt8::conditionally_select_power_of_two_vector(&idx.as_be_bits(), &val_bytes)?;
+
+        Ok((out, err))
     }
 }
 
@@ -221,6 +255,9 @@ fn transcript_checker<const NUM_REGS: usize, W: WordVar<F>, F: PrimeField>(
     let t = &pc_load.timestamp;
     // mem_op, if defined, occurs at time t
     let t_plus_one = t + FpVar::one();
+
+    // TODO: MUST check that mem_op.ram_idx is dword-aligned (in Harvard: check bottom bit is 0, in
+    // Von Neumann: check that bottom log₂(dword_bytelen) bits are 0)
 
     // --------------------------------------------------------------------------------------------
     // Housekeeping of memory operations
@@ -268,8 +305,7 @@ fn transcript_checker<const NUM_REGS: usize, W: WordVar<F>, F: PrimeField>(
 
     // Run the CPU for one tick
     //let (new_pc, new_regs, exec_mem_data) = exec_checker(pc, instr, regs, opt_loaded_val);
-    let (new_cpu_state, exec_mem_data) =
-        exec_checker::<NUM_REGS, _, _>(cpu_state, instr, opt_loaded_val)?;
+    let (new_cpu_state, exec_mem_data) = exec_checker::<NUM_REGS, _, _>(cpu_state, instr)?;
 
     // Check well-formedness of the mem data
     exec_mem_data.kind.enforce_well_formed()?;
@@ -289,9 +325,6 @@ fn transcript_checker<const NUM_REGS: usize, W: WordVar<F>, F: PrimeField>(
 
     // Check that if there was STORE, the stored word matches `mem_op.val`
     let instr_is_store = exec_mem_data.kind.is_store()?;
-    exec_mem_data
-        .stored_word
-        .conditional_enforce_equal(&mem_op.val, &instr_is_store)?;
 
     // --------------------------------------------------------------------------------------------
     // Checking memory-sorted transcript consistency
@@ -310,10 +343,9 @@ fn transcript_checker<const NUM_REGS: usize, W: WordVar<F>, F: PrimeField>(
     // Check that this is sorted by memory idx then time. That is, check
     //       prev.ram_idx < cur.ram_idx
     //     ∨ (prev.ram_idx == cur.ram_idx ∧ prev.timestamp < cur.timestamp);
-    let ram_idx_has_incrd =
-        prev.ram_idx
-            .as_fpvar()?
-            .is_cmp(&cur.ram_idx.as_fpvar()?, Ordering::Less, false)?;
+    let ram_idx_has_incrd = prev
+        .ram_idx_fp
+        .is_cmp(&cur.ram_idx_fp, Ordering::Less, false)?;
     let ram_idx_is_eq = prev.ram_idx.is_eq(&cur.ram_idx)?;
     let t_has_incrd = prev
         .timestamp
@@ -326,10 +358,10 @@ fn transcript_checker<const NUM_REGS: usize, W: WordVar<F>, F: PrimeField>(
     //     ∨ prev.val == cur.val
     //     ∨ cur.op == STORE;
     let ram_idx_is_neq = prev.ram_idx.is_neq(&cur.ram_idx)?;
-    let val_is_eq = prev.val.is_eq(&cur.val)?;
+    let val_is_eq = prev.val_fp.is_eq(&cur.val_fp)?;
     let op_is_store = cur
         .op
-        .is_eq(&MemOpKindVar::Constant(MemOpKind::Store.as_bool()))?;
+        .is_eq(&MemOpKindVar::Constant(MemOpKind::Store.as_fp()))?;
     let cond = ram_idx_is_neq.or(&val_is_eq)?.or(&op_is_store)?;
     cond.enforce_equal(&Boolean::TRUE)?;
 

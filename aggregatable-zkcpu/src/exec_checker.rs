@@ -1,7 +1,7 @@
 use crate::{
     common::*,
-    util::{arr_set, uint8_to_fpvar},
-    word::{DoubleWordVar, WordVar},
+    util::{arr_set, log2, uint8_to_fpvar},
+    word::{DWordVar, WordVar},
 };
 use tinyram_emu::instructions::Opcode;
 
@@ -105,7 +105,7 @@ impl<W: WordVar<F>, F: PrimeField> CondSelectGadget<F> for ExecTickMemData<W, F>
 /// Decodes an encoded instruction into an opcode, 2 registers, and an immediate-or-register. The
 /// registers (including the imm-or-reg if applicable) are guaranteed to be less than `NUM_REGS`.
 fn decode_instr<const NUM_REGS: usize, W: WordVar<F>, F: PrimeField>(
-    encoded_instr: &DoubleWordVar<W, F>,
+    encoded_instr: &DWordVar<W, F>,
 ) -> Result<
     (
         OpcodeVar<F>,
@@ -116,7 +116,7 @@ fn decode_instr<const NUM_REGS: usize, W: WordVar<F>, F: PrimeField>(
     SynthesisError,
 > {
     let num_regs = FpVar::constant(F::from(NUM_REGS as u64));
-    let regidx_bitlen: usize = (NUM_REGS as f32).log2().ceil() as usize;
+    let regidx_bitlen: usize = log2(NUM_REGS);
     let instr_bits: Vec<Boolean<F>> = encoded_instr.as_le_bits();
 
     let mut cur_bit_idx: usize = 0;
@@ -311,8 +311,7 @@ fn run_instr<W: WordVar<F>, F: PrimeField>(
 /// counter, updated set of registers, and a description of what, if any, memory operation occured.
 pub(crate) fn exec_checker<const NUM_REGS: usize, W: WordVar<F>, F: PrimeField>(
     cpu_state: &CpuState<W, F>,
-    instr: &DoubleWordVar<W, F>,
-    opt_loaded_val: &W,
+    instr: &DWordVar<W, F>,
 ) -> Result<(CpuState<W, F>, ExecTickMemData<W, F>), SynthesisError> {
     // Prepare to run all the instructions. This will hold them all. At the end, we'll use the
     // opcode to select the output state we want to return.
@@ -479,7 +478,7 @@ mod test {
                 let dword_var = {
                     let word0_var = WV::new_witness(ns!(cs, "word0"), || Ok(word0)).unwrap();
                     let word1_var = WV::new_witness(ns!(cs, "word1"), || Ok(word1)).unwrap();
-                    DoubleWordVar::new((word0_var, word1_var))
+                    DWordVar::new((word0_var, word1_var))
                 };
                 let (opcode_var, reg1_var, reg2_var, imm_or_reg_var) =
                     decode_instr::<NUM_REGS, _, _>(&dword_var).unwrap();

@@ -37,3 +37,8 @@ where
 
     Ok(out)
 }
+
+/// A log2 function for small `usize` values
+pub(crate) fn log2(x: usize) -> usize {
+    (x as f32).log2().ceil() as usize
+}
