@@ -57,6 +57,9 @@ pub trait WordVar<F: PrimeField>: Debug + EqGadget<F> + CondSelectGadget<F> {
     /// Returns the 1 word
     fn one() -> Self;
 
+    /// Returns the constant given by `w`
+    fn constant(w: Self::NativeWord) -> Self;
+
     /// Convert `self` to a field element
     fn as_fpvar(&self) -> Result<FpVar<F>, SynthesisError>;
 
@@ -113,6 +116,10 @@ macro_rules! impl_word {
                 Self::constant(1)
             }
 
+            fn constant(w: Self::NativeWord) -> Self {
+                $word_var::constant(w)
+            }
+
             fn as_fpvar(&self) -> Result<FpVar<F>, SynthesisError> {
                 Boolean::le_bits_to_fp_var(&self.to_bits_le())
             }
@@ -163,6 +170,10 @@ impl<F: PrimeField> WordVar<F> for UInt8<F> {
 
     fn one() -> Self {
         Self::constant(1)
+    }
+
+    fn constant(w: Self::NativeWord) -> Self {
+        UInt8::constant(w)
     }
 
     fn as_fpvar(&self) -> Result<FpVar<F>, SynthesisError> {

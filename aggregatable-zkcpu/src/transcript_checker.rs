@@ -133,9 +133,9 @@ impl<W: Word> TranscriptEntry<W> {
 }
 
 /// An entry in the transcript of RAM accesses
-struct TranscriptEntryVar<W: WordVar<F>, F: PrimeField> {
+pub(crate) struct TranscriptEntryVar<W: WordVar<F>, F: PrimeField> {
     /// Tells whether or not this entry is padding
-    is_padding: Boolean<F>,
+    pub(crate) is_padding: Boolean<F>,
     /// The timestamp of this entry. This is at most 64 bits
     timestamp: TimestampVar<F>,
     ///
@@ -244,6 +244,7 @@ struct TranscriptCheckerEvals<F: PrimeField> {
 /// This function checks the time- and mem-sorted transcripts for consistency. It also accumulates
 /// both transcripts into their respective polynomial evaluations.
 fn transcript_checker<const NUM_REGS: usize, W: WordVar<F>, F: PrimeField>(
+    arch: TinyRamArch,
     cpu_state: &CpuState<W, F>,
     chal: &FpVar<F>,
     pc_load: &TranscriptEntryVar<W, F>,
@@ -282,13 +283,15 @@ fn transcript_checker<const NUM_REGS: usize, W: WordVar<F>, F: PrimeField>(
     // We're gonna update our running evals
     let mut new_evals = evals.clone();
 
-    // Put the instruction LOAD in the time-sorted execution mem
+    // Put the instruction load in the time-sorted execution mem
     new_evals
         .time_tr_exec
         .update(&pc_load.as_ff(false)?, chal)?;
 
     // Put the memory operation execution mem. If this is padding, then that's fine, because
     // there's as much padding here as in the memory trace
+    // TODO: When tape reads are implemented, the below to be muxed. mem_op might go to the tape
+    // tr, the time tr, or nowhere (if it's an aux tape read)
     new_evals.time_tr_exec.update(&mem_op.as_ff(false)?, chal)?;
 
     // --------------------------------------------------------------------------------------------
@@ -297,34 +300,14 @@ fn transcript_checker<const NUM_REGS: usize, W: WordVar<F>, F: PrimeField>(
 
     // Unpack the LOAD at the program counter
     let pc = &pc_load.ram_idx;
-    let instr = todo!(); // TODO: Deal with the fact that pcload is 2 words, not one
-                         //let instr = &pc_load.val;
+    let instr = &pc_load.val;
 
     // If instr is a `lw`, then it needs the value from memory
     let opt_loaded_val = &mem_op.val;
 
     // Run the CPU for one tick
     //let (new_pc, new_regs, exec_mem_data) = exec_checker(pc, instr, regs, opt_loaded_val);
-    let (new_cpu_state, exec_mem_data) = exec_checker::<NUM_REGS, _, _>(cpu_state, instr)?;
-
-    // Check well-formedness of the mem data
-    exec_mem_data.kind.enforce_well_formed()?;
-
-    // Check that the memory op is padding iff the instruction is a no-mem instruction. That is,
-    //       (mem_op.is_padding ∧ instr_used_mem)
-    //     ∨ (¬mem_op.is_padding ∧ ¬instr_used_mem)
-    let instr_used_mem = exec_mem_data.kind.is_no_mem()?.not();
-    (mem_op.is_padding.and(&instr_used_mem)?)
-        .or(&mem_op.is_padding.not().and(&instr_used_mem.not())?)?
-        .enforce_equal(&Boolean::TRUE)?;
-
-    // Check that if there was a LOAD/STORE, the RAM index `mem_op.ram_idx`
-    exec_mem_data
-        .idx
-        .conditional_enforce_equal(&mem_op.ram_idx, &instr_used_mem)?;
-
-    // Check that if there was STORE, the stored word matches `mem_op.val`
-    let instr_is_store = exec_mem_data.kind.is_store()?;
+    let new_cpu_state = exec_checker::<NUM_REGS, _, _>(arch, &mem_op, cpu_state, instr)?;
 
     // --------------------------------------------------------------------------------------------
     // Checking memory-sorted transcript consistency

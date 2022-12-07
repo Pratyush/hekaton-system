@@ -1,9 +1,10 @@
 use crate::{
     common::*,
+    transcript_checker::TranscriptEntryVar,
     util::{arr_set, log2, uint8_to_fpvar},
     word::{DWordVar, WordVar},
 };
-use tinyram_emu::instructions::Opcode;
+use tinyram_emu::{instructions::Opcode, word::Word, TinyRamArch};
 
 use core::cmp::Ordering;
 use std::cmp::min;
@@ -220,16 +221,19 @@ impl<W: WordVar<F>, F: PrimeField> CondSelectGadget<F> for CpuState<W, F> {
     }
 }
 
-/// A helper to `exec_checker`. This takes a native opcode and its zk parameters, and executes it
+/// A helper to `exec_checker`. This takes a native opcode and its zk parameters, executes it, and
+/// returns `(new_state, err)`. `err` is set if the contents of `mem_op` do not match the
+/// instruction.
 fn run_instr<W: WordVar<F>, F: PrimeField>(
     op: Opcode,
     cpu_state: &CpuState<W, F>,
+    mem_op: &TranscriptEntryVar<W, F>,
     reg1: &FpVar<F>,
     reg2_val: &W,
     imm_or_reg_val: &W,
     incrd_pc: &W,
     pc_overflow: &Boolean<F>,
-) -> Result<CpuState<W, F>, SynthesisError> {
+) -> Result<(CpuState<W, F>, Boolean<F>), SynthesisError> {
     let CpuState {
         pc: _,
         flag,
@@ -238,18 +242,22 @@ fn run_instr<W: WordVar<F>, F: PrimeField>(
     } = cpu_state;
 
     use Opcode::*;
-    let new_state = match op {
+    match op {
         Add => {
             let (output_val, new_flag) = reg2_val.carrying_add(&imm_or_reg_val)?;
             let new_regs = arr_set(&regs, reg1, &output_val)?;
 
             // The PC is incremented (need to check overflow), and the flag and registers are new.
-            CpuState {
+            let state = CpuState {
                 pc: incrd_pc.clone(),
                 flag: new_flag,
                 regs: new_regs,
                 answer: answer.clone(),
-            }
+            };
+            // add is not a memory operation. This MUST be padding.
+            let err = mem_op.is_padding.not();
+
+            Ok((state, err))
         }
         CmpE => {
             // Compare the two input values
@@ -257,23 +265,31 @@ fn run_instr<W: WordVar<F>, F: PrimeField>(
 
             //  The PC is incremented (need to check overflow), and the flag is new
             pc_overflow.enforce_equal(&Boolean::FALSE)?;
-            CpuState {
+            let state = CpuState {
                 pc: incrd_pc.clone(),
                 flag: new_flag,
                 regs: regs.clone(),
                 answer: answer.clone(),
-            }
+            };
+            // cmpe is not a memory operation. This MUST be padding.
+            let err = mem_op.is_padding.not();
+
+            Ok((state, err))
         }
         Jmp => {
             // Set the new PC to be the imm-or-reg
             let new_pc = imm_or_reg_val.clone();
 
-            CpuState {
+            let state = CpuState {
                 pc: new_pc,
                 flag: flag.clone(),
                 regs: regs.clone(),
                 answer: answer.clone(),
-            }
+            };
+            // cmpe is not a memory operation. This MUST be padding.
+            let err = mem_op.is_padding.not();
+
+            Ok((state, err))
         }
         CJmp => {
             // Let pc' = imm_or_reg_val if flag is set. Otherwise, let pc' = pc + 1
@@ -284,40 +300,51 @@ fn run_instr<W: WordVar<F>, F: PrimeField>(
             let relevant_pc_overflow = pc_overflow.and(&used_incrd_pc)?;
             relevant_pc_overflow.enforce_equal(&Boolean::FALSE)?;
 
-            CpuState {
+            let state = CpuState {
                 pc: new_pc,
                 flag: flag.clone(),
                 regs: regs.clone(),
                 answer: answer.clone(),
-            }
-        }
-        Answer => CpuState {
-            pc: incrd_pc.clone(),
-            flag: flag.clone(),
-            regs: regs.clone(),
-            answer: CpuAnswer {
-                is_set: Boolean::TRUE,
-                val: imm_or_reg_val.clone(),
-            },
-        },
-        _ => unimplemented!(),
-    };
+            };
+            // cjmp is not a memory operation. This MUST be padding.
+            let err = mem_op.is_padding.not();
 
-    Ok(new_state)
+            Ok((state, err))
+        }
+        Answer => {
+            let state = CpuState {
+                pc: incrd_pc.clone(),
+                flag: flag.clone(),
+                regs: regs.clone(),
+                answer: CpuAnswer {
+                    is_set: Boolean::TRUE,
+                    val: imm_or_reg_val.clone(),
+                },
+            };
+            // answer is not a memory operation. This MUST be padding.
+            let err = mem_op.is_padding.not();
+
+            Ok((state, err))
+        }
+        _ => todo!(),
+    }
 }
 
 /// Runs a single CPU tick with the given program counter, instruction, registers, and word loaded
 /// from memory (if `instr isn't a `lw`, then the word is ignored). Returns the updated program
 /// counter, updated set of registers, and a description of what, if any, memory operation occured.
 pub(crate) fn exec_checker<const NUM_REGS: usize, W: WordVar<F>, F: PrimeField>(
+    arch: TinyRamArch,
+    mem_op: &TranscriptEntryVar<W, F>,
     cpu_state: &CpuState<W, F>,
     instr: &DWordVar<W, F>,
-) -> Result<(CpuState<W, F>, ExecTickMemData<W, F>), SynthesisError> {
-    // Prepare to run all the instructions. This will hold them all. At the end, we'll use the
-    // opcode to select the output state we want to return.
+) -> Result<CpuState<W, F>, SynthesisError> {
+    // Prepare to run all the instructions. This will hold new_state for all possible instructions,
+    // and all_errors will hold the corresponding errors flags. At the end, we'll use the opcode to
+    // select the output state we want to return, and assert that err == false.
     let mut all_output_states = vec![cpu_state.clone(); 32];
-    // Similarly, create all the mem ops. By default, they are ExecTickMemDataKind::no_mem
-    let mut all_mem_ops = vec![ExecTickMemData::default(); 32];
+    // TODO: Figure out whether invalid instructions are necessarily errors
+    let mut all_errors = vec![Boolean::TRUE; 32];
 
     // Unpack the state and decode the instruction
     let CpuState {
@@ -329,7 +356,16 @@ pub(crate) fn exec_checker<const NUM_REGS: usize, W: WordVar<F>, F: PrimeField>(
     let (opcode, reg1, reg2, imm_or_reg) = decode_instr::<NUM_REGS, _, _>(instr)?;
 
     // Create the default next program counter, which is the one that's incremented
-    let (incrd_pc, pc_overflow) = pc.checked_increment()?;
+    let (incrd_pc, pc_overflow) = match arch {
+        TinyRamArch::Harvard => pc.checked_increment()?,
+        TinyRamArch::VonNeumann => {
+            // Increment PC by 1 dword
+            let dword_bytelen = 2 * (W::BITLEN / 8) as u64;
+            pc.carrying_add(&W::constant(
+                W::NativeWord::from_u64(dword_bytelen).unwrap(),
+            ))?
+        }
+    };
 
     use tinyram_emu::instructions::Opcode::*;
     let opcodes = [Add, CmpE, Jmp, CJmp, Answer];
@@ -353,9 +389,10 @@ pub(crate) fn exec_checker<const NUM_REGS: usize, W: WordVar<F>, F: PrimeField>(
     // Go through every opcode, do the operation, and save the results in all_output_states and
     // all_mem_ops
     for opcode in opcodes {
-        let new_state = run_instr(
+        let (new_state, err) = run_instr(
             opcode,
             cpu_state,
+            mem_op,
             &reg1_fp,
             &reg2_val,
             &imm_or_reg_val,
@@ -363,6 +400,7 @@ pub(crate) fn exec_checker<const NUM_REGS: usize, W: WordVar<F>, F: PrimeField>(
             &pc_overflow,
         )?;
         all_output_states[opcode as usize] = new_state;
+        all_errors[opcode as usize] = err;
     }
 
     // Out of all the computed output states and memory operations, pick the ones that correspond
@@ -371,12 +409,12 @@ pub(crate) fn exec_checker<const NUM_REGS: usize, W: WordVar<F>, F: PrimeField>(
         &opcode.to_bits_be()?,
         &all_output_states[..],
     )?;
-    let out_mem_op = ExecTickMemData::conditionally_select_power_of_two_vector(
-        &opcode.to_bits_be()?,
-        &all_mem_ops[..],
-    )?;
+    // Check that this operation didn't error
+    let err =
+        Boolean::conditionally_select_power_of_two_vector(&opcode.to_bits_be()?, &all_errors[..])?;
+    err.enforce_equal(&Boolean::FALSE)?;
 
-    Ok((out_state, out_mem_op))
+    Ok(out_state)
 }
 
 #[cfg(test)]

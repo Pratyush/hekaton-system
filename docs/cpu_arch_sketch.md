@@ -224,6 +224,26 @@ fn exec_checker(
 
         }
 
+        CmpE => {
+            // Rename the args for clarity
+            let in1 = instr.reg2;
+            let in2 = instr.imm_or_reg;
+
+            let word1 = in1.value(regs);
+            let word2 = in2.value(regs);
+            let is_eq = word1.is_eq(word2);
+            // Save the values
+            let new_state = CpuState {
+                pc: pc + pc_step_size,
+                flag: is_eq,
+                regs,
+                primary_tape_idx,
+                aux_tape_idx,
+            }
+            let err = !mem_op.is_padding;
+            (new_state, err)
+        }
+
         LoadW => {
             // Rename the args for clarity
             let dest = instr.reg1;
