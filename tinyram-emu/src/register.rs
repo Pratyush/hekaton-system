@@ -1,5 +1,7 @@
 use crate::word::Word;
 
+use core::str::FromStr;
+
 /// An index into the CPU registers
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RegIdx(pub u8);
@@ -7,6 +9,11 @@ pub struct RegIdx(pub u8);
 impl RegIdx {
     pub fn value<W: Word>(&self, registers: &[W]) -> W {
         registers[self.0 as usize]
+    }
+
+    pub fn from_str(s: &str) -> Result<RegIdx, core::num::ParseIntError> {
+        let b = u8::from_str(s)?;
+        Ok(RegIdx(b))
     }
 }
 

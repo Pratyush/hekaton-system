@@ -5,6 +5,8 @@ edition = "2021"
 
 [dependencies]
 bitfield = "0.14"
+pest = "2.5.1"
+pest_derive = "2.5.1"
 
 [dev-dependencies]
 rand = "0.8"
