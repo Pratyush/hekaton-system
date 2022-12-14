@@ -79,6 +79,51 @@ impl TryFrom<u8> for Opcode {
     }
 }
 
+impl TryFrom<&str> for Opcode {
+    type Error = ();
+
+    fn try_from(input: &str) -> Result<Opcode, ()> {
+        use Opcode::*;
+
+        let table = [
+            ("and", And),
+            ("or", Or),
+            ("xor", Xor),
+            ("not", Not),
+            ("add", Add),
+            ("sub", Sub),
+            ("mull", MulL),
+            ("umulh", UMulH),
+            ("smulh", SMulH),
+            ("udiv", UDiv),
+            ("umod", UMod),
+            ("shl", Shl),
+            ("shr", Shr),
+            ("cmpe", CmpE),
+            ("cmpa", CmpA),
+            ("cmpae", CmpAe),
+            ("cmpg", CmpG),
+            ("cmpge", CmpGe),
+            ("mov", Mov),
+            ("cmov", CMov),
+            ("jmp", Jmp),
+            ("cjmp", CJmp),
+            ("cnjmp", CnJmp),
+            ("storeb", StoreB),
+            ("loadb", LoadB),
+            ("storew", StoreW),
+            ("loadw", LoadW),
+            ("read", Read),
+            ("answer", Answer),
+        ];
+
+        table
+            .iter()
+            .find_map(|(s, var)| if input == *s { Some(*var) } else { None })
+            .ok_or(())
+    }
+}
+
 impl<W: Word> Instr<W> {
     pub fn opcode(&self) -> Opcode {
         use Instr::*;

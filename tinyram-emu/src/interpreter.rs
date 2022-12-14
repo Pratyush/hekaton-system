@@ -330,22 +330,19 @@ mod test {
     use super::*;
     use crate::{
         instructions::Instr,
+        parser::assemble,
         register::{ImmOrRegister, RegIdx},
     };
 
     type W = u32;
     const NUM_REGS: usize = 8;
 
-    fn imm(val: u64) -> ImmOrRegister<W> {
-        ImmOrRegister::new(val, true).unwrap()
-    }
-
     // Test program that sums every multiple of 3 from 1 to 100. The output should be 1683.
     #[test]
     fn sum_skip3() {
         // A simple Rust program we will translate to TinyRAM assembly
         //        i is our index that ranges from 0 to 100
-        //      acc is our accumulated sum
+        //      acc is our accumulated sum, which is printed at the end
         // mul3_ctr is our mul-of-three counter
         let mut i = 0;
         let mut mul3_ctr = 0;
@@ -360,81 +357,43 @@ mod test {
                 mul3_ctr = 0;
             }
         }
+        println!("{acc}");
 
         // Here's the assembly code of the above program
         //     reg0 -> i
         //     reg1 -> acc
         //     reg2 -> mul3_ctr
-        //
-        // hv addr  vn addr             code
-        // -------  -------  ---------------------------
-        //                   ; TinyRam V=2.000 M=X W=32 K=8
-        //                     (where X = hv or vn)
-        //    0x00     0x00  _loop: add  reg0, reg0 1        ; incr i
-        //    0x01     0x08         add  reg2, reg2 1        ; incr mul3_ctr
-        //    0x02     0x10         cmpe reg0, 100           ; if i == 100:
-        //    0x03     0x18         cjmp _end                ;     jump to end
-        //    0x04     0x20         cmpe reg2, 3             ; else if mul3_ctr == 3:
-        //    0x05     0x28         cjmp _acc                ;     jump to acc
-        //    0x06     0x30         jmp  _loop               ; else jump to beginning
-        //
-        //    0x07     0x38   _acc: add reg1, reg1, reg0     ; Accumulate i into acc
-        //    0x08     0x40         xor reg2, reg2, reg2     ; Clear mul3_ctr
-        //    0x09     0x48         jmp loop                 ; Jump back to the loop
-        //
-        //    0x0a     0x50   _end: answer reg1              ; Return acc
+        let skip3_code = "\
+        _loop: add  r0, r0, 1     ; incr i
+               add  r2, r2, 1     ; incr mul3_ctr
+               cmpe r0, 100       ; if i == 100:
+               cjmp _end          ;     jump to end
+               cmpe r2, 3         ; else if mul3_ctr == 3:
+               cjmp _acc          ;     jump to acc
+               jmp  _loop         ; else jump to beginning
 
-        let reg0 = RegIdx(0);
-        let reg1 = RegIdx(1);
-        let reg2 = RegIdx(2);
+         _acc: add r1, r1, r0     ; Accumulate i into acc
+               xor r2, r2, r2     ; Clear mul3_ctr
+               jmp _loop          ; Jump back to the loop
 
-        let hv_labels = (imm(0x00), imm(0x07), imm(0x0a));
-        let vn_labels = (imm(0x00), imm(0x38), imm(0x50));
+         _end: answer r1          ; Return acc
+        ";
 
-        for (arch, (label_loop, label_acc, label_end)) in [
-            (TinyRamArch::Harvard, hv_labels),
-            (TinyRamArch::VonNeumann, vn_labels),
+        // Headers for the two architectures
+        let hv_header = "; TinyRAM V=2.000 M=hv W=32 K=8\n";
+        let vn_header = "; TinyRAM V=2.000 M=vn W=32 K=8\n";
+
+        // Assemble the program under both architectures
+        for (arch, header) in [
+            (TinyRamArch::Harvard, hv_header),
+            (TinyRamArch::VonNeumann, vn_header),
         ] {
-            let assembly = [
-                Instr::Add {
-                    out: reg0,
-                    in1: reg0,
-                    in2: imm(1),
-                },
-                Instr::Add {
-                    out: reg2,
-                    in1: reg2,
-                    in2: imm(1),
-                },
-                Instr::CmpE {
-                    in1: reg0,
-                    in2: imm(100),
-                },
-                Instr::CJmp { in1: label_end },
-                Instr::CmpE {
-                    in1: reg2,
-                    in2: imm(3),
-                },
-                Instr::CJmp { in1: label_acc },
-                Instr::Jmp { in1: label_loop },
-                Instr::Add {
-                    out: reg1,
-                    in1: reg1,
-                    in2: ImmOrRegister::Register(reg0),
-                },
-                Instr::Xor {
-                    out: reg2,
-                    in1: reg2,
-                    in2: ImmOrRegister::Register(reg2),
-                },
-                Instr::Jmp { in1: label_loop },
-                Instr::Answer {
-                    in1: ImmOrRegister::Register(reg1),
-                },
-            ];
-
+            let program = [header, skip3_code].concat();
+            let assembly = assemble(&program);
             let (output, _mem_trace) = run_program::<W, NUM_REGS>(arch, &assembly);
-            assert_eq!(u64::from(output), acc);
+
+            // Check that the program outputted the correct value
+            assert_eq!(output, 1683);
         }
     }
 }

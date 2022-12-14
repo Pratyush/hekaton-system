@@ -1,5 +1,7 @@
-use core::fmt::Debug;
-use std::ops::{BitAnd, BitOr, BitXor, Div, Not, Rem};
+use core::{
+    fmt::Debug,
+    ops::{BitAnd, BitOr, BitXor, Div, Not, Rem},
+};
 
 pub trait Word:
     Debug

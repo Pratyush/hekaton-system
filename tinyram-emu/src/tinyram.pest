@@ -1,6 +1,11 @@
 // Enforce whitespace between sequenced tokens (except for in @ or $ rules)
 WHITESPACE = _{ " " | "\t" }
 
+// Make more ignorable syntax rules
+COMMA = _{ "," }
+UNDERSCORE = _{ "_" }
+
+
 // The TinyRAM header has almost no leeway in parsing
 header = ${ "; TinyRAM V=2.000 M=" ~ arch ~ " W=" ~ word_bitlen ~ " K=" ~ num_regs }
 // Harvard or Von-Neumman architecture
@@ -10,7 +15,7 @@ num_regs = { ASCII_DIGIT+ }
 
 // A register is rX where X is a digit
 dec_num = { ASCII_DIGIT+ }
-label = @{ "_" ~ (ASCII_DIGIT | ASCII_ALPHA)+ }
+label = @{ UNDERSCORE ~ (ASCII_DIGIT | ASCII_ALPHA)+ }
 reg = ${ "r" ~ dec_num }
 // An immediate is either a number or a jump label
 imm = { dec_num | label }
@@ -18,19 +23,19 @@ imm_or_reg = { imm | reg }
 
 // Parse reg, reg, imm-or-reg instructions
 rri_instr_mnemonic = { "add" | "or" | "xor" }
-rri_instr_inputs = { reg ~ "," ~ reg ~ "," ~ imm_or_reg }
+rri_instr_inputs = { reg ~ COMMA ~ reg ~ COMMA ~ imm_or_reg }
 // The mnemonic (i.e., opcode) must be separated from the inputs with whitespace
 rri_instr_begin = @{ rri_instr_mnemonic ~ WHITE_SPACE }
 rri_instr = { rri_instr_begin ~ rri_instr_inputs }
 
 // Parse reg, imm-or-reg instructions. Similar to above
 ri_instr_mnemonic = { "not" | "cmpe" | "load.w" }
-ri_instr_inputs = { reg ~ "," ~ imm_or_reg }
+ri_instr_inputs = { reg ~ COMMA ~ imm_or_reg }
 ri_instr_begin = @{ ri_instr_mnemonic ~ WHITE_SPACE }
 ri_instr = { ri_instr_begin ~ ri_instr_inputs }
 
 // Parse imm-or-reg, reg instructions. Similar to above
-ir_instr_inputs = { imm_or_reg ~ "," ~ reg }
+ir_instr_inputs = { imm_or_reg ~ COMMA ~ reg }
 ir_instr_mnemonic = { "store.w" }
 ir_instr_begin = @{ ir_instr_mnemonic ~ WHITE_SPACE }
 ir_instr = { ir_instr_begin ~ ir_instr_inputs }
@@ -42,7 +47,7 @@ i_instr_begin = @{ i_instr_mnemonic ~ WHITE_SPACE }
 i_instr = { i_instr_begin ~ i_instr_inputs }
 
 // Read comment until newline or end-of-input
-comment = ${ "//" ~ (!(NEWLINE | EOI) ~ ANY)* }
+comment = ${ ";" ~ (!(NEWLINE | EOI) ~ ANY)* }
 
 // A line is a label, followed by an optional instruction, followed by an optional comment
 any_instr = { i_instr | ir_instr | ri_instr | rri_instr }
@@ -51,5 +56,5 @@ full_instr = { WHITESPACE* ~ label_def? ~ any_instr }
 line = { full_instr? ~ comment? }
 
 // A file is made up of newline-delimited lines
-lines = { NEWLINE+ ~ line }
-file = { SOI ~ header ~ lines* ~ EOI }
+spaced_lines = { NEWLINE+ ~ line }
+file = { SOI ~ header ~ spaced_lines* ~ EOI }
