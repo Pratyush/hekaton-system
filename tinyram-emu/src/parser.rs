@@ -383,7 +383,8 @@ mod test {
     pub(crate) const HV_HEADER: &str = "; TinyRAM V=2.000 M=hv W=32 K=8\n";
     pub(crate) const VN_HEADER: &str = "; TinyRAM V=2.000 M=vn W=32 K=8\n";
 
-    // The program minus the header
+    // The skip3 program (from interpreter.rs). No header included, so you can prepend whatever you
+    // want.
     pub(crate) const SKIP3_CODE: &str = "\
         _loop: add  r0, r0, 1     ; incr i
                add  r2, r2, 1     ; incr mul3_ctr
