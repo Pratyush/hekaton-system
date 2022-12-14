@@ -379,15 +379,12 @@ mod test {
         ImmOrRegister::new(val, true).unwrap()
     }
 
-    /// Tests the compilation of the skip3 code from the tests in interpreter.rs
-    #[test]
-    fn test_skip3() {
-        // Headers for the two architectures
-        let hv_header = "; TinyRAM V=2.000 M=hv W=32 K=8\n";
-        let vn_header = "; TinyRAM V=2.000 M=vn W=32 K=8\n";
+    // Headers for the two architectures
+    pub(crate) const HV_HEADER: &str = "; TinyRAM V=2.000 M=hv W=32 K=8\n";
+    pub(crate) const VN_HEADER: &str = "; TinyRAM V=2.000 M=vn W=32 K=8\n";
 
-        // The program minus the header
-        let skip3_code = "\
+    // The program minus the header
+    pub(crate) const SKIP3_CODE: &str = "\
         _loop: add  r0, r0, 1     ; incr i
                add  r2, r2, 1     ; incr mul3_ctr
                cmpe r0, 100       ; if i == 100:
@@ -403,6 +400,9 @@ mod test {
          _end: answer r1          ; Return acc
         ";
 
+    /// Tests the compilation of the skip3 code from the tests in interpreter.rs
+    #[test]
+    fn test_skip3() {
         // The correct _loop, _acc, and _end jump labels for Harvard and von Neumann, respectively
         let hv_labels = (imm(0x00), imm(0x07), imm(0x0a));
         let vn_labels = (imm(0x00), imm(0x38), imm(0x50));
@@ -412,7 +412,8 @@ mod test {
         let reg1 = RegIdx(1);
         let reg2 = RegIdx(2);
 
-        // These are the expected programs for the Harvard and von Neumann arches
+        // These are the expected result of assembling the skip3 program, under Harvard and von
+        // Neumann arches respectively.
         let expected_assembly: Vec<Vec<Instr<W>>> = [hv_labels, vn_labels]
             .into_iter()
             .map(|(label_loop, label_acc, label_end)| {
@@ -459,11 +460,11 @@ mod test {
         // Now make sure that the computed assembly equals the expected assembly
         for (asm, header) in expected_assembly
             .into_iter()
-            .zip([hv_header, vn_header].iter())
+            .zip([HV_HEADER, VN_HEADER].iter())
         {
             // Put the header and rest of file together, then parse it, then lower it to
             // assembly
-            let file = [header, skip3_code].concat();
+            let file = [header, SKIP3_CODE].concat();
             let parse = TinyRamParser::parse(Rule::file, &file).unwrap();
             let lowered_file = lower_file::<W>(parse);
 
