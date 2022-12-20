@@ -17,8 +17,12 @@ use ark_r1cs_std::{
     fields::{fp::FpVar, FieldVar},
     select::CondSelectGadget,
     uint8::UInt8,
+    R1CSVar,
 };
-use ark_relations::r1cs::SynthesisError;
+use ark_relations::{
+    ns,
+    r1cs::{ConstraintSystemRef, SynthesisError},
+};
 
 /// An `ExecTickMemData` can be a LOAD (=0), a STORE (=1), or no-mem (=2)
 #[derive(Clone)]
@@ -161,7 +165,7 @@ fn decode_instr<const NUM_REGS: usize, W: WordVar<F>, F: PrimeField>(
     return Ok((opcode, reg1, reg2, imm_or_reg));
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct CpuAnswer<W, F>
 where
     W: WordVar<F>,
@@ -169,6 +173,15 @@ where
 {
     is_set: Boolean<F>,
     val: W,
+}
+
+impl<W: WordVar<F>, F: PrimeField> Default for CpuAnswer<W, F> {
+    fn default() -> Self {
+        CpuAnswer {
+            is_set: Boolean::FALSE,
+            val: W::zero(),
+        }
+    }
 }
 
 impl<W: WordVar<F>, F: PrimeField> CondSelectGadget<F> for CpuAnswer<W, F> {
@@ -184,7 +197,7 @@ impl<W: WordVar<F>, F: PrimeField> CondSelectGadget<F> for CpuAnswer<W, F> {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) struct CpuState<W, F>
 where
     W: WordVar<F>,
@@ -194,6 +207,17 @@ where
     flag: Boolean<F>,
     regs: RegistersVar<W>,
     answer: CpuAnswer<W, F>,
+}
+
+impl<W: WordVar<F>, F: PrimeField> CpuState<W, F> {
+    fn default<const NUM_REGS: usize>() -> Self {
+        CpuState {
+            pc: W::zero(),
+            flag: Boolean::FALSE,
+            regs: vec![W::zero(); NUM_REGS],
+            answer: CpuAnswer::default(),
+        }
+    }
 }
 
 impl<W: WordVar<F>, F: PrimeField> CondSelectGadget<F> for CpuState<W, F> {
@@ -255,6 +279,22 @@ fn run_instr<W: WordVar<F>, F: PrimeField>(
                 answer: answer.clone(),
             };
             // add is not a memory operation. This MUST be padding.
+            let err = mem_op.is_padding.not();
+
+            Ok((state, err))
+        }
+        Xor => {
+            let output_val = reg2_val.xor(&imm_or_reg_val)?;
+            let new_regs = arr_set(&regs, reg1, &output_val)?;
+
+            // The PC is incremented (need to check overflow), and the registers are new.
+            let state = CpuState {
+                pc: incrd_pc.clone(),
+                flag: flag.clone(),
+                regs: new_regs,
+                answer: answer.clone(),
+            };
+            // xor is not a memory operation. This MUST be padding.
             let err = mem_op.is_padding.not();
 
             Ok((state, err))
@@ -367,8 +407,9 @@ pub(crate) fn exec_checker<const NUM_REGS: usize, W: WordVar<F>, F: PrimeField>(
         }
     };
 
+    // Enumerate all the opcodes we have to eval
     use tinyram_emu::instructions::Opcode::*;
-    let opcodes = [Add, CmpE, Jmp, CJmp, Answer];
+    let opcodes = [Add, Xor, CmpE, Jmp, CJmp, Answer];
 
     // Read the registers
     // reg1 (if used) is always the output register. So we don't need to read that
@@ -403,15 +444,15 @@ pub(crate) fn exec_checker<const NUM_REGS: usize, W: WordVar<F>, F: PrimeField>(
         all_errors[opcode as usize] = err;
     }
 
+    // Decode the opcode and use it to index into the vec of next CPU states
+    let opcode_bits = opcode.to_bits_be()?;
+
     // Out of all the computed output states and memory operations, pick the ones that correspond
     // to this instruction's opcode
-    let out_state = CpuState::conditionally_select_power_of_two_vector(
-        &opcode.to_bits_be()?,
-        &all_output_states[..],
-    )?;
+    let out_state =
+        CpuState::conditionally_select_power_of_two_vector(&opcode_bits, &all_output_states[..])?;
     // Check that this operation didn't error
-    let err =
-        Boolean::conditionally_select_power_of_two_vector(&opcode.to_bits_be()?, &all_errors[..])?;
+    let err = Boolean::conditionally_select_power_of_two_vector(&opcode_bits, &all_errors[..])?;
     err.enforce_equal(&Boolean::FALSE)?;
 
     Ok(out_state)
@@ -535,7 +576,81 @@ mod test {
                 assert_eq!(reg1_var.0.value().unwrap(), reg1.0);
                 assert_eq!(reg2_var.0.value().unwrap(), reg2.0);
                 assert_eq!(imm_or_reg_var.val.value().unwrap(), imm_or_reg.raw());
+
+                // Make sure nothing errored
+                assert!(cs.is_satisfied().unwrap());
             }
         }
+    }
+
+    // The skip3 program
+    pub(crate) const SKIP3_CODE: &str = "\
+        ; TinyRAM V=2.000 M=vn W=32 K=8
+        _loop: add  r0, r0, 1     ; incr i
+               add  r2, r2, 1     ; incr mul3_ctr
+               cmpe r0, 17        ; if i == 17:
+               cjmp _end          ;     jump to end
+               cmpe r2, 3         ; else if mul3_ctr == 3:
+               cjmp _acc          ;     jump to acc
+               jmp  _loop         ; else jump to beginning
+
+         _acc: add r1, r1, r0     ; Accumulate i into acc
+               xor r2, r2, r2     ; Clear mul3_ctr
+               jmp _loop          ; Jump back to the loop
+
+         _end: answer r1          ; Return acc
+        ";
+
+    #[test]
+    fn test_skip3() {
+        let cs = ConstraintSystem::new_ref();
+
+        let assembly = tinyram_emu::parser::assemble(SKIP3_CODE);
+        let arch = TinyRamArch::VonNeumann;
+
+        let (output, trace) = tinyram_emu::interpreter::run_program::<W, NUM_REGS>(
+            TinyRamArch::VonNeumann,
+            &assembly,
+        );
+        println!("Trace len == {}", trace.0.len());
+
+        let non_mem_op = TranscriptEntryVar::default();
+
+        // Run the CPU
+        let mut cpu_state = CpuState::default::<NUM_REGS>();
+        for (i, (instr, _)) in trace.0.into_iter().enumerate() {
+            // Encode the instruction to bytes
+            let mut encoded_instr = [0u8; W::INSTR_BYTELEN];
+            instr.to_bytes::<NUM_REGS>(&mut encoded_instr);
+
+            // Split the encoded instruction bytes into two. This is the encoded first and
+            // second word
+            let (word0, word1) = {
+                const WORD_BYTELEN: usize = W::BITLEN / 8;
+                let mut w0_buf = [0u8; WORD_BYTELEN];
+                let mut w1_buf = [0u8; WORD_BYTELEN];
+                w0_buf.copy_from_slice(&encoded_instr[..WORD_BYTELEN]);
+                w1_buf.copy_from_slice(&encoded_instr[WORD_BYTELEN..]);
+                (W::from_be_bytes(w0_buf), W::from_be_bytes(w1_buf))
+            };
+
+            // Witness those words and decode them in ZK
+            let dword_var = {
+                let word0_var = WV::new_witness(ns!(cs, "word0"), || Ok(word0)).unwrap();
+                let word1_var = WV::new_witness(ns!(cs, "word1"), || Ok(word1)).unwrap();
+                DWordVar::new((word0_var, word1_var))
+            };
+
+            println!("iteration {i}. Instr == {:?}", instr);
+            cpu_state =
+                exec_checker::<NUM_REGS, _, _>(arch, &non_mem_op, &cpu_state, &dword_var).unwrap();
+
+            // Make sure nothing errored
+            assert!(cs.is_satisfied().unwrap());
+        }
+
+        // Check the output is set and correct
+        assert!(cpu_state.answer.is_set.value().unwrap());
+        assert_eq!(output, cpu_state.answer.val.value().unwrap());
     }
 }

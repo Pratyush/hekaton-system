@@ -150,6 +150,20 @@ pub(crate) struct TranscriptEntryVar<W: WordVar<F>, F: PrimeField> {
     val_fp: FpVar<F>,
 }
 
+impl<W: WordVar<F>, F: PrimeField> Default for TranscriptEntryVar<W, F> {
+    fn default() -> Self {
+        TranscriptEntryVar {
+            is_padding: Boolean::TRUE,
+            timestamp: TimestampVar::zero(),
+            op: MemOpKindVar::zero(),
+            ram_idx: W::zero(),
+            ram_idx_fp: FpVar::zero(),
+            val: DWordVar::zero(),
+            val_fp: FpVar::zero(),
+        }
+    }
+}
+
 impl<W: WordVar<F>, F: PrimeField> TranscriptEntryVar<W, F> {
     /// Returns whether this memory operation is a load
     fn is_load(&self) -> Result<Boolean<F>, SynthesisError> {

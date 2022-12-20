@@ -13,6 +13,8 @@ pub enum MemOp<W: Word> {
     LoadW { val: W, location: W },
 }
 
+pub struct ExecutionTrace<W: Word>(pub Vec<(Instr<W>, Option<MemOp<W>>)>);
+
 impl<W: Word> Instr<W> {
     /// Executes the given instruction. without necessarily updating the program counter.
     /// This method only updates the program counter if `self` is one of `Inst::Jmp`, `Inst::CJmp`, or `Inst::CNJmp`.
@@ -237,8 +239,8 @@ impl<W: Word> Instr<W> {
 pub fn run_program<W: Word, const NUM_REGS: usize>(
     arch: TinyRamArch,
     program: &[Instr<W>],
-) -> (W, Vec<Option<MemOp<W>>>) {
-    let mut mem_ops = Vec::new();
+) -> (W, ExecutionTrace<W>) {
+    let mut trace = Vec::new();
     let mut cpu_state = CpuState::<NUM_REGS, W>::default();
 
     // Initialize the program or data memory, depending on the arch
@@ -319,10 +321,10 @@ pub fn run_program<W: Word, const NUM_REGS: usize>(
 
         // Update the CPU state and save the mem op
         cpu_state = new_cpu_state;
-        mem_ops.push(mem_op);
+        trace.push((instr, mem_op));
     }
 
-    (cpu_state.answer.unwrap(), mem_ops)
+    (cpu_state.answer.unwrap(), ExecutionTrace(trace))
 }
 
 #[cfg(test)]
@@ -390,7 +392,7 @@ mod test {
         ] {
             let program = [header, skip3_code].concat();
             let assembly = assemble(&program);
-            let (output, _mem_trace) = run_program::<W, NUM_REGS>(arch, &assembly);
+            let (output, _trace) = run_program::<W, NUM_REGS>(arch, &assembly);
 
             // Check that the program outputted the correct value
             assert_eq!(output, 1683);

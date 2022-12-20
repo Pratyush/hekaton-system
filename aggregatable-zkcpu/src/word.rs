@@ -40,6 +40,14 @@ impl<W: WordVar<F>, F: PrimeField> DWordVar<W, F> {
         }
     }
 
+    pub(crate) fn zero() -> Self {
+        Self {
+            w0: W::zero(),
+            w1: W::zero(),
+            _marker: PhantomData,
+        }
+    }
+
     /// Returns the bits of this dword in little-endian order
     pub(crate) fn as_le_bits(&self) -> Vec<Boolean<F>> {
         [self.w1.as_le_bits(), self.w0.as_le_bits()].concat()
@@ -99,8 +107,11 @@ pub trait WordVar<F: PrimeField>: Debug + EqGadget<F> + CondSelectGadget<F> {
         self.carrying_add(&Self::one())
     }
 
-    /// Computes the sum of `self` and `other`, and returns the carry bit (if any).
+    /// Computes the `self + other`, and returns the carry bit (if any).
     fn carrying_add(&self, other: &Self) -> Result<(Self, Boolean<F>), SynthesisError>;
+
+    /// Computes the `self ⊕ other`
+    fn xor(&self, other: &Self) -> Result<Self, SynthesisError>;
 }
 
 macro_rules! impl_word {
@@ -150,6 +161,18 @@ macro_rules! impl_word {
                 let lower_bits = &sum_bits[..Self::BITLEN];
 
                 Ok((Self::from_bits_le(lower_bits), carry))
+            }
+
+            /// Computes the `self ⊕ other`
+            fn xor(&self, other: &Self) -> Result<Self, SynthesisError> {
+                let xored_bits: Result<Vec<_>, _> = self
+                    .as_le_bits()
+                    .into_iter()
+                    .zip(other.as_le_bits().into_iter())
+                    .map(|(a, b)| a.xor(&b))
+                    .collect();
+
+                Ok(Self::from_le_bits(&xored_bits?))
             }
         }
     };
@@ -204,5 +227,17 @@ impl<F: PrimeField> WordVar<F> for UInt8<F> {
         let lower_bits = &sum_bits[..Self::BITLEN];
 
         Ok((Self::from_bits_le(lower_bits), carry))
+    }
+
+    /// Computes the `self ⊕ other`
+    fn xor(&self, other: &Self) -> Result<Self, SynthesisError> {
+        let xored_bits: Result<Vec<_>, _> = self
+            .as_le_bits()
+            .into_iter()
+            .zip(other.as_le_bits().into_iter())
+            .map(|(a, b)| a.xor(&b))
+            .collect();
+
+        Ok(Self::from_le_bits(&xored_bits?))
     }
 }

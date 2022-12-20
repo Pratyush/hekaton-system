@@ -20,7 +20,11 @@ impl<F: PrimeField> OpcodeVar<F> {
     pub(crate) const BITLEN: usize = 5;
 
     pub(crate) fn to_bits_be(&self) -> Result<Vec<Boolean<F>>, SynthesisError> {
-        self.0.to_bits_be()
+        // Return the bottom BITLEN bits
+        self.0.to_bits_be().map(|bits| {
+            let start = (<Self as R1CSVar<_>>::Value::BITS as usize) - Self::BITLEN;
+            bits[start..start + Self::BITLEN].to_vec()
+        })
     }
 
     pub(crate) fn from_bits_le(bits: &[Boolean<F>]) -> Self {
