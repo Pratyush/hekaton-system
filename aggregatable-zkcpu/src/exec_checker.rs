@@ -644,10 +644,10 @@ mod test {
             println!("iteration {i}. Instr == {:?}", instr);
             cpu_state =
                 exec_checker::<NUM_REGS, _, _>(arch, &non_mem_op, &cpu_state, &dword_var).unwrap();
-
-            // Make sure nothing errored
-            assert!(cs.is_satisfied().unwrap());
         }
+
+        // Make sure nothing errored
+        assert!(cs.is_satisfied().unwrap());
 
         // Check the output is set and correct
         assert!(cpu_state.answer.is_set.value().unwrap());
