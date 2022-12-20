@@ -464,6 +464,7 @@ mod test {
 
     use tinyram_emu::{
         instructions::Instr,
+        interpreter::TranscriptEntry,
         register::{ImmOrRegister, RegIdx},
         word::Word,
     };
@@ -538,38 +539,17 @@ mod test {
             for instr in test_cases {
                 let cs = ConstraintSystem::new_ref();
 
-                // Encode the instruction to bytes
-                let mut encoded_instr = [0u8; W::INSTR_BYTELEN];
-                instr.to_bytes::<NUM_REGS>(&mut encoded_instr);
+                // Encode the instruction and witness it
+                let encoded_instr = instr.to_dword::<NUM_REGS>();
+                let encoded_instr_var =
+                    DWordVar::<WV, _>::new_witness(ns!(cs, "dword"), || Ok(encoded_instr)).unwrap();
 
-                // Split the encoded instruction bytes into two. This is the encoded first and
-                // second word
-                let (word0, word1) = {
-                    const WORD_BYTELEN: usize = W::BITLEN / 8;
-                    let mut w0_buf = [0u8; WORD_BYTELEN];
-                    let mut w1_buf = [0u8; WORD_BYTELEN];
-                    w0_buf.copy_from_slice(&encoded_instr[..WORD_BYTELEN]);
-                    w1_buf.copy_from_slice(&encoded_instr[WORD_BYTELEN..]);
-                    (W::from_be_bytes(w0_buf), W::from_be_bytes(w1_buf))
-                };
-
-                // Witness those words and decode them in ZK
-                let dword_var = {
-                    let word0_var = WV::new_witness(ns!(cs, "word0"), || Ok(word0)).unwrap();
-                    let word1_var = WV::new_witness(ns!(cs, "word1"), || Ok(word1)).unwrap();
-                    DWordVar::new((word0_var, word1_var))
-                };
                 let (opcode_var, reg1_var, reg2_var, imm_or_reg_var) =
-                    decode_instr::<NUM_REGS, _, _>(&dword_var).unwrap();
+                    decode_instr::<NUM_REGS, _, _>(&encoded_instr_var).unwrap();
 
                 // Now decode normally
-                let instr_as_u128 = {
-                    let mut buf = [0u8; 16];
-                    buf[16 - encoded_instr.len()..16].copy_from_slice(&encoded_instr);
-                    u128::from_be_bytes(buf)
-                };
                 let (opcode, reg1, reg2, imm_or_reg) =
-                    Instr::<W>::decode::<NUM_REGS>(instr_as_u128);
+                    Instr::<W>::decode::<NUM_REGS>(instr.to_u128::<NUM_REGS>());
 
                 // Compare the decodings
                 assert_eq!(opcode_var.value().unwrap(), opcode as u8);
@@ -608,42 +588,27 @@ mod test {
         let assembly = tinyram_emu::parser::assemble(SKIP3_CODE);
         let arch = TinyRamArch::VonNeumann;
 
-        let (output, trace) = tinyram_emu::interpreter::run_program::<W, NUM_REGS>(
+        let (output, transcript) = tinyram_emu::interpreter::run_program::<W, NUM_REGS>(
             TinyRamArch::VonNeumann,
             &assembly,
         );
-        println!("Trace len == {}", trace.0.len());
+        println!("Transcript len == {}", transcript.len());
 
         let non_mem_op = TranscriptEntryVar::default();
 
         // Run the CPU
         let mut cpu_state = CpuState::default::<NUM_REGS>();
-        for (i, (instr, _)) in trace.0.into_iter().enumerate() {
-            // Encode the instruction to bytes
-            let mut encoded_instr = [0u8; W::INSTR_BYTELEN];
-            instr.to_bytes::<NUM_REGS>(&mut encoded_instr);
-
-            // Split the encoded instruction bytes into two. This is the encoded first and
-            // second word
-            let (word0, word1) = {
-                const WORD_BYTELEN: usize = W::BITLEN / 8;
-                let mut w0_buf = [0u8; WORD_BYTELEN];
-                let mut w1_buf = [0u8; WORD_BYTELEN];
-                w0_buf.copy_from_slice(&encoded_instr[..WORD_BYTELEN]);
-                w1_buf.copy_from_slice(&encoded_instr[WORD_BYTELEN..]);
-                (W::from_be_bytes(w0_buf), W::from_be_bytes(w1_buf))
-            };
-
-            // Witness those words and decode them in ZK
-            let dword_var = {
-                let word0_var = WV::new_witness(ns!(cs, "word0"), || Ok(word0)).unwrap();
-                let word1_var = WV::new_witness(ns!(cs, "word1"), || Ok(word1)).unwrap();
-                DWordVar::new((word0_var, word1_var))
-            };
+        for (i, transcript_entry) in transcript.into_iter().enumerate() {
+            let TranscriptEntry { instr, .. } = transcript_entry;
+            // Encode the instruction and witness it
+            let encoded_instr = instr.to_dword::<NUM_REGS>();
+            let encoded_instr_var =
+                DWordVar::<WV, _>::new_witness(ns!(cs, "dword"), || Ok(encoded_instr)).unwrap();
 
             println!("iteration {i}. Instr == {:?}", instr);
             cpu_state =
-                exec_checker::<NUM_REGS, _, _>(arch, &non_mem_op, &cpu_state, &dword_var).unwrap();
+                exec_checker::<NUM_REGS, _, _>(arch, &non_mem_op, &cpu_state, &encoded_instr_var)
+                    .unwrap();
         }
 
         // Make sure nothing errored

@@ -2,18 +2,55 @@ use crate::{
     instructions::Instr,
     memory::{DataMemory, ProgramMemory},
     program_state::CpuState,
-    word::Word,
+    word::{DWord, Word},
     TinyRamArch,
 };
 
 use std::collections::BTreeMap;
 
+#[derive(Clone)]
 pub enum MemOp<W: Word> {
-    StoreW { val: W, location: W },
-    LoadW { val: W, location: W },
+    Store {
+        /// The dword being stored
+        val: DWord<W>,
+        /// The index the value is being stored to
+        location: W,
+    },
+    Load {
+        /// The dword being loaded
+        val: DWord<W>,
+        /// The index the value is being loaded from
+        location: W,
+    },
 }
 
-pub struct ExecutionTrace<W: Word>(pub Vec<(Instr<W>, Option<MemOp<W>>)>);
+impl<W: Word> MemOp<W> {
+    pub fn val(&self) -> DWord<W> {
+        match self {
+            MemOp::Store { val, .. } => val.clone(),
+            MemOp::Load { val, .. } => val.clone(),
+        }
+    }
+
+    pub fn location(&self) -> W {
+        match self {
+            MemOp::Store { location, .. } => *location,
+            MemOp::Load { location, .. } => *location,
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct TranscriptEntry<W: Word> {
+    /// The timestamp of this entry. This MUST be greater than 0
+    pub timestamp: u64,
+    /// The instruction being executed
+    pub instr: Instr<W>,
+    /// The memory operation corresponding to the instruction load
+    pub pc_load: MemOp<W>,
+    /// The optional memory operation corresponding to this instruction's execution
+    pub mem_op: Option<MemOp<W>>,
+}
 
 impl<W: Word> Instr<W> {
     /// Executes the given instruction. without necessarily updating the program counter.
@@ -239,8 +276,8 @@ impl<W: Word> Instr<W> {
 pub fn run_program<W: Word, const NUM_REGS: usize>(
     arch: TinyRamArch,
     program: &[Instr<W>],
-) -> (W, ExecutionTrace<W>) {
-    let mut trace = Vec::new();
+) -> (W, Vec<TranscriptEntry<W>>) {
+    let mut transcript = Vec::new();
     let mut cpu_state = CpuState::<NUM_REGS, W>::default();
 
     // Initialize the program or data memory, depending on the arch
@@ -266,11 +303,7 @@ pub fn run_program<W: Word, const NUM_REGS: usize>(
             // sparse map of addr -> byte
             let serialized_program: BTreeMap<W, u8> = program
                 .iter()
-                .flat_map(|instr| {
-                    let mut buf = vec![0u8; W::INSTR_BYTELEN];
-                    instr.to_bytes::<NUM_REGS>(&mut buf);
-                    buf
-                })
+                .flat_map(Instr::to_bytes::<NUM_REGS>)
                 .enumerate()
                 .map(|(i, b)| (W::from_u64(i as u64).unwrap(), b))
                 .collect();
@@ -284,13 +317,20 @@ pub fn run_program<W: Word, const NUM_REGS: usize>(
     };
 
     // Run the CPU until it outputs an answer
+    let mut timestamp = 0;
     while cpu_state.answer.is_none() {
         // Get the PC and decode the instruction there
-        let instr = match arch {
+        let (pc, instr) = match arch {
             TinyRamArch::Harvard => {
-                let pc = usize::try_from(cpu_state.program_counter.into())
-                    .expect("program counter exceeds usize::MAX");
-                *program_memory.0.get(pc).expect("illegal memory access")
+                let pc = cpu_state.program_counter;
+                let pc_usize =
+                    usize::try_from(pc.into()).expect("program counter exceeds usize::MAX");
+                let instr = *program_memory
+                    .0
+                    .get(pc_usize)
+                    .expect("illegal memory access");
+
+                (pc, instr)
             }
             TinyRamArch::VonNeumann => {
                 let bytes_per_word = W::BITLEN as u64 / 8;
@@ -311,7 +351,9 @@ pub fn run_program<W: Word, const NUM_REGS: usize>(
                     })
                     .collect();
 
-                Instr::<W>::from_bytes::<NUM_REGS>(&encoded_instr)
+                let instr = Instr::<W>::from_bytes::<NUM_REGS>(&encoded_instr);
+
+                (pc, instr)
             }
         };
 
@@ -319,12 +361,25 @@ pub fn run_program<W: Word, const NUM_REGS: usize>(
         let (new_cpu_state, mem_op) =
             instr.execute_and_update_pc(arch, cpu_state, &mut data_memory, &mut program_memory);
 
-        // Update the CPU state and save the mem op
+        // Register the instruction load
+        let pc_load = MemOp::Load {
+            val: instr.to_dword::<NUM_REGS>(),
+            location: pc,
+        };
+
+        // Update the CPU state and save the transcript entry
         cpu_state = new_cpu_state;
-        trace.push((instr, mem_op));
+        transcript.push(TranscriptEntry {
+            timestamp,
+            instr,
+            pc_load,
+            mem_op,
+        });
+
+        timestamp += 1;
     }
 
-    (cpu_state.answer.unwrap(), ExecutionTrace(trace))
+    (cpu_state.answer.unwrap(), transcript)
 }
 
 #[cfg(test)]

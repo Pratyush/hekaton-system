@@ -3,6 +3,8 @@ use core::{
     ops::{BitAnd, BitOr, BitXor, Div, Not, Rem},
 };
 
+pub type DWord<W> = (W, W);
+
 pub trait Word:
     Debug
     + Default
@@ -19,7 +21,10 @@ pub trait Word:
     + Into<u64>
 {
     type Signed: Eq + Ord + Copy;
+
     const BITLEN: usize;
+    const BYTELEN: usize = Self::BITLEN / 8;
+
     /// The number of bytes an instruction takes up. It's 2 words.
     const INSTR_BYTELEN: usize = 2 * Self::BITLEN / 8;
     const MAX: Self;
@@ -28,6 +33,9 @@ pub trait Word:
     fn from_u64(val: u64) -> Result<Self, ()> {
         Self::try_from(val).map_err(|_| ())
     }
+
+    /// Convert from big-endian bytes. Fails if `bytes.len() != Self::BYTELEN`
+    fn from_be_bytes(bytes: &[u8]) -> Result<Self, ()>;
 
     /// Convert `self` to a `BIT_SIZE`-bit signed integer.
     fn to_signed(self) -> Self::Signed;
@@ -79,6 +87,15 @@ macro_rules! impl_word {
 
             const BITLEN: usize = $bit_size;
             const MAX: Self = <$word>::MAX;
+
+            fn from_be_bytes(bytes: &[u8]) -> Result<Self, ()> {
+                if bytes.len() != Self::BYTELEN {
+                    return Err(());
+                }
+                let mut buf = [0u8; Self::BYTELEN];
+                buf.copy_from_slice(bytes);
+                Ok(<$word>::from_be_bytes(buf))
+            }
 
             fn to_signed(self) -> Self::Signed {
                 self as Self::Signed

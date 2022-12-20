@@ -5,12 +5,17 @@ use crate::{
     word::{DWord, DWordVar, WordVar},
 };
 
-use tinyram_emu::{word::Word, TinyRamArch};
+use tinyram_emu::{
+    interpreter::{MemOp, TranscriptEntry},
+    word::Word,
+    TinyRamArch,
+};
 
 use core::cmp::Ordering;
 
 use ark_ff::{Field, PrimeField};
 use ark_r1cs_std::{
+    alloc::AllocVar,
     boolean::Boolean,
     eq::EqGadget,
     fields::{fp::FpVar, FieldVar},
@@ -18,7 +23,10 @@ use ark_r1cs_std::{
     uint32::UInt32,
     uint8::UInt8,
 };
-use ark_relations::r1cs::SynthesisError;
+use ark_relations::{
+    ns,
+    r1cs::{ConstraintSystemRef, SynthesisError},
+};
 
 /// A timestamp in the memory access transcript
 type Timestamp = u64;
@@ -35,6 +43,19 @@ impl<F: PrimeField> Default for RunningEvalVar<F> {
     fn default() -> Self {
         RunningEvalVar(FpVar::one())
     }
+}
+
+/// The kind of memory operation
+#[derive(Clone, Copy, Debug)]
+enum MemOpKind {
+    /// A memory op corresponding to `loadw` or `loadb`
+    Load = 0,
+    /// A memory op corresponding to `storew` or `storeb`
+    Store,
+    /// A memory op corresponding to `read 0`
+    ReadPrimary,
+    /// A memory op corresponding to `read 1`
+    ReadAux,
 }
 
 impl<F: PrimeField> RunningEvalVar<F> {
@@ -65,17 +86,13 @@ impl<F: PrimeField> RunningEvalVar<F> {
     }
 }
 
-/// The kind of memory operation: load or store
-#[derive(Clone, Copy, Debug)]
-enum MemOpKind {
-    /// A memory op corresponding to `loadw` or `loadb`
-    Load = 0,
-    /// A memory op corresponding to `storew` or `storeb`
-    Store,
-    /// A memory op corresponding to `read 0`
-    ReadPrimary,
-    /// A memory op corresponding to `read 1`
-    ReadAux,
+impl<W: Word> From<&MemOp<W>> for MemOpKind {
+    fn from(op: &MemOp<W>) -> Self {
+        match op {
+            MemOp::Store { .. } => MemOpKind::Store,
+            MemOp::Load { .. } => MemOpKind::Load,
+        }
+    }
 }
 
 impl MemOpKind {
@@ -88,26 +105,6 @@ impl MemOpKind {
 /// The kind of memory operation: load, store, read primary tape or read aux tape, in ZK land
 type MemOpKindVar<F> = FpVar<F>;
 
-/// An entry in the transcript of RAM accesses
-#[derive(Clone)]
-enum TranscriptEntry<W: Word> {
-    /// If there are more ticks than memory accesses, we pad out the transcript
-    Padding,
-
-    /// A real, non-padding entry
-    Entry {
-        /// The timestamp of this entry. This MUST be greater than 0
-        t: Timestamp,
-        /// The operation happening
-        op: MemOpKind,
-        // The index being loaded from, stored to, or read from the public tape. When used as a RAM
-        // index, this is dword-aligned, meaning the low bits specifying individual words MUST be 0.
-        ramidx: W,
-        /// The value being loaded or stored
-        val: DWord<W>,
-    },
-}
-
 /// This is the placeholder transcript entry that MUST begin the memory-ordered transcript. This is
 /// never interpreted by the program, and its encoded values do not represent memory state.
 fn transcript_starting_entry<W: Word>(
@@ -117,7 +114,13 @@ fn transcript_starting_entry<W: Word>(
     real_transcript[0].clone()
 }
 
-impl<W: Word> TranscriptEntry<W> {
+// This trait exists just for the below impl
+trait TranscriptEntryTrait {
+    fn as_ff<F: Field>(&self) -> F;
+    fn to_ff_notime<F: Field>(&self) -> F;
+}
+
+impl<W: Word> TranscriptEntryTrait for TranscriptEntry<W> {
     /// Encodes this transcript entry as a field element for the purpose representation as a
     /// coefficient in a polynomial
     fn as_ff<F: Field>(&self) -> F {
@@ -138,7 +141,7 @@ pub(crate) struct TranscriptEntryVar<W: WordVar<F>, F: PrimeField> {
     pub(crate) is_padding: Boolean<F>,
     /// The timestamp of this entry. This is at most 64 bits
     timestamp: TimestampVar<F>,
-    ///
+    /// The type of memory op this is. This is determined by the discriminant of [`MemOpKind`]
     op: MemOpKindVar<F>,
     /// Either the index being loaded from or stored to
     ram_idx: W,
@@ -165,6 +168,75 @@ impl<W: WordVar<F>, F: PrimeField> Default for TranscriptEntryVar<W, F> {
 }
 
 impl<W: WordVar<F>, F: PrimeField> TranscriptEntryVar<W, F> {
+    /// Creates a new `TranscriptEntryVar` from a native execution `TranscriptEntry`. Since a
+    /// native `TranscriptEntry` contains both an instruction load and an optional mem op, this
+    /// returns between 1 and 2 `TranscriptEntryVar`s.
+    fn new(
+        cs: ConstraintSystemRef<F>,
+        transcript_entry: &TranscriptEntry<W::NativeWord>,
+    ) -> Result<(TranscriptEntryVar<W, F>, Option<TranscriptEntryVar<W, F>>), SynthesisError> {
+        let TranscriptEntry {
+            timestamp,
+            instr,
+            pc_load,
+            mem_op,
+        } = transcript_entry;
+
+        // Each native transcript entry is 2 operations. We need to split the timestamp into two
+        // for uniqueness
+        let instr_load_timestamp = F::from(2 * timestamp);
+        let mem_op_timestamp = F::from(2 * timestamp + 1);
+
+        // Witness the instruction load
+        let timestamp_var =
+            TimestampVar::new_witness(ns!(cs, "instr timestamp"), || Ok(instr_load_timestamp))?;
+        let op =
+            MemOpKindVar::new_witness(ns!(cs, "opkind"), || Ok(F::from(MemOpKind::Load as u8)))?;
+        let ram_idx = W::new_witness(ns!(cs, "ram idx"), || Ok(pc_load.location()))?;
+        let ram_idx_fp = ram_idx.as_fpvar()?;
+        let val = DWordVar::new_witness(ns!(cs, "val"), || Ok(pc_load.val()))?;
+        let val_fp = val.as_fpvar()?;
+
+        let instr_load_var = TranscriptEntryVar {
+            is_padding: Boolean::FALSE,
+            timestamp: timestamp_var,
+            op,
+            ram_idx,
+            ram_idx_fp,
+            val,
+            val_fp,
+        };
+
+        // If there is no mem op, we're done
+        if let None = mem_op {
+            return Ok((instr_load_var, None));
+        }
+
+        // Otherwise, witness the stuff from the mem op
+        let mem_op = mem_op.as_ref().unwrap();
+        let timestamp_var =
+            TimestampVar::new_witness(ns!(cs, "instr timestamp"), || Ok(mem_op_timestamp))?;
+        let op = MemOpKindVar::new_witness(ns!(cs, "opkind"), || {
+            Ok(MemOpKind::from(mem_op).as_fp::<F>())
+        })?;
+        let ram_idx = W::new_witness(ns!(cs, "ram idx"), || Ok(mem_op.location()))?;
+        let ram_idx_fp = ram_idx.as_fpvar()?;
+        let val = DWordVar::new_witness(ns!(cs, "val"), || Ok(mem_op.val()))?;
+        let val_fp = val.as_fpvar()?;
+
+        let mem_op_var = TranscriptEntryVar {
+            is_padding: Boolean::FALSE,
+            timestamp: timestamp_var,
+            op,
+            ram_idx,
+            ram_idx_fp,
+            val,
+            val_fp,
+        };
+
+        Ok((instr_load_var, Some(mem_op_var)))
+    }
+
     /// Returns whether this memory operation is a load
     fn is_load(&self) -> Result<Boolean<F>, SynthesisError> {
         self.op
@@ -243,7 +315,7 @@ impl<W: WordVar<F>, F: PrimeField> TranscriptEntryVar<W, F> {
 }
 
 /// Running evals used inside `transcript_checker`
-#[derive(Clone)]
+#[derive(Clone, Default)]
 struct TranscriptCheckerEvals<F: PrimeField> {
     // The time-sorted trace of our execution
     time_tr_exec: RunningEvalVar<F>,

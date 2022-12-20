@@ -1,20 +1,20 @@
-use core::{
-    fmt::Debug,
-    marker::PhantomData,
-    ops::{BitAnd, BitOr, BitXor, Div, Not, Rem},
-};
+use core::{borrow::Borrow, fmt::Debug, marker::PhantomData};
 
 use tinyram_emu::word::Word;
 
 use ark_ff::PrimeField;
 use ark_r1cs_std::{
+    alloc::{AllocVar, AllocationMode},
     bits::{uint16::UInt16, uint32::UInt32, uint64::UInt64, uint8::UInt8, ToBitsGadget},
     boolean::Boolean,
     eq::EqGadget,
     fields::fp::FpVar,
     select::CondSelectGadget,
 };
-use ark_relations::r1cs::SynthesisError;
+use ark_relations::{
+    ns,
+    r1cs::{Namespace, SynthesisError},
+};
 
 pub(crate) type DWord<W> = (W, W);
 
@@ -30,16 +30,29 @@ impl<W: WordVar<F>, F: PrimeField> EqGadget<F> for DWordVar<W, F> {
     }
 }
 
-impl<W: WordVar<F>, F: PrimeField> DWordVar<W, F> {
-    /// Creates a `DoubleWordVar` from two `Word`s
-    pub(crate) fn new(dword: DWord<W>) -> Self {
-        Self {
-            w0: dword.0,
-            w1: dword.1,
-            _marker: PhantomData,
-        }
-    }
+impl<W: WordVar<F>, F: PrimeField> AllocVar<DWord<W::NativeWord>, F> for DWordVar<W, F> {
+    fn new_variable<T: Borrow<DWord<W::NativeWord>>>(
+        cs: impl Into<Namespace<F>>,
+        f: impl FnOnce() -> Result<T, SynthesisError>,
+        mode: AllocationMode,
+    ) -> Result<Self, SynthesisError> {
+        let ns = cs.into();
+        let cs = ns.cs();
 
+        f().and_then(|dword| {
+            let dword = dword.borrow();
+            W::new_variable(ns!(cs, "w0"), || Ok(dword.0), mode).and_then(|w0| {
+                W::new_variable(ns!(cs, "w1"), || Ok(dword.1), mode).map(|w1| DWordVar {
+                    w0,
+                    w1,
+                    _marker: PhantomData,
+                })
+            })
+        })
+    }
+}
+
+impl<W: WordVar<F>, F: PrimeField> DWordVar<W, F> {
     pub(crate) fn zero() -> Self {
         Self {
             w0: W::zero(),
@@ -52,9 +65,18 @@ impl<W: WordVar<F>, F: PrimeField> DWordVar<W, F> {
     pub(crate) fn as_le_bits(&self) -> Vec<Boolean<F>> {
         [self.w1.as_le_bits(), self.w0.as_le_bits()].concat()
     }
+
+    /// Stuffs the two words in this dword into a single field element
+    pub(crate) fn as_fpvar(&self) -> Result<FpVar<F>, SynthesisError> {
+        // Return w0 || w1
+        let shifted_w0 = self.w0.as_fpvar()? * F::from(1u64 << W::NativeWord::BITLEN);
+        Ok(shifted_w0 + self.w1.as_fpvar()?)
+    }
 }
 
-pub trait WordVar<F: PrimeField>: Debug + EqGadget<F> + CondSelectGadget<F> {
+pub trait WordVar<F: PrimeField>:
+    Debug + EqGadget<F> + AllocVar<Self::NativeWord, F> + CondSelectGadget<F>
+{
     type NativeWord: tinyram_emu::word::Word;
 
     const BITLEN: usize = Self::NativeWord::BITLEN;

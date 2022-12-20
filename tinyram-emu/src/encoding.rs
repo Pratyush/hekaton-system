@@ -1,7 +1,7 @@
 use crate::{
     instructions::{Instr, Opcode},
     register::{ImmOrRegister, RegIdx},
-    word::Word,
+    word::{DWord, Word},
 };
 
 use bitfield::{Bit, BitMut, BitRange, BitRangeMut};
@@ -124,14 +124,12 @@ impl<W: Word> Instr<W> {
         (opcode, RegIdx(reg1), RegIdx(reg2), imm_or_reg)
     }
 
-    // Converts our operation to machine code. Panics if `buf.len() != W::INSTR_BYTELEN`.
-    pub fn to_bytes<const NUM_REGS: usize>(&self, out: &mut [u8]) {
-        assert!(out.len() == W::INSTR_BYTELEN);
-
+    // Converts our operation to `u128`
+    pub fn to_u128<const NUM_REGS: usize>(&self) -> u128 {
         let opcode = self.opcode() as u8;
         let reg0 = RegIdx(0);
 
-        let instr = match *self {
+        match *self {
             Instr::Add { in1, in2, out } => Self::encode::<NUM_REGS>(opcode, out, in1, in2),
             Instr::Or { in1, in2, out } => Self::encode::<NUM_REGS>(opcode, out, in1, in2),
             Instr::Xor { in1, in2, out } => Self::encode::<NUM_REGS>(opcode, out, in1, in2),
@@ -143,10 +141,23 @@ impl<W: Word> Instr<W> {
             Instr::CJmp { in1 } => Self::encode::<NUM_REGS>(opcode, reg0, reg0, in1),
             Instr::Answer { in1 } => Self::encode::<NUM_REGS>(opcode, reg0, reg0, in1),
             _ => todo!(),
-        };
+        }
+    }
 
-        let encoding = instr.to_be_bytes();
-        out.copy_from_slice(&encoding[16 - out.len()..16]);
+    // Converts our operation to machine code. Panics if `buf.len() != W::INSTR_BYTELEN`.
+    pub fn to_bytes<const NUM_REGS: usize>(&self) -> Vec<u8> {
+        self.to_u128::<NUM_REGS>().to_be_bytes()[16 - W::INSTR_BYTELEN..16].to_vec()
+    }
+
+    pub fn to_dword<const NUM_REGS: usize>(&self) -> DWord<W> {
+        let bytes = self.to_bytes::<NUM_REGS>();
+        let w0_bytes = &bytes[0..bytes.len() / 2];
+        let w1_bytes = &bytes[bytes.len() / 2..];
+
+        (
+            W::from_be_bytes(w0_bytes).unwrap(),
+            W::from_be_bytes(w1_bytes).unwrap(),
+        )
     }
 
     // Encodes an instruction
@@ -267,8 +278,7 @@ mod tests {
 
             // Test equality after an encode-decode round trip
             for tc in test_cases {
-                let mut bytes = [0u8; W::INSTR_BYTELEN];
-                tc.to_bytes::<NUM_REGS>(&mut bytes);
+                let bytes = tc.to_bytes::<NUM_REGS>();
                 let new_tc = Instr::<W>::from_bytes::<NUM_REGS>(&bytes);
                 assert_eq!(*tc, new_tc);
             }
