@@ -1,4 +1,4 @@
-## transcripts
+## Transcripts
 
 We need to keep track of several memory transcripts in our execution. We define them here for clarity.
 This notation is used in the pseudocode and the diagram.
