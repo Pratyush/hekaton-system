@@ -1,21 +1,21 @@
-## Traces
+## transcripts
 
-We need to keep track of several memory traces in our execution. We define them here for clarity.
+We need to keep track of several memory transcripts in our execution. We define them here for clarity.
 This notation is used in the pseudocode and the diagram.
 
-* `tr_rinit`: The time-unordered trace containing the initial RAM state of our program.
+* `tr_rinit`: The time-unordered transcript containing the initial RAM state of our program.
   `tr_rinit` can be partitioned into:
-    * `tr_rinit_accessed`: The time-unordered trace containing the values that are loaded from
+    * `tr_rinit_accessed`: The time-unordered transcript containing the values that are loaded from
       RAM at some point in the execution of the program.
-    * `tr_rinit_nonaccessed`: The time-unordered trace containing the values that are never
+    * `tr_rinit_nonaccessed`: The time-unordered transcript containing the values that are never
       loaded from RAM in the execution of the program.
-* `tr_tinit`: The ordered trace of containing the contents of the primary (i.e., public) tape. This
-  can be partitioned into:
-    * `tr_tinit_accessed`: The ordered trace containing the values that are read from the
+* `tr_tinit`: The ordered transcript of containing the contents of the primary (i.e., public) tape.
+  This can be partitioned into:
+    * `tr_tinit_accessed`: The ordered transcript containing the values that are read from the
       tape at some point in the execution of the program.
-    * `tr_tinit_nonaccessed` - The ordered trace contianing the values that are never read from the
-      tape in the execution of the program.
-* `tr_exec`: The ordered trace of our program execution
+    * `tr_tinit_nonaccessed` - The ordered transcript contianing the values that are never read from
+      the tape in the execution of the program.
+* `tr_exec`: The ordered transcript of our program execution
 
 # Pseudocode for the low-level circuits
 
@@ -250,12 +250,13 @@ fn exec_checker(
             let in1 = instr.imm_or_reg;
 
             let idx = in1.value(regs);
-            // If mem_op isn't a load or isn't this index, this is a mismatch in the transcript vs the
-            // execution. This is an error.
+            // If mem_op isn't a load or isn't this index, this is a mismatch in the transcript vs
+            // the execution. This is an error.
             let (loaded_word, err) = mem_op.select_word(idx);
             err |= mem_op.op != Load;
-            // Ensure that this load isn't padding. This is the only place we have to check this, since
-            // transcript_checker ensures the only padding mem ops that are allowed are loads.
+            // Ensure that this load isn't padding. This is the only place we have to check this,
+            // since  transcript_checker ensures the only padding mem ops that are allowed are
+            // loads.
             err |= mem_op.is_padding;
             // Return the new values
             let new_state = CpuState {
@@ -275,8 +276,8 @@ fn exec_checker(
 
             let idx = dest.value(regs);
             let word_to_store = in1.value(regs);
-            // Get the word that this operation allegedly stores and ensure that it's equal to the value in
-            // the register.
+            // Get the word that this operation allegedly stores and ensure that it's equal to the
+            // value in the register.
             let (stored_word, mut err) = mem_op.select_word(idx);
             err |= word_to_store != stored_word;
             err |= mem_op.op != Store;
@@ -348,36 +349,43 @@ fn exec_checker(
 }
 
 
-struct BigtickRunningEvals {
-    // The time-sorted trace of our execution
+struct transcript_checkerRunningEvals {
+    // The time-sorted transcript of our execution
     time_tr_exec: RunningEval,
 
-    // The mem-sorted trace of our execution
+    // The mem-sorted transcript of our execution
     mem_tr_exec: RunningEval,
 
-    // The unsorted trace of the initial memory that's read in our execution
+    // The unsorted transcript of the initial memory that's read in our execution
     tr_rinit_accessed: RunningEval,
 
-    // The time- (and therefore mem-) sorted trace of the public input tape
+    // The time- (and therefore mem-) sorted transcript of the public input tape
     tr_tape: RunningEval,
 }
+
+// TODO: Update transcript_checker to handle Harvard architecture. With Harvard, mem_tr_adj_seq
+// would be replaced with two values:
+//     mem_prog_tr_adj_pair: [TranscriptEntry; 2]
+//     mem_data_tr_adj_pair: [TranscriptEntry; 2]
+// The memory consistency checks would be identical, though it'd have to absorb the values into
+// different polynomials.
 
 // Represents a transition function at time `t`, possibly doing a memory operation given by
 // `mem_op`. `metadata` holds the public program metadata. `state` holds the current CPU state.
 // `pc_load` is the load necessary to fetch the current instruction from memory. `evals` are the
 // evaluations of the various polynomials we use to track RAM and tape consistency.
-// `mem_tr_adj_pair` represents a pair of adjacent entries in the mem-sorted RAM transcript.
+// `mem_tr_adj_seq` represents a triple of adjacent entries in the mem-sorted RAM transcript.
 //
 // Returns the next timestamp, the updated CPU state, and the updated running evals
-fn bigtick(
+fn transcript_checker(
     metadata: ProgramData,
     t: Word,
     state: CpuState,
     pc_load: TranscriptEntry,
     mem_op: TranscriptEntry,
-    evals: BigtickRunningEvals,
-    mem_tr_adj_pair: (TranscriptEntry, TranscriptEntry),
-) -> (Word, CpuState, BigtickRunningEvals) {
+    evals: transcript_checkerRunningEvals,
+    mem_tr_adj_seq: [TranscriptEntry; 3],
+) -> (Word, CpuState, transcript_checkerRunningEvals) {
     // Get the challenge point. We'll need this for polynomial evals
     let chal = metadata.chal;
 
@@ -402,7 +410,8 @@ fn bigtick(
 
     let mut new_evals = evals.clone();
 
-    // There's at most 2 mem ops in a single bigtick. t just has to be monotonic, so incr by 2
+    // There's at most 2 mem ops in a single transcript_checker. t just has to be monotonic, so incr
+    // by 2
     let mut new_t = t + 2;
 
     // Put the instruction load in the time-sorted execution mem
@@ -414,46 +423,44 @@ fn bigtick(
         // If the mem op reads from the private tape, don't record anything
         ReadAux => (),
         // Otherwise, put the memory operation in the time-sorted execution mem. If this is
-        // padding, then that's fine, because there's as much padding here as in the memory trace
+        // padding, then that's fine, because there's as much padding here as in the memory transcript
         _ => new_evals.time_tr_exec.update(mem_op.to_ff(), chal),
     }
 
     //
     // Entirely separately from the rest of this function, we check the consistency of the given
-    // adjacent entries in the mem-sorted memory transcript (if they're provided). Note that we
-    // CANNOT give special treatment to padding entries. This is because it breaks a chain of
-    // coherence: there's nothing to tell whether `cur` is coherent with the rest of the trace when
-    // `prev` is a padding entry with no information at all. Thus, all padding entries must also be
-    // consistent with the rest of trace.
+    // adjacent entries in the mem-sorted memory transcript (if they're provided).
     //
 
-    let (prev, cur) = mem_tr_adj_pair;
+    // Check consistency of every pair of adjacent items in the memory-sorted sequence
+    for (prev, cur) in mem_tr_adj_seq.windows(2) {
+        // Tapes are not random-access. In our construction, we do not have to do consistency
+        // checks.
+        assert
+            ∧ prev.op != ReadPrimary
+            ∧ prev.op != ReadAux
 
-    // Tapes are not random-access. In our construction, we do not have to do consistency checks.
-    assert
-        ∧ prev.op != ReadPrimary
-        ∧ prev.op != ReadAux
+        // The rest of these asserts pertain just to RAM loads and stores. These asserts are taken
+        // from Figure 5 in Constant-Overhead Zero-Knowledge for RAM Programs:
+        // https://eprint.iacr.org/2021/979.pdf
 
-    // The rest of these asserts pertain just to RAM loads and stores. These asserts are taken from
-    // Figure 5 in Constant-Overhead Zero-Knowledge for RAM Programs:
-    // https://eprint.iacr.org/2021/979.pdf
+        // Check that this is sorted by memory idx then time
+        assert
+            ∨ prev.idx < cur.idx
+            ∨ (prev.idx == cur.idx ∧ prev.t < cur.t);
 
-    // Check that this is sorted by memory idx then time
-    assert
-        ∨ prev.idx < cur.idx
-        ∨ (prev.idx == cur.idx ∧ prev.t < cur.t);
+        // Check that two adjacent loads on the same idx produced the same value
+        assert
+            ∨ prev.idx != cur.idx
+            ∨ prev.val == cur.val
+            ∨ cur.op == Store;
 
-    // Check that two adjacent loads on the same idx produced the same value
-    assert
-        ∨ prev.idx != cur.idx
-        ∨ prev.val == cur.val
-        ∨ cur.op == Store;
-
-    // On every tick, absorb the second entry in to the mem-sorted execution trace
-    new_evals.mem_tr_exec.update(cur.to_ff(), chal);
-    // If it's an initial load, also put it into tr_rinit_accessed
-    if prev.idx < cur.idx && cur.op == load {
-        new_evals.tr_rinit_accessed.update(cur.to_ff_notime(), chal);
+        // On every tick, absorb the second entry in to the mem-sorted execution transcript
+        new_evals.mem_tr_exec.update(cur.to_ff(), chal);
+        // If it's an initial load, also put it into tr_rinit_accessed
+        if prev.idx < cur.idx && cur.op == load {
+            new_evals.tr_rinit_accessed.update(cur.to_ff_notime(), chal);
+        }
     }
 
     // All done
@@ -467,33 +474,107 @@ fn bigtick(
 }
 ```
 
+# A word on padding
+
+We must be careful how we pad the transcripts that we feed into the prover. There are multiple
+concerns here: we must pick padding that has unique timestamps, is consistent with the rest of the
+transcript, and affects as few committed polynomials as possible.
+
+A naïve solution would be to simply skip memory consistency checks for padding entries. This is
+unsound, though. Suppose we don't check padding entries in the second half of `transcript_checker`.
+Then there's nothing to tell whether `cur` is coherent with the rest of the transcript when `prev`
+is a padding entry with no information at all. A dishonest prover could simply place a padding entry
+followed by whatever load operation they wanted, and there'd be no way of proving consistency. Thus,
+we mandate that _all_ entries in the mem-sorted transcript, even padding, must be consistent.
+
+This constraint means we can't just pick padding arbitrarily. This is the process we use:
+
+## von Neumann arch
+
+In the von Neumann architecture, it's guaranteed that the time-ordered memory transcript is
+non-empty, since there must be instruction loads. We set the time-sorted transcript as follows. At
+instruction `t`, we have an instruction load `op_i`, and an optional memory op `op_m`.
+
+* If `op_m` is `Some`, then return `[(2t+1, op_i), (2t+2, op_m)]`
+* If `op_m` is `None`, then return `[(2t+1, op_i), (2t+2, op_i[is_padding=true])`
+
+Notice we have to set `is_padding=true` when we copy `op_i` in the second case. If we don't, then
+the exec checker will fail, since it's not expecting a memory operation on the non-mem-touching
+instruction at `op_i`. Also note that the timestamps are doubled and incremented. This is to make
+them unique so we can establish a total ordering on them (both time-major and mem-major). Finally,
+notice that we add 1 to every timestamp no matter what. This is because the 0 timestamp is reserved
+for the initial padding of the mem-ordered trace, which we describe now.
+
+We have to make an initial padding element for the mem-sorted transcript. This is for two reasons:
+
+1. It is mathematically necessary. The mem-sorted transcript is checked in sliding windows of size 3
+   with step 2, so we need 2T + 1 elements in the mem-sorted transcript where T is the number of
+   total ticks
+2. Because we don't want to double count the first element in the sliding window, the consistency
+   checker will only absorb the tail of the list it's given. So we need to give it a throwaway
+   element that won't be absorbed
+
+We pick the placeholder element to be equal to the "real" first element of the mem-sorted
+transcript, but with the timestamp set to 0. As mentioned before, this is to preserve a total
+ordering, as mentioned before.
+
+## Harvard arch
+
+We have to use a different tactic for Harvard than what we did above. Copying `op_i` to use as a
+memory operation doesn't work anymore, since `op_i` and `op_m` are in entirely different memory
+segments now. So instead we do something simpler: just repeat the data memory operation from the
+last tick, increment the timestamp, and set `is_padding=true`. That is, if `(t, op_m)` is the
+previous data memory op, then we set `(t', op_m') = (t+1, op_m[is_padding=true])`.
+
+If there is no data memory op whatsoever in the data transcript, then we invent one. In fact, this
+will be the placeholder entry in the memory-sorted data transcript. It can be anything, so let it be
+a load of 0 from index 0, at timestamp 0. We can then use this as the template for `op_m` in the
+above expression.
+
+If there's already a mem op in the data transcript, then we let the initial placeholder be equal to
+this, but with the timestamp set to 0 (just like the von Neumann case).
+
+We also have to address how to pad out the program memory. This is easier, since there are no
+missing entries. The only question is what to pick for the initial placeholder value. As above, we
+simply let it equal the first "real" instruction load, with timestamp 0.
+
 # Sketch of proving procedure
+
+NOTE: Say somewhere that we use sliding windows of size 3 and step 2, i.e.,
+
 
 ## Prover
 
-Before proving, the prover first runs the full computation and saves the traces.
+Before proving, the prover first runs the full computation and saves the transcripts.
 
 1. Interpret `tr_rinit` (possibly public), `tr_rinit_nonaccessed`, `tr_tinit` (public), and
    `tr_tinit_nonaccessed` as polynomials. Commit to them, denoting them by `com_rinit`, `com_rna`,
    `com_tinit`, and `com_tna`.
-2. We assume that `bigtick` will operate over chunks of the trace, rather than just single elements
-   at a time. For each `bigtick`, commit to the elements of the chunk.
-3. Let `com_tr` be the aggregate of all these chunk commitments. We'll define what aggregation
+2. Compute and pad the memory-sorted transcript of the program. We feed slices of size 3 to each
+   invocation of `transcript_checker`. Specifically (for consistency purposes) they're done in
+   sliding windows of size 3, with a step size of 2, i.e.,
+   ```
+    [A B C] -> [C D E] -> [E F G]
+   ```
+   We commit to the elements of each slice. (NOTE: later, we will be increasing the number of
+   instructions that a since `transcript_checker` processes, and hence also the number of mem-sorted
+   transcript elements it will check)
+3. Let `com_tr` be the aggregate of all these slice commitments. We'll define what aggregation
    scheme we use later, but think MIPP-style commitment.
 4. Let `chal = H(com_rinit || com_rna || com_tinit || com_tna || com_tr)`
-5. Do all `T / chunk_size` bigtick proofs
+5. Do all `T / chunk_size` transcript_checker proofs
 6. Enforce the following constraints in the aggregation phase. For each `i`, the input to the `i`-th
-   instance of bigtick has:
-     * `state == new_state` from the `i-1`th bigtick, or Default
-     * `evals = new_evals` from the (`i-1`)-th bigtick, or Default
+   instance of transcript_checker has:
+     * `state == new_state` from the `i-1`th transcript_checker, or Default
+     * `evals = new_evals` from the (`i-1`)-th transcript_checker, or Default
      * `metadata` is constant and equal to the publicly-known `metadata` value (notably,
        `metadata.chal == chal` from above)
    where the Default value of a `RunningEval` has `{poly: 1, hash: rand() }`
 7. Further, in aggregation, prove that the subcommitments in `com_tr` satisfy their respective
-   `bigtick`s.
-8. Let `final_time_tr_exec` be the `new_evals.time_tr_exec` returned by the last bigtick. Define
-   `final_mem_tr_accessed`, `final_mem_tr_exec`, and `final_tape_tr_accessed` similarly. Prove the
-   following outside the circuit:
+   `transcript_checker`s.
+8. Let `final_time_tr_exec` be the `new_evals.time_tr_exec` returned by the last transcript_checker.
+   Define `final_mem_tr_accessed`, `final_mem_tr_exec`, and `final_tape_tr_accessed` similarly.
+   Prove the following outside the circuit:
     * `final_time_tr_exec == final_mem_tr_exec`
     * `tr_rinit(chal) = tr_rinit_nonaccessed(chal) * final_mem_tr_accessed`
     * `tr_tinit(chal) = tr_tinit_nonaccessed(chal) * final_tape_tr_accessed`
