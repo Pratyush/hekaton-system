@@ -431,12 +431,6 @@ fn transcript_checker<const NUM_REGS: usize, W: WordVar<F>, F: PrimeField>(
         let cond = ram_idx_has_incrd.or(&ram_idx_is_eq.and(&t_has_incrd)?)?;
         cond.enforce_equal(&Boolean::TRUE)?;
 
-        use ark_r1cs_std::R1CSVar;
-        println!("ram has incrd: {}", ram_idx_has_incrd.value().unwrap());
-        println!("t has incrd: {}", t_has_incrd.value().unwrap());
-        println!("ram_idx == {}", prev.ram_idx.as_native().unwrap());
-        println!("timestamp == {}", prev.timestamp.value().unwrap());
-
         // Check that two adjacent LOADs on the same idx produced the same value. That is, check
         //       prev.ram_idx != cur.ram_idx
         //     ∨ prev.val == cur.val
@@ -518,11 +512,6 @@ mod test {
             &assembly,
         );
 
-        // TODO: For Harvard arch, we can't just use the instruction loads as filler mem-op values
-        // because they're in different memory spaces. Rather, we have to use the last mem op. And
-        // if there is none, then we have to invent a mem-op, which counts as a first-time load
-        // (thus affecting com_tr_rinit_accessed).
-
         // Create the time-sorted transcript, complete with padding memory ops. This has length 2T,
         // where T is the number of CPU ticks.
         let time_sorted_transcript = transcript
@@ -554,7 +543,6 @@ mod test {
             // reserved it: every witnessed transcript entry has timestamp greater than 0.
             let mut initial_entry = buf.get(0).unwrap().clone();
             initial_entry.timestamp = TimestampVar::zero();
-            initial_entry.op = MemOpKindVar::constant(MemOpKind::Store.as_ff());
             buf.insert(0, initial_entry);
             buf
         };
@@ -569,7 +557,7 @@ mod test {
         for (i, (time_sorted_transcript_pair, mem_sorted_transcript_triple)) in
             time_sorted_transcript
                 .chunks(2)
-                .zip(mem_sorted_transcript_vars.windows(3))
+                .zip(mem_sorted_transcript_vars.windows(3).step_by(2))
                 .enumerate()
         {
             // Unpack the time-sorted transcript values
