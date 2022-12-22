@@ -540,9 +540,6 @@ simply let it equal the first "real" instruction load, with timestamp 0.
 
 # Sketch of proving procedure
 
-NOTE: Say somewhere that we use sliding windows of size 3 and step 2, i.e.,
-
-
 ## Prover
 
 Before proving, the prover first runs the full computation and saves the transcripts.
