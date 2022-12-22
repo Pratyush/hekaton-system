@@ -10,6 +10,7 @@ use ark_r1cs_std::{
     eq::EqGadget,
     fields::fp::FpVar,
     select::CondSelectGadget,
+    R1CSVar,
 };
 use ark_relations::{
     ns,
@@ -94,6 +95,9 @@ pub trait WordVar<F: PrimeField>:
     /// Convert `self` to a field element
     fn as_fpvar(&self) -> Result<FpVar<F>, SynthesisError>;
 
+    /// Convert `self` to a field element
+    fn as_native(&self) -> Result<Self::NativeWord, SynthesisError>;
+
     /// Convert `self` to its little-endian bit representation
     fn as_le_bits(&self) -> Vec<Boolean<F>>;
 
@@ -156,6 +160,10 @@ macro_rules! impl_word {
 
             fn as_fpvar(&self) -> Result<FpVar<F>, SynthesisError> {
                 Boolean::le_bits_to_fp_var(&self.to_bits_le())
+            }
+
+            fn as_native(&self) -> Result<Self::NativeWord, SynthesisError> {
+                self.value()
             }
 
             fn as_le_bits(&self) -> Vec<Boolean<F>> {
@@ -224,6 +232,10 @@ impl<F: PrimeField> WordVar<F> for UInt8<F> {
 
     fn as_fpvar(&self) -> Result<FpVar<F>, SynthesisError> {
         Boolean::le_bits_to_fp_var(&self.to_bits_le().unwrap())
+    }
+
+    fn as_native(&self) -> Result<Self::NativeWord, SynthesisError> {
+        self.value()
     }
 
     fn as_le_bits(&self) -> Vec<Boolean<F>> {

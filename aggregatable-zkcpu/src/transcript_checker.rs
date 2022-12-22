@@ -431,6 +431,12 @@ fn transcript_checker<const NUM_REGS: usize, W: WordVar<F>, F: PrimeField>(
         let cond = ram_idx_has_incrd.or(&ram_idx_is_eq.and(&t_has_incrd)?)?;
         cond.enforce_equal(&Boolean::TRUE)?;
 
+        use ark_r1cs_std::R1CSVar;
+        println!("ram has incrd: {}", ram_idx_has_incrd.value().unwrap());
+        println!("t has incrd: {}", t_has_incrd.value().unwrap());
+        println!("ram_idx == {}", prev.ram_idx.as_native().unwrap());
+        println!("timestamp == {}", prev.timestamp.value().unwrap());
+
         // Check that two adjacent LOADs on the same idx produced the same value. That is, check
         //       prev.ram_idx != cur.ram_idx
         //     ∨ prev.val == cur.val
@@ -527,9 +533,11 @@ mod test {
                 // the instr_op (which is a load) and incr the timestamp. Perfectly consistent.
                 let mut placeholder = instr_op.clone();
                 placeholder.timestamp = TimestampVar::new_witness(ns!(cs, "placeholder"), || {
-                    instr_op.timestamp.value()
+                    Ok(instr_op.timestamp.value().unwrap() + F::from(1u64))
                 })
                 .unwrap();
+                // We still have to set it as padding. Otherwise the CPU will think we gave it a
+                // mem op for a non-mem-touching instruction
                 placeholder.is_padding = Boolean::TRUE;
                 // Now return the instr op + (mem_op or placeholder)
                 [instr_op, mem_op.unwrap_or(placeholder)]
@@ -579,10 +587,9 @@ mod test {
                 &evals,
             )
             .unwrap();
-
-            // Make sure nothing errored
-            assert!(cs.is_satisfied().unwrap());
         }
+        // Make sure nothing errored
+        assert!(cs.is_satisfied().unwrap());
 
         // Check the output is set and correct
         assert!(cpu_state.answer.is_set.value().unwrap());

@@ -1,5 +1,5 @@
 use core::{
-    fmt::Debug,
+    fmt::{Debug, Display},
     ops::{BitAnd, BitOr, BitXor, Div, Not, Rem},
 };
 
@@ -7,6 +7,7 @@ pub type DWord<W> = (W, W);
 
 pub trait Word:
     Debug
+    + Display
     + Default
     + Eq
     + Ord
