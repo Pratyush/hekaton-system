@@ -166,13 +166,13 @@ fn decode_instr<const NUM_REGS: usize, W: WordVar<F>, F: PrimeField>(
 }
 
 #[derive(Clone, Debug)]
-struct CpuAnswer<W, F>
+pub(crate) struct CpuAnswer<W, F>
 where
     W: WordVar<F>,
     F: PrimeField,
 {
-    is_set: Boolean<F>,
-    val: W,
+    pub(crate) is_set: Boolean<F>,
+    pub(crate) val: W,
 }
 
 impl<W: WordVar<F>, F: PrimeField> Default for CpuAnswer<W, F> {
@@ -203,14 +203,14 @@ where
     W: WordVar<F>,
     F: PrimeField,
 {
-    pc: PcVar<W>,
-    flag: Boolean<F>,
-    regs: RegistersVar<W>,
-    answer: CpuAnswer<W, F>,
+    pub(crate) pc: PcVar<W>,
+    pub(crate) flag: Boolean<F>,
+    pub(crate) regs: RegistersVar<W>,
+    pub(crate) answer: CpuAnswer<W, F>,
 }
 
 impl<W: WordVar<F>, F: PrimeField> CpuState<W, F> {
-    fn default<const NUM_REGS: usize>() -> Self {
+    pub(crate) fn default<const NUM_REGS: usize>() -> Self {
         CpuState {
             pc: W::zero(),
             flag: Boolean::FALSE,
@@ -370,9 +370,8 @@ fn run_instr<W: WordVar<F>, F: PrimeField>(
     }
 }
 
-/// Runs a single CPU tick with the given program counter, instruction, registers, and word loaded
-/// from memory (if `instr isn't a `lw`, then the word is ignored). Returns the updated program
-/// counter, updated set of registers, and a description of what, if any, memory operation occured.
+/// Runs a single CPU tick with the given program counter, instruction, registers, and (optional)
+/// associated memory operation. Returns the updated CPU state.
 pub(crate) fn exec_checker<const NUM_REGS: usize, W: WordVar<F>, F: PrimeField>(
     arch: TinyRamArch,
     mem_op: &TranscriptEntryVar<W, F>,

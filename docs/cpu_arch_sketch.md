@@ -420,7 +420,11 @@ fn bigtick(
 
     //
     // Entirely separately from the rest of this function, we check the consistency of the given
-    // adjacent entries in the mem-sorted memory transcript (if they're provided)
+    // adjacent entries in the mem-sorted memory transcript (if they're provided). Note that we
+    // CANNOT give special treatment to padding entries. This is because it breaks a chain of
+    // coherence: there's nothing to tell whether `cur` is coherent with the rest of the trace when
+    // `prev` is a padding entry with no information at all. Thus, all padding entries must also be
+    // consistent with the rest of trace.
     //
 
     let (prev, cur) = mem_tr_adj_pair;

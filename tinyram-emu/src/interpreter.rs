@@ -47,14 +47,15 @@ pub struct TranscriptEntry<W: Word> {
     /// The instruction being executed
     pub instr: Instr<W>,
     /// The memory operation corresponding to the instruction load
-    pub pc_load: MemOp<W>,
+    pub instr_load: MemOp<W>,
     /// The optional memory operation corresponding to this instruction's execution
     pub mem_op: Option<MemOp<W>>,
 }
 
 impl<W: Word> Instr<W> {
     /// Executes the given instruction. without necessarily updating the program counter.
-    /// This method only updates the program counter if `self` is one of `Inst::Jmp`, `Inst::CJmp`, or `Inst::CNJmp`.
+    /// This method only updates the program counter if `self` is one of `Inst::Jmp`, `Inst::CJmp`,
+    /// or `Inst::CNJmp`.
     fn execute<const NUM_REGS: usize>(
         &self,
         mut cpu_state: CpuState<NUM_REGS, W>,
@@ -372,7 +373,7 @@ pub fn run_program<W: Word, const NUM_REGS: usize>(
         transcript.push(TranscriptEntry {
             timestamp,
             instr,
-            pc_load,
+            instr_load: pc_load,
             mem_op,
         });
 

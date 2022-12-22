@@ -18,6 +18,7 @@ use ark_relations::{
 
 pub(crate) type DWord<W> = (W, W);
 
+#[derive(Clone)]
 pub struct DWordVar<W: WordVar<F>, F: PrimeField> {
     pub(crate) w0: W,
     pub(crate) w1: W,
