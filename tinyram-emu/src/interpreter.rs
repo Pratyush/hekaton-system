@@ -8,6 +8,8 @@ use crate::{
 
 use std::collections::BTreeMap;
 
+use ark_ff::Field;
+
 #[derive(Clone)]
 pub enum MemOp<W: Word> {
     Store {
@@ -24,7 +26,36 @@ pub enum MemOp<W: Word> {
     },
 }
 
+/// The kind of memory operation
+#[derive(Clone, Copy, Debug)]
+pub enum MemOpKind {
+    /// A memory op corresponding to `loadw` or `loadb`
+    Load = 0,
+    /// A memory op corresponding to `storew` or `storeb`
+    Store,
+    /// A memory op corresponding to `read 0`
+    ReadPrimary,
+    /// A memory op corresponding to `read 1`
+    ReadAux,
+}
+
+impl<W: Word> From<&MemOp<W>> for MemOpKind {
+    fn from(op: &MemOp<W>) -> Self {
+        match op {
+            MemOp::Store { .. } => MemOpKind::Store,
+            MemOp::Load { .. } => MemOpKind::Load,
+        }
+    }
+}
+
 impl<W: Word> MemOp<W> {
+    pub fn kind(&self) -> MemOpKind {
+        match self {
+            MemOp::Store { .. } => MemOpKind::Store,
+            MemOp::Load { .. } => MemOpKind::Load,
+        }
+    }
+
     pub fn val(&self) -> DWord<W> {
         match self {
             MemOp::Store { val, .. } => val.clone(),
@@ -37,6 +68,40 @@ impl<W: Word> MemOp<W> {
             MemOp::Store { location, .. } => *location,
             MemOp::Load { location, .. } => *location,
         }
+    }
+
+    /// Returns this memory operation, packed into the low bits of a field element. Also returns
+    /// how many bits are used in the packing.
+    pub fn as_ff<F: Field>(&self) -> (F, usize) {
+        fn pow_two<G: Field>(n: usize) -> G {
+            G::from(2u8).pow([n as u64])
+        }
+
+        // We pack this as 0000...000 val || location || kind
+        // The format doesn't really matter so long as we're consistent
+        let kind = self.kind();
+        let val = self.val();
+        let loc = self.location();
+
+        // Keep track of the running bitlength
+        let mut bitlen = 0;
+        let mut out = F::zero();
+
+        // Pack kind into the bottom 2 bits
+        out += pow_two::<F>(bitlen) * F::from(kind as u8);
+        bitlen += 2;
+
+        // Pack loc into the next word-bitlen bits
+        out += pow_two::<F>(bitlen) * F::from(loc.into());
+        bitlen += W::BITLEN;
+
+        // val is a dword, so pack each of its words separately
+        out += pow_two::<F>(bitlen) * F::from(val.0.into());
+        bitlen += W::BITLEN;
+        out += pow_two::<F>(bitlen) * F::from(val.1.into());
+        bitlen += W::BITLEN;
+
+        (out, bitlen)
     }
 }
 

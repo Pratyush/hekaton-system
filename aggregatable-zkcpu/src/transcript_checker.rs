@@ -8,14 +8,14 @@ use crate::{
 use core::borrow::Borrow;
 
 use tinyram_emu::{
-    interpreter::{MemOp, TranscriptEntry},
+    interpreter::{MemOp, MemOpKind, TranscriptEntry},
     word::Word,
     TinyRamArch,
 };
 
 use core::cmp::Ordering;
 
-use ark_ff::{Field, PrimeField};
+use ark_ff::{Field, FpParameters, PrimeField};
 use ark_r1cs_std::{
     alloc::{AllocVar, AllocationMode},
     boolean::Boolean,
@@ -51,19 +51,6 @@ impl<F: PrimeField> Default for RunningEvalVar<F> {
     }
 }
 
-/// The kind of memory operation
-#[derive(Clone, Copy, Debug)]
-enum MemOpKind {
-    /// A memory op corresponding to `loadw` or `loadb`
-    Load = 0,
-    /// A memory op corresponding to `storew` or `storeb`
-    Store,
-    /// A memory op corresponding to `read 0`
-    ReadPrimary,
-    /// A memory op corresponding to `read 1`
-    ReadAux,
-}
-
 impl<F: PrimeField> RunningEvalVar<F> {
     /// Updates the running eval with the given entry and challenge point, iff `bit` == true.
     fn conditionally_update(
@@ -92,22 +79,6 @@ impl<F: PrimeField> RunningEvalVar<F> {
     }
 }
 
-impl<W: Word> From<&MemOp<W>> for MemOpKind {
-    fn from(op: &MemOp<W>) -> Self {
-        match op {
-            MemOp::Store { .. } => MemOpKind::Store,
-            MemOp::Load { .. } => MemOpKind::Load,
-        }
-    }
-}
-
-impl MemOpKind {
-    // Returns the numerical value of this op as a field element
-    fn as_ff<F: PrimeField>(&self) -> F {
-        F::from(*self as u8)
-    }
-}
-
 /// The kind of memory operation: load, store, read primary tape or read aux tape, in ZK land
 type MemOpKindVar<F> = FpVar<F>;
 
@@ -120,24 +91,56 @@ fn transcript_starting_entry<W: Word>(
     real_transcript[0].clone()
 }
 
-// This trait exists just for the below impl
-trait TranscriptEntryTrait {
-    fn as_ff<F: Field>(&self) -> F;
-    fn to_ff_notime<F: Field>(&self) -> F;
-}
+impl<W: Word> ProcessedTranscriptEntry<W> {
+    fn pow_two<G: Field>(n: usize) -> G {
+        G::from(2u8).pow([n as u64])
+    }
 
-impl<W: Word> TranscriptEntryTrait for TranscriptEntry<W> {
-    /// Encodes this transcript entry as a field element for the purpose representation as a
-    /// coefficient in a polynomial
-    fn as_ff<F: Field>(&self) -> F {
-        unimplemented!()
+    /// Encodes this transcript entry in the low bits of a field element for the purpose of
+    /// representation as a coefficient in a polynomial. Returns the field element and the
+    /// number of bits packed.
+    fn as_ff_helper<F: Field>(&self) -> (F, usize) {
+        // We pack the variables into the field element as 0...0 is_padding || mem_op || timestamp
+        // The shape doesn't really matter as long as it's consistent;
+
+        // Keep track of the running bitlength
+        let mut bitlen = 0;
+        let mut out = F::zero();
+
+        // Pack the padding bit
+        out += Self::pow_two::<F>(bitlen) * F::from(self.is_padding as u64);
+        bitlen += 1;
+
+        // Pack the mem op
+        let (mem_op_ff, mem_op_bitlen) = self.mem_op.as_ff::<F>();
+        out += Self::pow_two::<F>(bitlen) * mem_op_ff;
+        bitlen += mem_op_bitlen;
+
+        (out, bitlen)
+    }
+
+    /// Encodes this transcript entry as a field element for the purpose of representation as a
+    /// coefficient in a polynomial. This includes the timstamp
+    pub(crate) fn as_ff<F: PrimeField>(&self) -> F {
+        // Get the field element without the timestamp
+        let (mut out, mut bitlen) = self.as_ff_helper();
+
+        // Pack the 64-bit timestamp
+        out += Self::pow_two::<F>(bitlen) * F::from(self.timestamp);
+        bitlen += 64;
+
+        // Make sure we didn't over-pack the field element
+        assert!(bitlen < F::Params::MODULUS_BITS as usize);
+
+        out
     }
 
     /// Encodes this transcript entry as a field element for the purpose of representation as a
     /// coefficient in a polynomial. The `_notime` variant does not include the timestamp in the
     /// representation (i.e., it sets `t=0`).
-    fn to_ff_notime<F: Field>(&self) -> F {
-        unimplemented!()
+    pub(crate) fn to_ff_notime<F: Field>(&self) -> F {
+        // We just call the helper function, which doesn't include the timestamp
+        self.as_ff_helper().0
     }
 }
 
@@ -209,7 +212,7 @@ impl<W: WordVar<F>, F: PrimeField> AllocVar<ProcessedTranscriptEntry<W::NativeWo
         // Witness the op var
         let op = MemOpKindVar::new_variable(
             ns!(cs, "opkind"),
-            || entry.map(|e| MemOpKind::from(&e.mem_op).as_ff::<F>()),
+            || entry.map(|e| F::from(e.mem_op.kind() as u8)),
             mode,
         )?;
         // Witness the mem op RAM idx
@@ -273,13 +276,13 @@ impl<W: WordVar<F>, F: PrimeField> ProcessedTranscriptEntryVar<W, F> {
     /// Returns whether this memory operation is a load
     fn is_load(&self) -> Result<Boolean<F>, SynthesisError> {
         self.op
-            .is_eq(&MemOpKindVar::Constant(MemOpKind::Load.as_ff()))
+            .is_eq(&MemOpKindVar::Constant(F::from(MemOpKind::Load as u8)))
     }
 
     /// Returns whether this memory operation is a store
     fn is_store(&self) -> Result<Boolean<F>, SynthesisError> {
         self.op
-            .is_eq(&MemOpKindVar::Constant(MemOpKind::Store.as_ff()))
+            .is_eq(&MemOpKindVar::Constant(F::from(MemOpKind::Store as u8)))
     }
 }
 

@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+ark-ff = "0.3.0"
 bitfield = "0.14"
 pest = "2.5.1"
 pest_derive = "2.5.1"

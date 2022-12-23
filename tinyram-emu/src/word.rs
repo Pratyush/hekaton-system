@@ -3,6 +3,8 @@ use core::{
     ops::{BitAnd, BitOr, BitXor, Div, Not, Rem},
 };
 
+use ark_ff::Field;
+
 pub type DWord<W> = (W, W);
 
 pub trait Word:
@@ -40,6 +42,12 @@ pub trait Word:
 
     /// Convert `self` to a `BIT_SIZE`-bit signed integer.
     fn to_signed(self) -> Self::Signed;
+
+    /// Convert `self` to a field element
+    fn to_ff<F: Field>(self) -> F {
+        // Convert W -> u64 -> F
+        self.into().into()
+    }
 
     /// Returns `Some(self + 1)` if `self != Self::MAX`.
     /// Returns `None` otherwise.
