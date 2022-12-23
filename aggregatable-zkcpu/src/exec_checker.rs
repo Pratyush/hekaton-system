@@ -1,6 +1,6 @@
 use crate::{
     common::*,
-    transcript_checker::TranscriptEntryVar,
+    transcript_checker::ProcessedTranscriptEntryVar,
     util::{arr_set, log2, uint8_to_fpvar},
     word::{DWordVar, WordVar},
 };
@@ -251,7 +251,7 @@ impl<W: WordVar<F>, F: PrimeField> CondSelectGadget<F> for CpuState<W, F> {
 fn run_instr<W: WordVar<F>, F: PrimeField>(
     op: Opcode,
     cpu_state: &CpuState<W, F>,
-    mem_op: &TranscriptEntryVar<W, F>,
+    mem_op: &ProcessedTranscriptEntryVar<W, F>,
     reg1: &FpVar<F>,
     reg2_val: &W,
     imm_or_reg_val: &W,
@@ -374,7 +374,7 @@ fn run_instr<W: WordVar<F>, F: PrimeField>(
 /// associated memory operation. Returns the updated CPU state.
 pub(crate) fn exec_checker<const NUM_REGS: usize, W: WordVar<F>, F: PrimeField>(
     arch: TinyRamArch,
-    mem_op: &TranscriptEntryVar<W, F>,
+    mem_op: &ProcessedTranscriptEntryVar<W, F>,
     cpu_state: &CpuState<W, F>,
     instr: &DWordVar<W, F>,
 ) -> Result<CpuState<W, F>, SynthesisError> {
@@ -593,7 +593,7 @@ mod test {
         );
         println!("Transcript len == {}", transcript.len());
 
-        let non_mem_op = TranscriptEntryVar::default();
+        let non_mem_op = ProcessedTranscriptEntryVar::default();
 
         // Run the CPU
         let mut cpu_state = CpuState::default::<NUM_REGS>();

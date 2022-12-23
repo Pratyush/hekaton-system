@@ -5,6 +5,8 @@ use crate::{
     word::{DWord, DWordVar, WordVar},
 };
 
+use core::borrow::Borrow;
+
 use tinyram_emu::{
     interpreter::{MemOp, TranscriptEntry},
     word::Word,
@@ -15,7 +17,7 @@ use core::cmp::Ordering;
 
 use ark_ff::{Field, PrimeField};
 use ark_r1cs_std::{
-    alloc::AllocVar,
+    alloc::{AllocVar, AllocationMode},
     boolean::Boolean,
     eq::EqGadget,
     fields::{fp::FpVar, FieldVar},
@@ -25,7 +27,7 @@ use ark_r1cs_std::{
 };
 use ark_relations::{
     ns,
-    r1cs::{ConstraintSystemRef, SynthesisError},
+    r1cs::{ConstraintSystemRef, Namespace, SynthesisError},
 };
 
 /// A timestamp in the memory access transcript
@@ -139,9 +141,104 @@ impl<W: Word> TranscriptEntryTrait for TranscriptEntry<W> {
     }
 }
 
-/// An entry in the transcript of RAM accesses
+/// This is a transcript entry with just 1 associated memory operation, and a padding flag. This is
+/// easier to directly use than a [`TranscriptEntry`]
 #[derive(Clone)]
-pub(crate) struct TranscriptEntryVar<W: WordVar<F>, F: PrimeField> {
+pub(crate) struct ProcessedTranscriptEntry<W: Word> {
+    /// Tells whether or not this entry is padding
+    is_padding: bool,
+    /// The timestamp of this entry. This MUST be greater than 0
+    timestamp: u64,
+    /// The memory operation that occurred at this timestamp
+    mem_op: MemOp<W>,
+}
+
+impl<W: Word> ProcessedTranscriptEntry<W> {
+    /// Converts the given transcript entry (consisting of instruction load + optional mem op) into two processed entries. If there is no mem op, then a padding entry is created.
+    fn new_pair(t: &TranscriptEntry<W>) -> [ProcessedTranscriptEntry<W>; 2] {
+        // Get the instruction load. We stretch the timestamps to make every timestamp unique
+        let first = ProcessedTranscriptEntry {
+            is_padding: false,
+            timestamp: 2 * t.timestamp + TIMESTAMP_OFFSET,
+            mem_op: t.instr_load.clone(),
+        };
+        // The second entry is either the real memory operation, or it's a padding op that's just a
+        // copy of the first instruction load. The reason it'd be a copy is because it's consistent
+        // with the rest of the transcript.
+        let second = match &t.mem_op {
+            Some(op) => ProcessedTranscriptEntry {
+                is_padding: false,
+                timestamp: first.timestamp + 1,
+                mem_op: op.clone(),
+            },
+            None => {
+                let mut pad = first.clone();
+                pad.is_padding = true;
+                pad.timestamp = first.timestamp + 1;
+                pad
+            }
+        };
+
+        [first, second]
+    }
+}
+
+impl<W: WordVar<F>, F: PrimeField> AllocVar<ProcessedTranscriptEntry<W::NativeWord>, F>
+    for ProcessedTranscriptEntryVar<W, F>
+{
+    fn new_variable<T: Borrow<ProcessedTranscriptEntry<W::NativeWord>>>(
+        cs: impl Into<Namespace<F>>,
+        f: impl FnOnce() -> Result<T, SynthesisError>,
+        mode: AllocationMode,
+    ) -> Result<Self, SynthesisError> {
+        let ns = cs.into();
+        let cs = ns.cs();
+
+        let res = f();
+        let entry = res.as_ref().map(|e| e.borrow()).map_err(|err| *err);
+
+        // Witness the instruction load
+        let timestamp_var = TimestampVar::new_variable(
+            ns!(cs, "instr timestamp"),
+            || entry.map(|e| F::from(e.timestamp)),
+            mode,
+        )?;
+        // Witness the padding flag
+        let is_padding_var =
+            Boolean::new_variable(ns!(cs, "padding?"), || entry.map(|e| e.is_padding), mode)?;
+        // Witness the op var
+        let op = MemOpKindVar::new_variable(
+            ns!(cs, "opkind"),
+            || entry.map(|e| MemOpKind::from(&e.mem_op).as_ff::<F>()),
+            mode,
+        )?;
+        // Witness the mem op RAM idx
+        let ram_idx = W::new_variable(
+            ns!(cs, "ram idx"),
+            || entry.map(|e| e.mem_op.location()),
+            mode,
+        )?;
+        let ram_idx_fp = ram_idx.as_fpvar()?;
+        // Witness the mem op loaded/stored dword
+        let val = DWordVar::new_variable(ns!(cs, "val"), || entry.map(|e| e.mem_op.val()), mode)?;
+        let val_fp = val.as_fpvar()?;
+
+        Ok(ProcessedTranscriptEntryVar {
+            is_padding: is_padding_var,
+            timestamp: timestamp_var,
+            op,
+            ram_idx,
+            ram_idx_fp,
+            val,
+            val_fp,
+        })
+    }
+}
+
+/// The ZK version of `ProcessedTranscriptEntry`. It's also flattened so all the fields are right
+/// here.
+#[derive(Clone)]
+pub(crate) struct ProcessedTranscriptEntryVar<W: WordVar<F>, F: PrimeField> {
     /// Tells whether or not this entry is padding
     pub(crate) is_padding: Boolean<F>,
     /// The timestamp of this entry. This is at most 64 bits
@@ -158,9 +255,9 @@ pub(crate) struct TranscriptEntryVar<W: WordVar<F>, F: PrimeField> {
     val_fp: FpVar<F>,
 }
 
-impl<W: WordVar<F>, F: PrimeField> Default for TranscriptEntryVar<W, F> {
+impl<W: WordVar<F>, F: PrimeField> Default for ProcessedTranscriptEntryVar<W, F> {
     fn default() -> Self {
-        TranscriptEntryVar {
+        ProcessedTranscriptEntryVar {
             is_padding: Boolean::TRUE,
             timestamp: TimestampVar::zero(),
             op: MemOpKindVar::zero(),
@@ -172,76 +269,7 @@ impl<W: WordVar<F>, F: PrimeField> Default for TranscriptEntryVar<W, F> {
     }
 }
 
-impl<W: WordVar<F>, F: PrimeField> TranscriptEntryVar<W, F> {
-    /// Creates a new `TranscriptEntryVar` from a native execution `TranscriptEntry`. Since a
-    /// native `TranscriptEntry` contains both an instruction load and an optional mem op, this
-    /// returns between 1 and 2 `TranscriptEntryVar`s.
-    fn new(
-        cs: ConstraintSystemRef<F>,
-        transcript_entry: &TranscriptEntry<W::NativeWord>,
-    ) -> Result<(TranscriptEntryVar<W, F>, Option<TranscriptEntryVar<W, F>>), SynthesisError> {
-        let TranscriptEntry {
-            timestamp,
-            instr_load,
-            mem_op,
-            ..
-        } = transcript_entry;
-
-        // Each native transcript entry is 2 operations. We need to split the timestamp into two
-        // for uniqueness. The offset is so we can pad the beginning of the transcript if need be.
-        let instr_load_timestamp = F::from(2 * timestamp + TIMESTAMP_OFFSET);
-        let mem_op_timestamp = F::from(2 * timestamp + 1 + TIMESTAMP_OFFSET);
-
-        // Witness the instruction load
-        let timestamp_var =
-            TimestampVar::new_witness(ns!(cs, "instr timestamp"), || Ok(instr_load_timestamp))?;
-        let op =
-            MemOpKindVar::new_witness(ns!(cs, "opkind"), || Ok(F::from(MemOpKind::Load as u8)))?;
-        let ram_idx = W::new_witness(ns!(cs, "ram idx"), || Ok(instr_load.location()))?;
-        let ram_idx_fp = ram_idx.as_fpvar()?;
-        let val = DWordVar::new_witness(ns!(cs, "val"), || Ok(instr_load.val()))?;
-        let val_fp = val.as_fpvar()?;
-
-        let instr_load_var = TranscriptEntryVar {
-            is_padding: Boolean::FALSE,
-            timestamp: timestamp_var,
-            op,
-            ram_idx,
-            ram_idx_fp,
-            val,
-            val_fp,
-        };
-
-        // If there is no mem op, we're done
-        if let None = mem_op {
-            return Ok((instr_load_var, None));
-        }
-
-        // Otherwise, witness the stuff from the mem op
-        let mem_op = mem_op.as_ref().unwrap();
-        let timestamp_var =
-            TimestampVar::new_witness(ns!(cs, "instr timestamp"), || Ok(mem_op_timestamp))?;
-        let op = MemOpKindVar::new_witness(ns!(cs, "opkind"), || {
-            Ok(MemOpKind::from(mem_op).as_ff::<F>())
-        })?;
-        let ram_idx = W::new_witness(ns!(cs, "ram idx"), || Ok(mem_op.location()))?;
-        let ram_idx_fp = ram_idx.as_fpvar()?;
-        let val = DWordVar::new_witness(ns!(cs, "val"), || Ok(mem_op.val()))?;
-        let val_fp = val.as_fpvar()?;
-
-        let mem_op_var = TranscriptEntryVar {
-            is_padding: Boolean::FALSE,
-            timestamp: timestamp_var,
-            op,
-            ram_idx,
-            ram_idx_fp,
-            val,
-            val_fp,
-        };
-
-        Ok((instr_load_var, Some(mem_op_var)))
-    }
-
+impl<W: WordVar<F>, F: PrimeField> ProcessedTranscriptEntryVar<W, F> {
     /// Returns whether this memory operation is a load
     fn is_load(&self) -> Result<Boolean<F>, SynthesisError> {
         self.op
@@ -255,7 +283,7 @@ impl<W: WordVar<F>, F: PrimeField> TranscriptEntryVar<W, F> {
     }
 }
 
-impl<W: WordVar<F>, F: PrimeField> TranscriptEntryVar<W, F> {
+impl<W: WordVar<F>, F: PrimeField> ProcessedTranscriptEntryVar<W, F> {
     /// Encodes this transcript entry as a field element. `is_init` says whether this entry is part
     /// of the initial memory or not.
     fn as_ff(&self, is_init: bool) -> Result<FpVar<F>, SynthesisError> {
@@ -342,9 +370,9 @@ fn transcript_checker<const NUM_REGS: usize, W: WordVar<F>, F: PrimeField>(
     arch: TinyRamArch,
     cpu_state: &CpuState<W, F>,
     chal: &FpVar<F>,
-    instr_load: &TranscriptEntryVar<W, F>,
-    mem_op: &TranscriptEntryVar<W, F>,
-    mem_tr_adj_seq: &[TranscriptEntryVar<W, F>],
+    instr_load: &ProcessedTranscriptEntryVar<W, F>,
+    mem_op: &ProcessedTranscriptEntryVar<W, F>,
+    mem_tr_adj_seq: &[ProcessedTranscriptEntryVar<W, F>],
     evals: &TranscriptCheckerEvals<F>,
 ) -> Result<(CpuState<W, F>, TranscriptCheckerEvals<F>), SynthesisError> {
     assert_eq!(mem_tr_adj_seq.len(), 3);
@@ -516,36 +544,33 @@ mod test {
         // where T is the number of CPU ticks.
         let time_sorted_transcript = transcript
             .iter()
-            .flat_map(|t| {
-                let (instr_op, mem_op) = TranscriptEntryVar::<WV, _>::new(cs.clone(), t).unwrap();
-                // mem_op might be None, but we need a value here no matter what. So just copy
-                // the instr_op (which is a load) and incr the timestamp. Perfectly consistent.
-                let mut placeholder = instr_op.clone();
-                placeholder.timestamp = TimestampVar::new_witness(ns!(cs, "placeholder"), || {
-                    Ok(instr_op.timestamp.value().unwrap() + F::from(1u64))
-                })
-                .unwrap();
-                // We still have to set it as padding. Otherwise the CPU will think we gave it a
-                // mem op for a non-mem-touching instruction
-                placeholder.is_padding = Boolean::TRUE;
-                // Now return the instr op + (mem_op or placeholder)
-                [instr_op, mem_op.unwrap_or(placeholder)]
-            })
+            .flat_map(ProcessedTranscriptEntry::new_pair)
             .collect::<Vec<_>>();
-
         // Make the mem-sorted trace. This has length 2T + 1. The +1 is the initial padding
-        let mem_sorted_transcript_vars: Vec<TranscriptEntryVar<_, _>> = {
+        let mem_sorted_transcript = {
             let mut buf = time_sorted_transcript.clone();
             // Sort by RAM index, followed by timestamp
-            buf.sort_by_key(|o| (o.ram_idx_fp.value().unwrap(), o.timestamp.value().unwrap()));
+            buf.sort_by_key(|o| (o.mem_op.location(), o.timestamp));
             // Now pad the mem-sorted transcript with an initial placeholder op. This will just
             // store the value of the true first op. We can use the timestamp 0 because we've
             // reserved it: every witnessed transcript entry has timestamp greater than 0.
             let mut initial_entry = buf.get(0).unwrap().clone();
-            initial_entry.timestamp = TimestampVar::zero();
+            initial_entry.timestamp = 0;
             buf.insert(0, initial_entry);
             buf
         };
+
+        // Now witness the time- and memory-sorted transcripts
+        let time_sorted_transcript_vars = time_sorted_transcript
+            .iter()
+            .map(|t| {
+                ProcessedTranscriptEntryVar::<WV, _>::new_witness(ns!(cs, "t"), || Ok(t)).unwrap()
+            })
+            .collect::<Vec<_>>();
+        let mem_sorted_transcript_vars = mem_sorted_transcript
+            .iter()
+            .map(|t| ProcessedTranscriptEntryVar::new_witness(ns!(cs, "t"), || Ok(t)).unwrap())
+            .collect::<Vec<_>>();
 
         // Doesn't matter what the challenge value is just yet
         let chal = FpVar::constant(F::rand(&mut rng));
@@ -555,7 +580,7 @@ mod test {
         // Run the CPU
         let mut cpu_state = CpuState::default::<NUM_REGS>();
         for (i, (time_sorted_transcript_pair, mem_sorted_transcript_triple)) in
-            time_sorted_transcript
+            time_sorted_transcript_vars
                 .chunks(2)
                 .zip(mem_sorted_transcript_vars.windows(3).step_by(2))
                 .enumerate()
