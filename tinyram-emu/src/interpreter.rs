@@ -302,6 +302,36 @@ impl<W: Word> Instr<W> {
                 }
                 None
             }
+            Instr::StoreW { in1, out } => {
+                let in1 = in1.value(&cpu_state.registers);
+                let out = out.value(&cpu_state.registers);
+
+                // Round the byte address down to the nearest word boundary
+                let ram_addr: u64 = out.into() - (out.into() % W::BYTELEN as u64);
+                // Fetch a dword's worth of bytes from memory, using 0 where undefined
+                let mut bytes: Vec<u8> = (ram_addr..ram_addr + 2 * W::BYTELEN as u64)
+                    .map(|i| *data_memory.0.get(&W::from_u64(i).unwrap()).unwrap_or(&0))
+                    .collect();
+                // Overwrite the first word with whatever is being stored
+                bytes[..W::BYTELEN].copy_from_slice(&in1.to_le_bytes());
+
+                // Now convert the little-endian encoded bytes into words
+                let w0 = W::from_le_bytes(&bytes[..W::BYTELEN]).unwrap();
+                let w1 = W::from_le_bytes(&bytes[W::BYTELEN..]).unwrap();
+
+                // Update the first word in the data memory
+                for (i, b) in (ram_addr..ram_addr + W::BYTELEN as u64).zip(bytes.iter()) {
+                    data_memory.0.insert(W::from_u64(i).unwrap(), *b);
+                }
+
+                // Construct the memory operation
+                let mem_op = MemOp::Store {
+                    val: (w0, w1),
+                    location: in1,
+                };
+
+                Some(mem_op)
+            }
             Instr::LoadW { out, in1 } => {
                 let in1 = in1.value(&cpu_state.registers);
                 // Round the byte address down to the nearest word boundary
@@ -310,7 +340,7 @@ impl<W: Word> Instr<W> {
                 let bytes: Vec<u8> = (ram_addr..ram_addr + 2 * W::BYTELEN as u64)
                     .map(|i| *data_memory.0.get(&W::from_u64(i).unwrap()).unwrap_or(&0))
                     .collect();
-                // Convert the little-endian encoded bytes into the words
+                // Convert the little-endian encoded bytes into words
                 let w0 = W::from_le_bytes(&bytes[..W::BYTELEN]).unwrap();
                 let w1 = W::from_le_bytes(&bytes[W::BYTELEN..]).unwrap();
                 // Construct the memory operation
@@ -521,7 +551,7 @@ mod test {
         //     reg2 -> mul3_ctr
         // We also store and load reg1 from memory every loop
         let skip3_code = "\
-        _loop: load.w r1, 60      ; acc <- RAM[60]
+        _loop: load.w r1, 120     ; acc <- RAM[120]
                add  r0, r0, 1     ; incr i
                add  r2, r2, 1     ; incr mul3_ctr
                cmpe r0, 100       ; if i == 100:
@@ -532,7 +562,7 @@ mod test {
 
          _acc: add r1, r1, r0     ; Accumulate i into acc
                xor r2, r2, r2     ; Clear mul3_ctr
-               store.w 60, r1     ; acc -> RAM[60]
+               store.w 120, r1    ; acc -> RAM[120]
                jmp _loop          ; Jump back to the loop
 
          _end: answer r1          ; Return acc
@@ -549,7 +579,13 @@ mod test {
         ] {
             let program = [header, skip3_code].concat();
             let assembly = assemble(&program);
-            let (output, _trace) = run_program::<W, NUM_REGS>(arch, &assembly);
+            let (output, trace) = run_program::<W, NUM_REGS>(arch, &assembly);
+
+            // Show the nontrivial memory operations
+            trace
+                .into_iter()
+                .filter_map(|e| e.mem_op)
+                .for_each(|m| println!("Got a memop {:?}", m));
 
             // Check that the program outputted the correct value
             assert_eq!(output, 1683);

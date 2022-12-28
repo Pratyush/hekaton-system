@@ -45,6 +45,9 @@ pub trait Word:
     /// Convert from little-endian bytes. Fails if `bytes.len() != Self::BYTELEN`
     fn from_le_bytes(bytes: &[u8]) -> Result<Self, ()>;
 
+    /// Convert to little-endian bytes
+    fn to_le_bytes(&self) -> Vec<u8>;
+
     /// Convert `self` to a `BIT_SIZE`-bit signed integer.
     fn to_signed(self) -> Self::Signed;
 
@@ -121,6 +124,11 @@ macro_rules! impl_word {
                 let mut buf = [0u8; Self::BYTELEN];
                 buf.copy_from_slice(bytes);
                 Ok(<$word>::from_le_bytes(buf))
+            }
+
+            // TODO: don't allocate for this
+            fn to_le_bytes(&self) -> Vec<u8> {
+                <$word>::to_le_bytes(*self).to_vec()
             }
 
             fn to_signed(self) -> Self::Signed {
