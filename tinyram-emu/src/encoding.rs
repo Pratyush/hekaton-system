@@ -6,7 +6,7 @@ use crate::{
 
 use bitfield::{Bit, BitMut, BitRange, BitRangeMut};
 
-const OPCODE_BITLEN: usize = 5;
+pub(crate) const OPCODE_BITLEN: usize = 5;
 
 pub(crate) fn instr_opcode(instr: u128) -> Opcode {
     let opcode_byte: u8 = instr.bit_range(OPCODE_BITLEN - 1, 0);
@@ -44,7 +44,7 @@ impl<W: Word> Instr<W> {
         let (opcode, reg1, reg2, imm_or_reg) = Self::decode::<NUM_REGS>(instr);
 
         match opcode {
-            Add => Instr::Add {
+            And => Instr::And {
                 in1: reg2,
                 in2: imm_or_reg,
                 out: reg1,
@@ -59,15 +59,91 @@ impl<W: Word> Instr<W> {
                 in2: imm_or_reg,
                 out: reg1,
             },
-            CmpE => Instr::CmpE {
-                in1: reg2,
-                in2: imm_or_reg,
-            },
             Not => Instr::Not {
                 in1: imm_or_reg,
                 out: reg1,
             },
-            LoadW => Instr::LoadW {
+            Add => Instr::Add {
+                in1: reg2,
+                in2: imm_or_reg,
+                out: reg1,
+            },
+            Sub => Instr::Sub {
+                in1: reg2,
+                in2: imm_or_reg,
+                out: reg1,
+            },
+            MulL => Instr::MulL {
+                in1: reg2,
+                in2: imm_or_reg,
+                out: reg1,
+            },
+            UMulH => Instr::UMulH {
+                in1: reg2,
+                in2: imm_or_reg,
+                out: reg1,
+            },
+            SMulH => Instr::SMulH {
+                in1: reg2,
+                in2: imm_or_reg,
+                out: reg1,
+            },
+            UDiv => Instr::UDiv {
+                in1: reg2,
+                in2: imm_or_reg,
+                out: reg1,
+            },
+            UMod => Instr::UMod {
+                in1: reg2,
+                in2: imm_or_reg,
+                out: reg1,
+            },
+            Shl => Instr::Shl {
+                in1: reg2,
+                in2: imm_or_reg,
+                out: reg1,
+            },
+            Shr => Instr::Shr {
+                in1: reg2,
+                in2: imm_or_reg,
+                out: reg1,
+            },
+            CmpE => Instr::CmpE {
+                in1: reg2,
+                in2: imm_or_reg,
+            },
+            CmpA => Instr::CmpA {
+                in1: reg2,
+                in2: imm_or_reg,
+            },
+            CmpAe => Instr::CmpAE {
+                in1: reg2,
+                in2: imm_or_reg,
+            },
+            CmpG => Instr::CmpG {
+                in1: reg2,
+                in2: imm_or_reg,
+            },
+            CmpGe => Instr::CmpGE {
+                in1: reg2,
+                in2: imm_or_reg,
+            },
+            Mov => Instr::Mov {
+                in1: imm_or_reg,
+                out: reg1,
+            },
+            CMov => Instr::CMov {
+                in1: imm_or_reg,
+                out: reg1,
+            },
+            Jmp => Instr::Jmp { in1: imm_or_reg },
+            CJmp => Instr::CJmp { in1: imm_or_reg },
+            CnJmp => Instr::CNJmp { in1: imm_or_reg },
+            StoreB => Instr::StoreB {
+                in1: reg2,
+                out: imm_or_reg,
+            },
+            LoadB => Instr::LoadB {
                 in1: imm_or_reg,
                 out: reg1,
             },
@@ -75,10 +151,15 @@ impl<W: Word> Instr<W> {
                 in1: reg2,
                 out: imm_or_reg,
             },
-            Jmp => Instr::Jmp { in1: imm_or_reg },
-            CJmp => Instr::CJmp { in1: imm_or_reg },
+            LoadW => Instr::LoadW {
+                in1: imm_or_reg,
+                out: reg1,
+            },
+            Read => Instr::Read {
+                in1: imm_or_reg,
+                out: reg1,
+            },
             Answer => Instr::Answer { in1: imm_or_reg },
-            _ => panic!("cannot decode {:?}", opcode),
         }
     }
 
@@ -125,22 +206,41 @@ impl<W: Word> Instr<W> {
     }
 
     // Converts our operation to `u128`
+    #[rustfmt::skip]
     pub fn to_u128<const NUM_REGS: usize>(&self) -> u128 {
-        let opcode = self.opcode() as u8;
-        let reg0 = RegIdx(0);
+        let op = self.opcode() as u8;
+        let rg0 = RegIdx(0);
 
         match *self {
-            Instr::Add { in1, in2, out } => Self::encode::<NUM_REGS>(opcode, out, in1, in2),
-            Instr::Or { in1, in2, out } => Self::encode::<NUM_REGS>(opcode, out, in1, in2),
-            Instr::Xor { in1, in2, out } => Self::encode::<NUM_REGS>(opcode, out, in1, in2),
-            Instr::Not { in1, out } => Self::encode::<NUM_REGS>(opcode, out, reg0, in1),
-            Instr::LoadW { in1, out } => Self::encode::<NUM_REGS>(opcode, out, reg0, in1),
-            Instr::StoreW { in1, out } => Self::encode::<NUM_REGS>(opcode, reg0, in1, out),
-            Instr::CmpE { in1, in2 } => Self::encode::<NUM_REGS>(opcode, reg0, in1, in2),
-            Instr::Jmp { in1 } => Self::encode::<NUM_REGS>(opcode, reg0, reg0, in1),
-            Instr::CJmp { in1 } => Self::encode::<NUM_REGS>(opcode, reg0, reg0, in1),
-            Instr::Answer { in1 } => Self::encode::<NUM_REGS>(opcode, reg0, reg0, in1),
-            _ => todo!(),
+            Instr::And { in1, in2, out }   => Self::encode::<NUM_REGS>(op, out, in1, in2),
+            Instr::Or { in1, in2, out }    => Self::encode::<NUM_REGS>(op, out, in1, in2),
+            Instr::Xor { in1, in2, out }   => Self::encode::<NUM_REGS>(op, out, in1, in2),
+            Instr::Not { in1, out }        => Self::encode::<NUM_REGS>(op, out, rg0, in1),
+            Instr::Add { in1, in2, out }   => Self::encode::<NUM_REGS>(op, out, in1, in2),
+            Instr::Sub { in1, in2, out }   => Self::encode::<NUM_REGS>(op, out, in1, in2),
+            Instr::MulL { in1, in2, out }  => Self::encode::<NUM_REGS>(op, out, in1, in2),
+            Instr::UMulH { in1, in2, out } => Self::encode::<NUM_REGS>(op, out, in1, in2),
+            Instr::SMulH { in1, in2, out } => Self::encode::<NUM_REGS>(op, out, in1, in2),
+            Instr::UDiv { in1, in2, out }  => Self::encode::<NUM_REGS>(op, out, in1, in2),
+            Instr::UMod { in1, in2, out }  => Self::encode::<NUM_REGS>(op, out, in1, in2),
+            Instr::Shl { in1, in2, out }   => Self::encode::<NUM_REGS>(op, out, in1, in2),
+            Instr::Shr { in1, in2, out }   => Self::encode::<NUM_REGS>(op, out, in1, in2),
+            Instr::CmpE { in1, in2 }       => Self::encode::<NUM_REGS>(op, rg0, in1, in2),
+            Instr::CmpA { in1, in2 }       => Self::encode::<NUM_REGS>(op, rg0, in1, in2),
+            Instr::CmpAE { in1, in2 }      => Self::encode::<NUM_REGS>(op, rg0, in1, in2),
+            Instr::CmpG { in1, in2 }       => Self::encode::<NUM_REGS>(op, rg0, in1, in2),
+            Instr::CmpGE { in1, in2 }      => Self::encode::<NUM_REGS>(op, rg0, in1, in2),
+            Instr::Mov { in1, out }        => Self::encode::<NUM_REGS>(op, out, rg0, in1),
+            Instr::CMov { in1, out }       => Self::encode::<NUM_REGS>(op, out, rg0, in1),
+            Instr::Jmp { in1 }             => Self::encode::<NUM_REGS>(op, rg0, rg0, in1),
+            Instr::CJmp { in1 }            => Self::encode::<NUM_REGS>(op, rg0, rg0, in1),
+            Instr::CNJmp { in1 }           => Self::encode::<NUM_REGS>(op, rg0, rg0, in1),
+            Instr::StoreB { in1, out }     => Self::encode::<NUM_REGS>(op, rg0, in1, out),
+            Instr::LoadB { in1, out }      => Self::encode::<NUM_REGS>(op, out, rg0, in1),
+            Instr::StoreW { in1, out }     => Self::encode::<NUM_REGS>(op, rg0, in1, out),
+            Instr::LoadW { in1, out }      => Self::encode::<NUM_REGS>(op, out, rg0, in1),
+            Instr::Read { in1, out }       => Self::encode::<NUM_REGS>(op, out, rg0, in1),
+            Instr::Answer { in1 }          => Self::encode::<NUM_REGS>(op, rg0, rg0, in1),
         }
     }
 
@@ -213,75 +313,22 @@ impl<W: Word> Instr<W> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::register::ImmOrRegister;
-
-    use rand::Rng;
 
     const NUM_REGS: usize = 16;
     type W = u32;
 
-    fn gen_regidx<R: Rng>(mut rng: R) -> RegIdx {
-        RegIdx(rng.gen_range(0..NUM_REGS) as u8)
-    }
-
-    fn gen_imm_or_regidx<R: Rng>(mut rng: R) -> ImmOrRegister<W> {
-        let is_imm = rng.gen();
-        if is_imm {
-            ImmOrRegister::Imm(rng.gen_range(0..=W::MAX))
-        } else {
-            ImmOrRegister::Register(gen_regidx(&mut rng))
-        }
-    }
-
     // Tests that Instr::from_mc(op.to_mc()) is the identity on `op`
     #[test]
-    fn round_trip_identity() {
+    fn encoding_round_trip() {
         let mut rng = rand::thread_rng();
 
-        // Test 100 test cases of each kind of instruction
-        for _ in 0..100 {
-            // Make random test cases
-            let test_cases: &[Instr<W>] = &[
-                Instr::Answer {
-                    in1: gen_imm_or_regidx(&mut rng),
-                },
-                Instr::CmpE {
-                    in1: gen_regidx(&mut rng),
-                    in2: gen_imm_or_regidx(&mut rng),
-                },
-                Instr::Or {
-                    in1: gen_regidx(&mut rng),
-                    in2: gen_imm_or_regidx(&mut rng),
-                    out: gen_regidx(&mut rng),
-                },
-                Instr::Add {
-                    in1: gen_regidx(&mut rng),
-                    in2: gen_imm_or_regidx(&mut rng),
-                    out: gen_regidx(&mut rng),
-                },
-                Instr::Not {
-                    in1: gen_imm_or_regidx(&mut rng),
-                    out: gen_regidx(&mut rng),
-                },
-                Instr::CJmp {
-                    in1: gen_imm_or_regidx(&mut rng),
-                },
-                Instr::LoadW {
-                    in1: gen_imm_or_regidx(&mut rng),
-                    out: gen_regidx(&mut rng),
-                },
-                Instr::StoreW {
-                    in1: gen_regidx(&mut rng),
-                    out: gen_imm_or_regidx(&mut rng),
-                },
-            ];
-
-            // Test equality after an encode-decode round trip
-            for tc in test_cases {
-                let bytes = tc.to_bytes::<NUM_REGS>();
-                let new_tc = Instr::<W>::from_bytes::<NUM_REGS>(&bytes);
-                assert_eq!(*tc, new_tc);
-            }
+        // Test 200 random instructions
+        for _ in 0..200 {
+            let i = Instr::rand::<NUM_REGS>(&mut rng);
+            println!("testing instruction {:?}", i);
+            let bytes = i.to_bytes::<NUM_REGS>();
+            let new_i = Instr::<W>::from_bytes::<NUM_REGS>(&bytes);
+            assert_eq!(i, new_i);
         }
     }
 }

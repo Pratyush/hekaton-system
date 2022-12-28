@@ -1,6 +1,8 @@
 use crate::register::{ImmOrRegister, RegIdx};
 use crate::word::Word;
 
+use bitfield::{Bit, BitMut, BitRange, BitRangeMut};
+
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum Opcode {
     And = 0b00000,
@@ -289,4 +291,59 @@ pub enum Instr<W: Word> {
     Answer {
         in1: ImmOrRegister<W>,
     },
+}
+
+#[cfg(test)]
+impl<W: Word> Instr<W> {
+    /// Returns a random, valid instruction. Useful for testing
+    pub(crate) fn rand<const NUM_REGS: usize>(mut rng: impl rand::Rng) -> Self {
+        // Structure of an instruction is
+        // 000...0  is_imm  reg1  reg2  imm_or_reg  opcode
+        // <-- MSB                                 LSB -->
+        let regidx_bitlen = f32::from(NUM_REGS as u8).log2().ceil() as usize;
+
+        let mut instr = 0u128;
+
+        let opcode = loop {
+            let val = rng.gen_range(0..32);
+            // Opcodes 23, 24, 25 are invalid
+            if val <= 22 || val >= 26 {
+                break val;
+            }
+        };
+        let is_imm: bool = rng.gen();
+        let reg1 = rng.gen_range(0..NUM_REGS) as u8;
+        let reg2 = rng.gen_range(0..NUM_REGS) as u8;
+        let imm_or_reg = match is_imm {
+            true => rng.gen_range(0..=W::MAX.into()),
+            false => rng.gen_range(0..NUM_REGS) as u64,
+        };
+
+        // Start encoding at the LSB
+        let mut cur_bit_idx = 0;
+
+        // Encode the opcode
+        instr.set_bit_range(
+            cur_bit_idx + crate::encoding::OPCODE_BITLEN - 1,
+            cur_bit_idx,
+            opcode,
+        );
+        cur_bit_idx += crate::encoding::OPCODE_BITLEN;
+        // Encode the imm_or_reg
+        instr.set_bit_range(cur_bit_idx + W::BITLEN - 1, cur_bit_idx, imm_or_reg);
+        cur_bit_idx += W::BITLEN;
+        // Encode reg2
+        instr.set_bit_range(cur_bit_idx + regidx_bitlen - 1, cur_bit_idx, reg2);
+        cur_bit_idx += regidx_bitlen;
+        // Encode reg1
+        instr.set_bit_range(cur_bit_idx + regidx_bitlen - 1, cur_bit_idx, reg1);
+        cur_bit_idx += regidx_bitlen;
+        // Encode is_imm
+        instr.set_bit_range(cur_bit_idx + 1 - 1, cur_bit_idx, is_imm as u8);
+        //cur_bit_idx += 1;
+
+        // A u128 is larger than an instruction. Use the bottom bytes as the instruction encoding
+        let instr_bytes = instr.to_be_bytes();
+        Instr::from_bytes::<NUM_REGS>(&instr_bytes[16 - W::INSTR_BYTELEN..16])
+    }
 }
