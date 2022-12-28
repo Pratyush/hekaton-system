@@ -1,7 +1,8 @@
 use crate::register::{ImmOrRegister, RegIdx};
 use crate::word::Word;
 
-use bitfield::{Bit, BitMut, BitRange, BitRangeMut};
+use bitfield::BitRangeMut;
+use rand::Rng;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum Opcode {
@@ -293,10 +294,9 @@ pub enum Instr<W: Word> {
     },
 }
 
-#[cfg(test)]
 impl<W: Word> Instr<W> {
     /// Returns a random, valid instruction. Useful for testing
-    pub(crate) fn rand<const NUM_REGS: usize>(mut rng: impl rand::Rng) -> Self {
+    pub fn rand<const NUM_REGS: usize>(mut rng: impl Rng) -> Self {
         // Structure of an instruction is
         // 000...0  is_imm  reg1  reg2  imm_or_reg  opcode
         // <-- MSB                                 LSB -->

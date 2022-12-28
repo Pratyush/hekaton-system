@@ -324,11 +324,10 @@ mod tests {
 
         // Test 200 random instructions
         for _ in 0..200 {
-            let i = Instr::rand::<NUM_REGS>(&mut rng);
-            println!("testing instruction {:?}", i);
-            let bytes = i.to_bytes::<NUM_REGS>();
+            let instr = Instr::rand::<NUM_REGS>(&mut rng);
+            let bytes = instr.to_bytes::<NUM_REGS>();
             let new_i = Instr::<W>::from_bytes::<NUM_REGS>(&bytes);
-            assert_eq!(i, new_i);
+            assert_eq!(instr, new_i);
         }
     }
 }

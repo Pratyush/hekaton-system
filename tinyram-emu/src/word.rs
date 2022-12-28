@@ -4,6 +4,7 @@ use core::{
 };
 
 use ark_ff::Field;
+use rand::Rng;
 
 pub type DWord<W> = (W, W);
 
@@ -48,6 +49,9 @@ pub trait Word:
         // Convert W -> u64 -> F
         self.into().into()
     }
+
+    /// Returns a uniform word
+    fn rand(rng: impl Rng) -> Self;
 
     /// Returns `Some(self + 1)` if `self != Self::MAX`.
     /// Returns `None` otherwise.
@@ -108,6 +112,10 @@ macro_rules! impl_word {
 
             fn to_signed(self) -> Self::Signed {
                 self as Self::Signed
+            }
+
+            fn rand(mut rng: impl Rng) -> Self {
+                rng.gen()
             }
 
             fn checked_increment(self) -> Option<Self> {

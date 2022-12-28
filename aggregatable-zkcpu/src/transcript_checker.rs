@@ -5,15 +5,13 @@ use crate::{
     word::{DWord, DWordVar, WordVar},
 };
 
-use core::borrow::Borrow;
+use core::{borrow::Borrow, cmp::Ordering};
 
 use tinyram_emu::{
     interpreter::{MemOp, MemOpKind, TranscriptEntry},
     word::Word,
     TinyRamArch,
 };
-
-use core::cmp::Ordering;
 
 use ark_ff::{Field, FpParameters, PrimeField};
 use ark_r1cs_std::{
@@ -30,6 +28,7 @@ use ark_relations::{
     ns,
     r1cs::{ConstraintSystemRef, Namespace, SynthesisError},
 };
+use rand::Rng;
 
 /// A timestamp in the memory access transcript
 type Timestamp = u64;
@@ -198,6 +197,19 @@ impl<W: Word> ProcessedTranscriptEntry<W> {
         };
 
         [first, second]
+    }
+
+    /// Returns a random `ProcessedTranscriptEntry`. Useful for testing
+    pub(crate) fn rand(mut rng: impl Rng) -> Self {
+        let is_padding = rng.gen();
+        let timestamp = rng.gen();
+        let mem_op = MemOp::rand(&mut rng);
+
+        ProcessedTranscriptEntry {
+            is_padding,
+            timestamp,
+            mem_op,
+        }
     }
 }
 
@@ -616,8 +628,9 @@ mod test {
          _end: answer r1          ; Return acc
         ";
 
+    // Tests that the skip3 program above passes the transcript checker
     #[test]
-    fn test_skip3() {
+    fn skip3_transcript_checker() {
         let mut rng = rand::thread_rng();
         let cs = ConstraintSystem::new_ref();
 
@@ -666,19 +679,18 @@ mod test {
         // Let the evals be empty
         let evals = TranscriptCheckerEvals::default();
 
-        // Run the CPU
+        // Run the CPU. Every tick takes in 2 time-sorted transcript entries, with no overlaps.
+        // Also every tick takes in 3 mem-sorted transcript entries, with 1 overlap between ticks.
         let mut cpu_state = CpuState::default::<NUM_REGS>();
-        for (i, (time_sorted_transcript_pair, mem_sorted_transcript_triple)) in
+        for (time_sorted_transcript_pair, mem_sorted_transcript_triple) in
             time_sorted_transcript_vars
                 .chunks(2)
                 .zip(mem_sorted_transcript_vars.windows(3).step_by(2))
-                .enumerate()
         {
             // Unpack the time-sorted transcript values
             let instr_load_var = &time_sorted_transcript_pair[0];
             let mem_op_var = &time_sorted_transcript_pair[1];
 
-            println!("Iteration {i}");
             (cpu_state, _) = transcript_checker::<NUM_REGS, _, _>(
                 arch,
                 &cpu_state,
@@ -698,35 +710,20 @@ mod test {
         assert_eq!(output, cpu_state.answer.val.value().unwrap());
     }
 
+    // Tests that ProcessedTranscriptEntry::as_ff and ProcessedTranscriptEntryVar::as_ff agree
     #[test]
-    fn test_ff_encoding() {
+    fn ff_encoding_equality() {
+        let mut rng = rand::thread_rng();
         let cs = ConstraintSystem::new_ref();
 
-        let assembly = tinyram_emu::parser::assemble(SKIP3_CODE);
-        let arch = TinyRamArch::VonNeumann;
+        // Make 200 random transcript entries and check that the native and ZK verisons encode to
+        // the same value
+        for _ in 0..200 {
+            let entry = ProcessedTranscriptEntry::rand(&mut rng);
+            let entry_var =
+                ProcessedTranscriptEntryVar::<WV, _>::new_witness(ns!(cs, "e"), || Ok(&entry))
+                    .unwrap();
 
-        let (_, transcript) = tinyram_emu::interpreter::run_program::<W, NUM_REGS>(arch, &assembly);
-
-        let time_sorted_transcript = transcript
-            .iter()
-            .flat_map(ProcessedTranscriptEntry::new_pair)
-            .collect::<Vec<_>>();
-        // Now witness the time- and memory-sorted transcripts
-        let time_sorted_transcript_vars = time_sorted_transcript
-            .iter()
-            .map(|t| {
-                ProcessedTranscriptEntryVar::<WV, _>::new_witness(ns!(cs, "t"), || Ok(t)).unwrap()
-            })
-            .collect::<Vec<_>>();
-
-        for (i, (entry, entry_var)) in time_sorted_transcript
-            .into_iter()
-            .zip(time_sorted_transcript_vars.into_iter())
-            .enumerate()
-        {
-            println!("Iteration {i}");
-            println!("entry    == {:?}", entry);
-            println!("entryvar == {:?}", entry_var.value().unwrap());
             assert_eq!(
                 entry.as_ff::<F>(true),
                 entry_var.as_ff(true).unwrap().value().unwrap()

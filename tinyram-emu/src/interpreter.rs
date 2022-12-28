@@ -9,6 +9,7 @@ use crate::{
 use std::collections::BTreeMap;
 
 use ark_ff::Field;
+use rand::Rng;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum MemOp<W: Word> {
@@ -24,6 +25,19 @@ pub enum MemOp<W: Word> {
         /// The index the value is being loaded from
         location: W,
     },
+}
+
+impl<W: Word> MemOp<W> {
+    /// Returns a random `MemOp`. Useful for testing
+    pub fn rand(mut rng: impl Rng) -> Self {
+        let kind: bool = rng.gen();
+        let val = (W::rand(&mut rng), W::rand(&mut rng));
+        let location = W::rand(&mut rng);
+        match kind {
+            true => MemOp::Store { val, location },
+            false => MemOp::Load { val, location },
+        }
+    }
 }
 
 /// The kind of memory operation

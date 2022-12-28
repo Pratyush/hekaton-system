@@ -471,95 +471,43 @@ mod test {
     use ark_bls12_381::Fr;
     use ark_r1cs_std::{alloc::AllocVar, uint32::UInt32, R1CSVar};
     use ark_relations::{ns, r1cs::ConstraintSystem};
-    use rand::Rng;
 
     const NUM_REGS: usize = 16;
     type F = Fr;
     type WV = UInt32<F>;
     type W = <WV as WordVar<F>>::NativeWord;
 
-    fn gen_regidx<R: Rng>(mut rng: R) -> RegIdx {
-        RegIdx(rng.gen_range(0..NUM_REGS) as u8)
-    }
-
-    fn gen_imm_or_regidx<R: Rng>(mut rng: R) -> ImmOrRegister<W> {
-        let is_imm = rng.gen();
-        if is_imm {
-            ImmOrRegister::Imm(rng.gen_range(0..=W::MAX))
-        } else {
-            ImmOrRegister::Register(gen_regidx(&mut rng))
-        }
-    }
-
-    // Tests that ZK decoding is compatible with the native decoder
+    // Tests that instructions decode to the same thing under the native and ZK decoders
     #[test]
-    fn test_decode() {
+    fn decoding_equality() {
         let mut rng = rand::thread_rng();
+        let cs = ConstraintSystem::new_ref();
 
-        // Test 100 test cases of each kind of instruction
-        for _ in 0..100 {
-            // Make random test cases
-            let test_cases: &[Instr<W>] = &[
-                Instr::Answer {
-                    in1: gen_imm_or_regidx(&mut rng),
-                },
-                Instr::CmpE {
-                    in1: gen_regidx(&mut rng),
-                    in2: gen_imm_or_regidx(&mut rng),
-                },
-                Instr::Or {
-                    in1: gen_regidx(&mut rng),
-                    in2: gen_imm_or_regidx(&mut rng),
-                    out: gen_regidx(&mut rng),
-                },
-                Instr::Add {
-                    in1: gen_regidx(&mut rng),
-                    in2: gen_imm_or_regidx(&mut rng),
-                    out: gen_regidx(&mut rng),
-                },
-                Instr::Not {
-                    in1: gen_imm_or_regidx(&mut rng),
-                    out: gen_regidx(&mut rng),
-                },
-                Instr::CJmp {
-                    in1: gen_imm_or_regidx(&mut rng),
-                },
-                Instr::LoadW {
-                    in1: gen_imm_or_regidx(&mut rng),
-                    out: gen_regidx(&mut rng),
-                },
-                Instr::StoreW {
-                    in1: gen_regidx(&mut rng),
-                    out: gen_imm_or_regidx(&mut rng),
-                },
-            ];
+        // Test 200 randomly generated instructions
+        for _ in 0..200 {
+            let instr = Instr::rand::<NUM_REGS>(&mut rng);
 
-            // Test equality after an encode-decode round trip
-            for instr in test_cases {
-                let cs = ConstraintSystem::new_ref();
+            // Encode the instruction and witness it
+            let encoded_instr = instr.to_dword::<NUM_REGS>();
+            let encoded_instr_var =
+                DWordVar::<WV, _>::new_witness(ns!(cs, "dword"), || Ok(encoded_instr)).unwrap();
 
-                // Encode the instruction and witness it
-                let encoded_instr = instr.to_dword::<NUM_REGS>();
-                let encoded_instr_var =
-                    DWordVar::<WV, _>::new_witness(ns!(cs, "dword"), || Ok(encoded_instr)).unwrap();
+            // Decode in ZK
+            let (opcode_var, reg1_var, reg2_var, imm_or_reg_var) =
+                decode_instr::<NUM_REGS, _, _>(&encoded_instr_var).unwrap();
 
-                let (opcode_var, reg1_var, reg2_var, imm_or_reg_var) =
-                    decode_instr::<NUM_REGS, _, _>(&encoded_instr_var).unwrap();
+            // Now decode normally
+            let (opcode, reg1, reg2, imm_or_reg) =
+                Instr::<W>::decode::<NUM_REGS>(instr.to_u128::<NUM_REGS>());
 
-                // Now decode normally
-                let (opcode, reg1, reg2, imm_or_reg) =
-                    Instr::<W>::decode::<NUM_REGS>(instr.to_u128::<NUM_REGS>());
-
-                // Compare the decodings
-                assert_eq!(opcode_var.value().unwrap(), opcode as u8);
-                assert_eq!(reg1_var.0.value().unwrap(), reg1.0);
-                assert_eq!(reg2_var.0.value().unwrap(), reg2.0);
-                assert_eq!(imm_or_reg_var.val.value().unwrap(), imm_or_reg.raw());
-
-                // Make sure nothing errored
-                assert!(cs.is_satisfied().unwrap());
-            }
+            // Compare the decodings
+            assert_eq!(opcode_var.value().unwrap(), opcode as u8);
+            assert_eq!(reg1_var.0.value().unwrap(), reg1.0);
+            assert_eq!(reg2_var.0.value().unwrap(), reg2.0);
+            assert_eq!(imm_or_reg_var.val.value().unwrap(), imm_or_reg.raw());
         }
+        // Make sure nothing errored
+        assert!(cs.is_satisfied().unwrap());
     }
 
     // The skip3 program
@@ -580,8 +528,9 @@ mod test {
          _end: answer r1          ; Return acc
         ";
 
+    // Checks that the skip3 program above passes the exec checker
     #[test]
-    fn test_skip3() {
+    fn skip3_exec_checker() {
         let cs = ConstraintSystem::new_ref();
 
         let assembly = tinyram_emu::parser::assemble(SKIP3_CODE);

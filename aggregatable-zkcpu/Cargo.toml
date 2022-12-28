@@ -14,10 +14,10 @@ ark-poly = { version = "0.3.0" }
 ark-r1cs-std = { version = "0.3", default-features = false }
 ark-relations = { version = "0.3", default-features = false }
 ark-serialize = { version = "0.3", default-features = false }
+rand = "0.8.5"
 tinyram-emu = { path = "../tinyram-emu" }
 
 [dev-dependencies]
-rand = "0.8.5"
 ark-bls12-381 = "0.3.0"
 
 [features]
