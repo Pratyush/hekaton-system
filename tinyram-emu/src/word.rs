@@ -1,6 +1,6 @@
 use core::{
     fmt::{Debug, Display},
-    ops::{BitAnd, BitOr, BitXor, Div, Not, Rem},
+    ops::{BitAnd, BitOr, BitXor, Div, Not, Rem, Sub},
 };
 
 use ark_ff::Field;
@@ -15,6 +15,7 @@ pub trait Word:
     + Eq
     + Ord
     + Copy
+    + Sub<Output = Self>
     + Div<Output = Self>
     + Rem<Output = Self>
     + Not<Output = Self>
@@ -40,6 +41,9 @@ pub trait Word:
 
     /// Convert from big-endian bytes. Fails if `bytes.len() != Self::BYTELEN`
     fn from_be_bytes(bytes: &[u8]) -> Result<Self, ()>;
+
+    /// Convert from little-endian bytes. Fails if `bytes.len() != Self::BYTELEN`
+    fn from_le_bytes(bytes: &[u8]) -> Result<Self, ()>;
 
     /// Convert `self` to a `BIT_SIZE`-bit signed integer.
     fn to_signed(self) -> Self::Signed;
@@ -108,6 +112,15 @@ macro_rules! impl_word {
                 let mut buf = [0u8; Self::BYTELEN];
                 buf.copy_from_slice(bytes);
                 Ok(<$word>::from_be_bytes(buf))
+            }
+
+            fn from_le_bytes(bytes: &[u8]) -> Result<Self, ()> {
+                if bytes.len() != Self::BYTELEN {
+                    return Err(());
+                }
+                let mut buf = [0u8; Self::BYTELEN];
+                buf.copy_from_slice(bytes);
+                Ok(<$word>::from_le_bytes(buf))
             }
 
             fn to_signed(self) -> Self::Signed {

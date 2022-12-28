@@ -181,13 +181,51 @@ fn lower_ri_instr<W: Word>(ctx: &LoweringCtx, pair: Pair<Rule>) -> Instr<W> {
             in1: reg1,
             in2: imm_or_reg,
         },
+        Opcode::LoadW => Instr::LoadW {
+            out: reg1,
+            in1: imm_or_reg,
+        },
+        Opcode::LoadB => Instr::LoadB {
+            out: reg1,
+            in1: imm_or_reg,
+        },
         _ => panic!("Unexpected op {:?}", op),
     }
 }
 
 /// Lowers an immorreg-register instruction
 fn lower_ir_instr<W: Word>(ctx: &LoweringCtx, pair: Pair<Rule>) -> Instr<W> {
-    todo!()
+    assert_eq!(pair.as_rule(), Rule::ir_instr);
+    let mut it = pair.into_inner();
+
+    // First parse the ir_instr_begin
+    let opcode_str = it.next().unwrap().as_str().trim();
+    let op = Opcode::try_from(opcode_str.trim())
+        .map_err(|_| format!("unknown instruction {opcode_str}"))
+        .unwrap();
+
+    // Step into ir_instr_inputs
+    let mut it = it.next().unwrap().into_inner();
+
+    // Parse imm_or_reg. This is the `out` RAM idx
+    let imm_or_reg_pair = it.next().unwrap();
+    let imm_or_reg = lower_imm_or_reg(ctx, imm_or_reg_pair);
+
+    // Parse reg1. This is in1
+    let reg1_pair = it.next().unwrap();
+    let reg1 = lower_reg(reg1_pair);
+
+    match op {
+        Opcode::StoreW => Instr::StoreW {
+            in1: reg1,
+            out: imm_or_reg,
+        },
+        Opcode::StoreB => Instr::StoreB {
+            in1: reg1,
+            out: imm_or_reg,
+        },
+        _ => panic!("Unexpected op {:?}", op),
+    }
 }
 
 /// Lowers an immorreg instruction

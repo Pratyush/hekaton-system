@@ -302,6 +302,26 @@ impl<W: Word> Instr<W> {
                 }
                 None
             }
+            Instr::LoadW { out, in1 } => {
+                let in1 = in1.value(&cpu_state.registers);
+                // Round the byte address down to the nearest word boundary
+                let ram_addr: u64 = in1.into() - (in1.into() % W::BYTELEN as u64);
+                // Fetch a dword's worth of bytes from memory, using 0 where undefined
+                let bytes: Vec<u8> = (ram_addr..ram_addr + 2 * W::BYTELEN as u64)
+                    .map(|i| *data_memory.0.get(&W::from_u64(i).unwrap()).unwrap_or(&0))
+                    .collect();
+                // Convert the little-endian encoded bytes into the words
+                let w0 = W::from_le_bytes(&bytes[..W::BYTELEN]).unwrap();
+                let w1 = W::from_le_bytes(&bytes[W::BYTELEN..]).unwrap();
+                // Construct the memory operation
+                let mem_op = MemOp::Load {
+                    val: (w0, w1),
+                    location: in1,
+                };
+                // Set set the register to the first part of the dword
+                cpu_state.registers[out.0 as usize] = w0;
+                Some(mem_op)
+            }
             Instr::Answer { in1 } => {
                 let in1 = in1.value(&cpu_state.registers);
                 cpu_state.answer = Some(in1);
@@ -494,14 +514,15 @@ mod test {
                 mul3_ctr = 0;
             }
         }
-        println!("{acc}");
 
         // Here's the assembly code of the above program
         //     reg0 -> i
         //     reg1 -> acc
         //     reg2 -> mul3_ctr
+        // We also store and load reg1 from memory every loop
         let skip3_code = "\
-        _loop: add  r0, r0, 1     ; incr i
+        _loop: load.w r1, 60      ; acc <- RAM[60]
+               add  r0, r0, 1     ; incr i
                add  r2, r2, 1     ; incr mul3_ctr
                cmpe r0, 100       ; if i == 100:
                cjmp _end          ;     jump to end
@@ -511,6 +532,7 @@ mod test {
 
          _acc: add r1, r1, r0     ; Accumulate i into acc
                xor r2, r2, r2     ; Clear mul3_ctr
+               store.w 60, r1     ; acc -> RAM[60]
                jmp _loop          ; Jump back to the loop
 
          _end: answer r1          ; Return acc
