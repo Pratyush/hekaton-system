@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 
 use ark_ff::Field;
 
-#[derive(Clone)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum MemOp<W: Word> {
     Store {
         /// The dword being stored

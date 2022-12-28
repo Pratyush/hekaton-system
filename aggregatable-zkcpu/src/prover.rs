@@ -26,9 +26,6 @@ fn transcript_as_polyn<W: Word, F: FftField + PrimeField>(
 
     // Convert the transcript into its field element representation, and compute the polynomial
     // whose roots are exactly that
-    let encoded_transcript: Vec<F> = transcript
-        .iter()
-        .map(ProcessedTranscriptEntry::as_ff::<F>)
-        .collect();
+    let encoded_transcript: Vec<F> = transcript.iter().map(|e| e.as_ff::<F>(false)).collect();
     helper(&encoded_transcript)
 }

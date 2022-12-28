@@ -24,6 +24,7 @@ use ark_r1cs_std::{
     select::CondSelectGadget,
     uint32::UInt32,
     uint8::UInt8,
+    R1CSVar,
 };
 use ark_relations::{
     ns,
@@ -92,61 +93,74 @@ fn transcript_starting_entry<W: Word>(
 }
 
 impl<W: Word> ProcessedTranscriptEntry<W> {
-    fn pow_two<G: Field>(n: usize) -> G {
-        G::from(2u8).pow([n as u64])
+    /// Encodes this transcript entry in the low bits of a field element for the purpose of
+    /// representation as a coefficient in a polynomial. Does not include timestamp, i.e., sets
+    /// `timestamp` to 0. `is_init` says whether this entry is part of the initial memory or not.
+    pub(crate) fn as_ff_notime<F: PrimeField>(&self, is_init: bool) -> F {
+        fn pow_two<G: PrimeField>(n: usize) -> G {
+            G::from(2u8).pow([n as u64])
+        }
+
+        // The field element is of the form
+        // 00...0 || memop_val || memop_ram_idx || memop_kind || is_init || is_padding || timestamp
+        // The shape doesn't really matter as long as it's consistent.
+
+        let mut shift = 0;
+        let mut acc = F::zero();
+
+        // Encode `timestamp` as 64 bits. It's all 0s here
+        acc += F::zero() * pow_two::<F>(shift);
+        shift += 64;
+
+        // Encode `is_padding` as a bit
+        acc += F::from(self.is_padding as u64) * pow_two::<F>(shift);
+        shift += 1;
+
+        // Encode `is_init` as a bit
+        acc += F::from(is_init) * pow_two::<F>(shift);
+        shift += 1;
+
+        // Encode the memory op kind `op` as 2 bits
+        acc += F::from(self.mem_op.kind() as u8) * pow_two::<F>(shift);
+        shift += 2;
+
+        // Encode `ram_idx`
+        acc += F::from(self.mem_op.location().into()) * pow_two::<F>(shift);
+        shift += W::BITLEN;
+
+        // val is a dword, so pack each of its words separately
+        let val = self.mem_op.val();
+        acc += F::from(val.1.into()) * pow_two::<F>(shift);
+        shift += W::BITLEN;
+        acc += F::from(val.0.into()) * pow_two::<F>(shift);
+        shift += W::BITLEN;
+
+        // Make sure we didn't over-pack the field element
+        assert!(shift < F::size_in_bits());
+
+        acc
     }
 
     /// Encodes this transcript entry in the low bits of a field element for the purpose of
-    /// representation as a coefficient in a polynomial. Returns the field element and the
-    /// number of bits packed.
-    fn as_ff_helper<F: Field>(&self) -> (F, usize) {
-        // We pack the variables into the field element as 0...0 is_padding || mem_op || timestamp
-        // The shape doesn't really matter as long as it's consistent;
+    /// representation as a coefficient in a polynomial. `is_init` says whether this entry is part
+    /// of the initial memory or not.
+    pub(crate) fn as_ff<F: PrimeField>(&self, is_init: bool) -> F {
+        // The field element is of the form
+        // 00...0 || memop_val || memop_ram_idx || memop_kind || is_init || is_padding || timestamp
 
-        // Keep track of the running bitlength
-        let mut bitlen = 0;
-        let mut out = F::zero();
+        // Get the as_ff with timestamp 0
+        let mut acc = self.as_ff_notime(is_init);
 
-        // Pack the padding bit
-        out += Self::pow_two::<F>(bitlen) * F::from(self.is_padding as u64);
-        bitlen += 1;
+        // Add `timestamp` to the low bits
+        acc += F::from(self.timestamp);
 
-        // Pack the mem op
-        let (mem_op_ff, mem_op_bitlen) = self.mem_op.as_ff::<F>();
-        out += Self::pow_two::<F>(bitlen) * mem_op_ff;
-        bitlen += mem_op_bitlen;
-
-        (out, bitlen)
-    }
-
-    /// Encodes this transcript entry as a field element for the purpose of representation as a
-    /// coefficient in a polynomial. This includes the timstamp
-    pub(crate) fn as_ff<F: PrimeField>(&self) -> F {
-        // Get the field element without the timestamp
-        let (mut out, mut bitlen) = self.as_ff_helper();
-
-        // Pack the 64-bit timestamp
-        out += Self::pow_two::<F>(bitlen) * F::from(self.timestamp);
-        bitlen += 64;
-
-        // Make sure we didn't over-pack the field element
-        assert!(bitlen < F::Params::MODULUS_BITS as usize);
-
-        out
-    }
-
-    /// Encodes this transcript entry as a field element for the purpose of representation as a
-    /// coefficient in a polynomial. The `_notime` variant does not include the timestamp in the
-    /// representation (i.e., it sets `t=0`).
-    pub(crate) fn to_ff_notime<F: Field>(&self) -> F {
-        // We just call the helper function, which doesn't include the timestamp
-        self.as_ff_helper().0
+        acc
     }
 }
 
 /// This is a transcript entry with just 1 associated memory operation, and a padding flag. This is
 /// easier to directly use than a [`TranscriptEntry`]
-#[derive(Clone)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct ProcessedTranscriptEntry<W: Word> {
     /// Tells whether or not this entry is padding
     is_padding: bool,
@@ -157,7 +171,8 @@ pub(crate) struct ProcessedTranscriptEntry<W: Word> {
 }
 
 impl<W: Word> ProcessedTranscriptEntry<W> {
-    /// Converts the given transcript entry (consisting of instruction load + optional mem op) into two processed entries. If there is no mem op, then a padding entry is created.
+    /// Converts the given transcript entry (consisting of instruction load + optional mem op) into
+    /// two processed entries. If there is no mem op, then a padding entry is created.
     fn new_pair(t: &TranscriptEntry<W>) -> [ProcessedTranscriptEntry<W>; 2] {
         // Get the instruction load. We stretch the timestamps to make every timestamp unique
         let first = ProcessedTranscriptEntry {
@@ -245,6 +260,7 @@ pub(crate) struct ProcessedTranscriptEntryVar<W: WordVar<F>, F: PrimeField> {
     /// Tells whether or not this entry is padding
     pub(crate) is_padding: Boolean<F>,
     /// The timestamp of this entry. This is at most 64 bits
+    // TODO: Make sure this is 64 bits on construction
     timestamp: TimestampVar<F>,
     /// The type of memory op this is. This is determined by the discriminant of [`MemOpKind`]
     op: MemOpKindVar<F>,
@@ -256,6 +272,61 @@ pub(crate) struct ProcessedTranscriptEntryVar<W: WordVar<F>, F: PrimeField> {
     val: DWordVar<W, F>,
     /// `val` as a field element
     val_fp: FpVar<F>,
+}
+
+impl<W: WordVar<F>, F: PrimeField> R1CSVar<F> for ProcessedTranscriptEntryVar<W, F> {
+    type Value = ProcessedTranscriptEntry<W::NativeWord>;
+
+    fn cs(&self) -> ConstraintSystemRef<F> {
+        self.timestamp
+            .cs()
+            .or(self.op.cs())
+            .or(self.ram_idx.cs())
+            .or(self.val.w0.cs())
+            .or(self.val.w1.cs())
+    }
+
+    fn value(&self) -> Result<Self::Value, SynthesisError> {
+        let is_padding = self.is_padding.value()?;
+        let timestamp = {
+            // Make sure the timestamp is at most a single u64
+            let repr = self.timestamp.value()?.into_repr();
+            let limbs: &[u64] = repr.as_ref();
+            // The number of limbs can exceed 1, but everything after the first must be 0
+            assert!(limbs.iter().skip(1).all(|&x| x == 0));
+            limbs[0]
+        };
+        // Get the discriminant of the memory op
+        let op_disc = {
+            let repr = self.op.value()?.into_repr();
+
+            // Make sure the op kind is at most one u64
+            let limbs: &[u64] = repr.as_ref();
+            // The number of limbs can exceed 1, but everything after the first must be 0
+            assert!(limbs.iter().skip(1).all(|&x| x == 0));
+
+            // Make sure the op kind is just 2 bits
+            let disc = limbs[0];
+            assert!(disc < 4);
+            limbs[0] as u8
+        };
+        let val = self.val.value()?;
+        let location = self.ram_idx.value()?;
+
+        let mem_op = if op_disc == MemOpKind::Load as u8 {
+            MemOp::Load { val, location }
+        } else if op_disc == MemOpKind::Store as u8 {
+            MemOp::Store { val, location }
+        } else {
+            panic!("unexpected memop kind {op_disc}");
+        };
+
+        Ok(ProcessedTranscriptEntry {
+            is_padding,
+            timestamp,
+            mem_op,
+        })
+    }
 }
 
 impl<W: WordVar<F>, F: PrimeField> Default for ProcessedTranscriptEntryVar<W, F> {
@@ -287,40 +358,55 @@ impl<W: WordVar<F>, F: PrimeField> ProcessedTranscriptEntryVar<W, F> {
 }
 
 impl<W: WordVar<F>, F: PrimeField> ProcessedTranscriptEntryVar<W, F> {
-    /// Encodes this transcript entry as a field element. `is_init` says whether this entry is part
+    fn pow_two<G: PrimeField>(n: usize) -> FpVar<G> {
+        FpVar::Constant(G::from(2u8).pow([n as u64]))
+    }
+
+    /// Encodes this transcript entry as a field element, not including `timestamp` (i.e., setting
+    /// `timestamp` to 0). `is_init` says whether this entry is part of the initial memory or not.
+    fn as_ff_notime(&self, is_init: bool) -> Result<FpVar<F>, SynthesisError> {
+        // The field element is of the form
+        // 00...0 || memop_val || memop_ram_idx || memop_kind || is_init || is_padding || timestamp
+        // We set timestamp to 0
+        let mut acc = FpVar::<F>::zero();
+        let mut shift = 0;
+
+        // Encode `timestamp` as 64 bits. It's all 0s here
+        acc += FpVar::zero() * Self::pow_two(shift);
+        shift += 64;
+
+        // Encode `is_padding` as a bit
+        acc += FpVar::from(self.is_padding.clone()) * Self::pow_two(shift);
+        shift += 1;
+
+        // Encode `is_init` as a bit
+        acc += FpVar::Constant(F::from(is_init)) * Self::pow_two(shift);
+        shift += 1;
+
+        // Encode the memory op kind `op` as 2 bits
+        acc += FpVar::from(self.op.clone()) * Self::pow_two(shift);
+        shift += 2;
+
+        // Encode `ram_idx` as aword
+        acc += &self.ram_idx_fp * Self::pow_two(shift);
+        shift += W::NativeWord::BITLEN;
+
+        // Encode `val` as a dword
+        acc += &self.val_fp * Self::pow_two(shift);
+        //shift += 2 * W::NativeWord::BITLEN;
+
+        Ok(acc)
+    }
+
+    /// Encodes this transcript entry as a field element.`is_init` says whether this entry is part
     /// of the initial memory or not.
     fn as_ff(&self, is_init: bool) -> Result<FpVar<F>, SynthesisError> {
         // The field element is of the form
-        //     00...0 || val || ram_idx || op || timestamp || is_padding || is_init
-        let mut acc = FpVar::<F>::zero();
+        // 00...0 || memop_val || memop_ram_idx || memop_kind || is_init || is_padding || timestamp
+        let mut acc = self.as_ff_notime(is_init)?;
 
-        // First field `is_init` is in the first bit. Shift by 1.
-        acc += &FpVar::Constant(F::from(is_init));
-        let mut shift = 1;
-
-        // Encode `is_padding`. Shift by 1.
-        let shift_var = FpVar::<F>::Constant(F::from(1u64 << shift));
-        acc += FpVar::from(self.is_padding.clone()) * shift_var;
-        shift += 1;
-
-        // Encode `timestamp` as 64 bits
-        let shift_var = FpVar::<F>::Constant(F::from(1u64 << shift));
-        acc += &self.timestamp * shift_var;
-        shift += 64;
-
-        // Encode `op`. Shift by 1.
-        let shift_var = FpVar::<F>::Constant(F::from(1u64 << shift));
-        acc += FpVar::from(self.op.clone()) * shift_var;
-        shift += 1;
-
-        // Encode `ram_idx` as 64 bits
-        let shift_var = FpVar::<F>::Constant(F::from(1u64 << shift));
-        acc += &self.ram_idx.as_fpvar()? * shift_var;
-        shift += 64;
-
-        // Encode `val` as 64 bits
-        let shift_var = FpVar::<F>::Constant(F::from(1u64 << shift));
-        acc += &self.val_fp * shift_var;
+        // Add timestamp in the low 64 bits
+        acc += &self.timestamp;
 
         Ok(acc)
     }
@@ -610,5 +696,41 @@ mod test {
         // Check the output is set and correct
         assert!(cpu_state.answer.is_set.value().unwrap());
         assert_eq!(output, cpu_state.answer.val.value().unwrap());
+    }
+
+    #[test]
+    fn test_ff_encoding() {
+        let cs = ConstraintSystem::new_ref();
+
+        let assembly = tinyram_emu::parser::assemble(SKIP3_CODE);
+        let arch = TinyRamArch::VonNeumann;
+
+        let (_, transcript) = tinyram_emu::interpreter::run_program::<W, NUM_REGS>(arch, &assembly);
+
+        let time_sorted_transcript = transcript
+            .iter()
+            .flat_map(ProcessedTranscriptEntry::new_pair)
+            .collect::<Vec<_>>();
+        // Now witness the time- and memory-sorted transcripts
+        let time_sorted_transcript_vars = time_sorted_transcript
+            .iter()
+            .map(|t| {
+                ProcessedTranscriptEntryVar::<WV, _>::new_witness(ns!(cs, "t"), || Ok(t)).unwrap()
+            })
+            .collect::<Vec<_>>();
+
+        for (i, (entry, entry_var)) in time_sorted_transcript
+            .into_iter()
+            .zip(time_sorted_transcript_vars.into_iter())
+            .enumerate()
+        {
+            println!("Iteration {i}");
+            println!("entry    == {:?}", entry);
+            println!("entryvar == {:?}", entry_var.value().unwrap());
+            assert_eq!(
+                entry.as_ff::<F>(true),
+                entry_var.as_ff(true).unwrap().value().unwrap()
+            );
+        }
     }
 }

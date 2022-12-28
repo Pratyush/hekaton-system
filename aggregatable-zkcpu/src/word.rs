@@ -14,7 +14,7 @@ use ark_r1cs_std::{
 };
 use ark_relations::{
     ns,
-    r1cs::{Namespace, SynthesisError},
+    r1cs::{ConstraintSystemRef, Namespace, SynthesisError},
 };
 
 pub(crate) type DWord<W> = (W, W);
@@ -54,6 +54,18 @@ impl<W: WordVar<F>, F: PrimeField> AllocVar<DWord<W::NativeWord>, F> for DWordVa
     }
 }
 
+impl<W: WordVar<F>, F: PrimeField> R1CSVar<F> for DWordVar<W, F> {
+    type Value = DWord<W::NativeWord>;
+
+    fn cs(&self) -> ConstraintSystemRef<F> {
+        self.w0.cs().or(self.w1.cs())
+    }
+
+    fn value(&self) -> Result<Self::Value, SynthesisError> {
+        Ok((self.w0.value()?, self.w1.value()?))
+    }
+}
+
 impl<W: WordVar<F>, F: PrimeField> DWordVar<W, F> {
     pub(crate) fn zero() -> Self {
         Self {
@@ -77,7 +89,11 @@ impl<W: WordVar<F>, F: PrimeField> DWordVar<W, F> {
 }
 
 pub trait WordVar<F: PrimeField>:
-    Debug + EqGadget<F> + AllocVar<Self::NativeWord, F> + CondSelectGadget<F>
+    Debug
+    + EqGadget<F>
+    + AllocVar<Self::NativeWord, F>
+    + CondSelectGadget<F>
+    + R1CSVar<F, Value = Self::NativeWord>
 {
     type NativeWord: tinyram_emu::word::Word;
 
