@@ -306,38 +306,49 @@ impl<W: Word> Instr<W> {
                 let in1 = in1.value(&cpu_state.registers);
                 let out = out.value(&cpu_state.registers);
 
-                // Round the byte address down to the nearest word boundary
-                let ram_addr: u64 = out.into() - (out.into() % W::BYTELEN as u64);
+                // Round the byte address down to the nearest word and dword boundary
+                let word_addr: u64 = out.into() - (out.into() % (W::BYTELEN as u64));
+                let dword_addr = word_addr - (word_addr % (2 * W::BYTELEN as u64));
+                // Determine if this word is the low or high word in the dword
+                let is_high = word_addr != dword_addr;
+
                 // Fetch a dword's worth of bytes from memory, using 0 where undefined
-                let mut bytes: Vec<u8> = (ram_addr..ram_addr + 2 * W::BYTELEN as u64)
+                let mut bytes: Vec<u8> = (dword_addr..dword_addr + 2 * W::BYTELEN as u64)
                     .map(|i| *data_memory.0.get(&W::from_u64(i).unwrap()).unwrap_or(&0))
                     .collect();
-                // Overwrite the first word with whatever is being stored
-                bytes[..W::BYTELEN].copy_from_slice(&in1.to_le_bytes());
+                // Overwrite whatever is being stored. Overwrite the first word if `is_high = false`.
+                // Otherwise overwrite the second.
+                let start = is_high as usize * W::BYTELEN;
+                bytes[start..start + W::BYTELEN].copy_from_slice(&in1.to_le_bytes());
 
                 // Now convert the little-endian encoded bytes into words
                 let w0 = W::from_le_bytes(&bytes[..W::BYTELEN]).unwrap();
                 let w1 = W::from_le_bytes(&bytes[W::BYTELEN..]).unwrap();
 
-                // Update the first word in the data memory
-                for (i, b) in (ram_addr..ram_addr + W::BYTELEN as u64).zip(bytes.iter()) {
+                // Update the memory
+                for (i, b) in (dword_addr..dword_addr + 2 * W::BYTELEN as u64).zip(bytes.iter()) {
                     data_memory.0.insert(W::from_u64(i).unwrap(), *b);
                 }
 
                 // Construct the memory operation
                 let mem_op = MemOp::Store {
                     val: (w0, w1),
-                    location: in1,
+                    location: out,
                 };
 
                 Some(mem_op)
             }
             Instr::LoadW { out, in1 } => {
                 let in1 = in1.value(&cpu_state.registers);
-                // Round the byte address down to the nearest word boundary
-                let ram_addr: u64 = in1.into() - (in1.into() % W::BYTELEN as u64);
+
+                // Round the byte address down to the nearest word and dword boundary
+                let word_addr: u64 = in1.into() - (in1.into() % (W::BYTELEN as u64));
+                let dword_addr = word_addr - (word_addr % (2 * W::BYTELEN as u64));
+                // Determine if this word is the low or high word in the dword
+                let is_high = word_addr != dword_addr;
+
                 // Fetch a dword's worth of bytes from memory, using 0 where undefined
-                let bytes: Vec<u8> = (ram_addr..ram_addr + 2 * W::BYTELEN as u64)
+                let bytes: Vec<u8> = (dword_addr..dword_addr + 2 * W::BYTELEN as u64)
                     .map(|i| *data_memory.0.get(&W::from_u64(i).unwrap()).unwrap_or(&0))
                     .collect();
                 // Convert the little-endian encoded bytes into words
@@ -348,8 +359,9 @@ impl<W: Word> Instr<W> {
                     val: (w0, w1),
                     location: in1,
                 };
-                // Set set the register to the first part of the dword
-                cpu_state.registers[out.0 as usize] = w0;
+                // Set set the register to the first part of the dword if `is_high == false`.
+                // Otherwise use the second word.
+                cpu_state.registers[out.0 as usize] = if is_high { w1 } else { w0 };
                 Some(mem_op)
             }
             Instr::Answer { in1 } => {
@@ -458,32 +470,32 @@ pub fn run_program<W: Word, const NUM_REGS: usize>(
                 let instr = *program_memory
                     .0
                     .get(pc_usize)
-                    .expect("illegal memory access");
+                    .unwrap_or_else(|| panic!("illegal jump to 0x{:08x}", pc_usize));
 
                 (pc, instr)
             }
             TinyRamArch::VonNeumann => {
-                let bytes_per_word = W::BITLEN as u64 / 8;
-                let bytes_per_instr = 2 * bytes_per_word;
-
                 // Collect 2 words of bytes starting at pc. 16 is the upper bound on the number of
                 // bytes
-                let pc = cpu_state.program_counter;
-                let encoded_instr: Vec<u8> = (0..bytes_per_instr)
+                let pc = cpu_state.program_counter.into();
+                let encoded_instr: Vec<u8> = (pc..pc + W::INSTR_BYTELEN as u64)
                     .map(|i| {
-                        let (next_idx, overflow) = pc.carrying_add(W::from_u64(i).unwrap());
-                        if overflow {
-                            panic!("program counter overflow");
-                        }
-
-                        // Now get the byte
-                        *data_memory.0.get(&next_idx).expect("illegal memory access")
+                        // TODO: Check that `i` didn't overflow W::MAX
+                        *data_memory
+                            .0
+                            .get(&W::from_u64(i).unwrap())
+                            .unwrap_or_else(|| panic!("illegal jump to 0x{:08x}", pc))
                     })
                     .collect();
 
                 let instr = Instr::<W>::from_bytes::<NUM_REGS>(&encoded_instr);
+                let (new_pc, overflow) = W::carrying_add(
+                    cpu_state.program_counter,
+                    W::from_u64(W::INSTR_BYTELEN as u64).unwrap(),
+                );
+                assert!(!overflow, "pc has reached end of memory");
 
-                (pc, instr)
+                (new_pc, instr)
             }
         };
 
@@ -549,20 +561,24 @@ mod test {
         //     reg0 -> i
         //     reg1 -> acc
         //     reg2 -> mul3_ctr
-        // We also store and load reg1 from memory every loop
+        // We also store and load registers from memory every loop
         let skip3_code = "\
-        _loop: load.w r1, 120     ; acc <- RAM[120]
+        _loop: load.w r1, 600     ; acc <- RAM[600]
+               load.w r0, 604     ; i <- RAM[604]
                add  r0, r0, 1     ; incr i
                add  r2, r2, 1     ; incr mul3_ctr
                cmpe r0, 100       ; if i == 100:
                cjmp _end          ;     jump to end
                cmpe r2, 3         ; else if mul3_ctr == 3:
                cjmp _acc          ;     jump to acc
-               jmp  _loop         ; else jump to beginning
+                                  ; else
+               store.w 604, r0    ;     i -> RAM[604]
+               jmp  _loop         ;     jump to beginning
 
          _acc: add r1, r1, r0     ; Accumulate i into acc
                xor r2, r2, r2     ; Clear mul3_ctr
-               store.w 120, r1    ; acc -> RAM[120]
+               store.w 600, r1    ; acc -> RAM[600]
+               store.w 604, r0    ; i -> RAM[604]
                jmp _loop          ; Jump back to the loop
 
          _end: answer r1          ; Return acc
@@ -580,12 +596,6 @@ mod test {
             let program = [header, skip3_code].concat();
             let assembly = assemble(&program);
             let (output, trace) = run_program::<W, NUM_REGS>(arch, &assembly);
-
-            // Show the nontrivial memory operations
-            trace
-                .into_iter()
-                .filter_map(|e| e.mem_op)
-                .for_each(|m| println!("Got a memop {:?}", m));
 
             // Check that the program outputted the correct value
             assert_eq!(output, 1683);

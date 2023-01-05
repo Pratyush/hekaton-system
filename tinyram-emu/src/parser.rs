@@ -302,7 +302,7 @@ fn lower_line<W: Word>(ctx: &LoweringCtx, pair: Pair<Rule>) -> Option<Instr<W>> 
 fn build_label_table<'a>(header: &TinyRamHeader, lines: Pairs<'a, Rule>) -> BTreeMap<&'a str, u64> {
     let mut instr_number = 0;
     let mut table = BTreeMap::new();
-    let mut saw_first_line = false;
+    let mut saw_first_instr = false;
 
     let instr_number_step = match header.arch {
         TinyRamArch::Harvard => 1,
@@ -316,11 +316,12 @@ fn build_label_table<'a>(header: &TinyRamHeader, lines: Pairs<'a, Rule>) -> BTre
                 let label = t.into_inner().next().unwrap().as_str();
                 table.insert(label, instr_number);
             }
-            Rule::line => {
-                if saw_first_line {
+            Rule::full_instr => {
+                // Make sure we start counting instructions at 0
+                if saw_first_instr {
                     instr_number += instr_number_step;
                 } else {
-                    saw_first_line = true;
+                    saw_first_instr = true;
                 }
             }
             _ => (),
