@@ -3,55 +3,57 @@
 We need to keep track of several memory transcripts in our execution. We define them here for clarity.
 This notation is used in the pseudocode and the diagram.
 
-* `tr_rinit`: The time-unordered transcript containing the initial RAM state of our program.
-  `tr_rinit` can be partitioned into:
-    * `tr_rinit_accessed`: The time-unordered transcript containing the values that are loaded from
-      RAM at some point in the execution of the program.
-    * `tr_rinit_nonaccessed`: The time-unordered transcript containing the values that are never
-      loaded from RAM in the execution of the program.
+* `tr_exec`: The ordered transcript of our program execution
+* `tr_dinit`: The time-unordered transcript containing the initial data memory state of our program.
+  `tr_dinit` can be partitioned into:
+    * `tr_dinit_accessed`: The time-unordered transcript containing the values that are loaded from
+      data memory at some point in the execution of the program.
+    * `tr_dinit_nonaccessed`: The time-unordered transcript containing the values that are never
+      loaded from data memory in the execution of the program.
+* `tr_pinit`: _Only relevant for Harvard arch._ The time-unordered transcript containing the program
+  memory.
+    * `tr_pinit_accessed`: The time-unordered transcript containing the values that are read from
+      the program memory some point in the execution of the program.
+    * `tr_pinit_nonaccessed` - The time-unordered transcript contianing the values that are never
+      read from the program memory in the execution of the program.
 * `tr_tinit`: The ordered transcript of containing the contents of the primary (i.e., public) tape.
   This can be partitioned into:
     * `tr_tinit_accessed`: The ordered transcript containing the values that are read from the
       tape at some point in the execution of the program.
     * `tr_tinit_nonaccessed` - The ordered transcript contianing the values that are never read from
       the tape in the execution of the program.
-* `tr_exec`: The ordered transcript of our program execution
 
 # Pseudocode for the low-level circuits
 
 ```rust
-// An index into RAM or ROM. This ALWAYS refers to a byte.
+// An index to a byte in data memory
 type RamIdx = Word;
-// An index into an input tape. This ALWAYS refers to a word.
+// An index to a word on an input tape
 type TapeIdx = Word;
-// Program counter
-type Pc = RamIdx;
+// Program counter. In von Neumann arch, this is an index to a byte in data memory. In Harvard arch,
+// it's an index to a word in program memory.
+type Pc = Word;
 type Instruction = DWord;
 
-/// An entry in the transcript of RAM accesses. We load/store data at dword granularity
+/// An entry in the transcript of RAM accesses. We load/store data at dword granularity. The
+/// values `t` and `idx` both MUST start at 1, rather than 0. The 0 values are reserved for
+/// placeholders.
 struct TranscriptEntry {
     // A flag denoting whether this is a padding entry
     is_padding: Boolean,
     // The timestamp of this entry
     t: Word,
     // The CPU interacts with memory when it does a loadw, loadb, storew, storeb or when it does a
-    // read from the public or private input tapes
-    op: { Load, Store, ReadPrimary, ReadAux },
-    // The index being loaded from, stored to, or read from the public tape. When used as a RAM
-    // index, this is dword-aligned, meaning the low bits specifying individual words MUST be 0.
+    // read from the public or private input tapes. LoadPrg is used exclusively in Harvard
+    // architecture, and represents a load from program memory.
+    op: { Load, Store, ReadPrimary, ReadAux, LoadPrg },
+    // The index being loaded from, stored to, or read from the public tape. When used as a data
+    // (rather than program) index, this is dword-aligned, meaning the low bits specifying
+    // individual words MUST be 0. When used as a program index, no alignment is enforced.
     idx: Word,
     // The dword being loaded or stored
     dword: DWord,
 }
-
-/// This is the placeholder transcript entry that MUST begin the memory-ordered transcript.
-/// Indexing for the real elements of the memory transcript start at t=1 and ramdix=1
-const TRANSCRIPT_START = TranscriptEntry::Entry {
-    t: 0,
-    op: load,
-    idx: 0,
-    val: 0,
-};
 
 impl TranscriptEntry {
     // Encodes this transcript entry as a field element for the purpose of hashing or
@@ -138,9 +140,9 @@ struct CpuState {
     // The normal registers. This is a vec of words
     regs: Registers,
     // The number of words read from the primary tape
-    primary_tape_idx: RamIdx,
+    primary_tape_idx: TapeIdx,
     // The number of words read from the auxiliary tape
-    aux_tape_idx: RamIdx,
+    aux_tape_idx: TapeIdx,
 }
 
 struct DecodedInstruction {
@@ -349,7 +351,7 @@ fn exec_checker(
 }
 
 
-struct transcript_checkerRunningEvals {
+struct RunningEvals {
     // The time-sorted transcript of our execution
     time_tr_exec: RunningEval,
 
@@ -357,10 +359,11 @@ struct transcript_checkerRunningEvals {
     mem_tr_exec: RunningEval,
 
     // The unsorted transcript of the initial memory that's read in our execution
-    tr_rinit_accessed: RunningEval,
+    tr_dinit_accessed: RunningEval,
 
-    // The time- (and therefore mem-) sorted transcript of the public input tape
-    tr_tape: RunningEval,
+    // The time- (and therefore mem-) sorted transcript of the items in the public input tape that
+    // are read in our execution
+    tr_tape_accessed: RunningEval,
 }
 
 // TODO: Update transcript_checker to handle Harvard architecture. With Harvard, mem_tr_adj_seq
@@ -383,21 +386,29 @@ fn transcript_checker(
     state: CpuState,
     pc_load: TranscriptEntry,
     mem_op: TranscriptEntry,
-    evals: transcript_checkerRunningEvals,
+    evals: RunningEvals,
     mem_tr_adj_seq: [TranscriptEntry; 3],
-) -> (Word, CpuState, transcript_checkerRunningEvals) {
+) -> (Word, CpuState, RunningEvals) {
     // Get the challenge point. We'll need this for polynomial evals
     let chal = metadata.chal;
 
     // Check sequentiality of pc_load and mem_op
-    assert pc_load.t           == t;
-    assert_if_exists mem_op.t  == t + 1;
-    assert pc_load.op          == load;
+    assert pc_load.t == t;
+    assert_if_exists mem_op.t == t + 1;
+    assert pc_load.op == match metadata.arch {
+        VonNeumann => Load,
+        Harvard => LoadPrg,
+    };
+
+    // Make sure mem_op represents an operation on data memory, not program memory
+    if metadata.arch == Harvard {
+        assert mem_op.op != LoadPrg;
+    }
 
     // Ensure that padding entries are loads. Allowing stores is a soundness issue: padding entries
-    // aren't subject to the exec_checkerMemData comparison below, so a store on a no-op would still
-    // make it into the mem transcript and cause it to believe a real store happened.
-    assert !mem_op.is_padding ∨ (mem_op.op == load);
+    // aren't subject to the comparison below, so a store on a no-op would still make it into the
+    // mem transcript and cause it to believe a real store happened.
+    assert !mem_op.is_padding ∨ (mem_op.op == Load);
 
     // Get the instruction from the PC load
     let instr = pc_load.select_dword(pc);
@@ -419,11 +430,12 @@ fn transcript_checker(
 
     match mem_op.op {
         // If the mem op reads from the public tape, record it in the tape polyn
-        ReadPrimary => new_evals.tr_tape.update(mem_op.to_ff_notime(), chal),
+        ReadPrimary => new_evals.tr_tape_accessed.update(mem_op.to_ff_notime(), chal),
         // If the mem op reads from the private tape, don't record anything
         ReadAux => (),
-        // Otherwise, put the memory operation in the time-sorted execution mem. If this is
-        // padding, then that's fine, because there's as much padding here as in the memory transcript
+        // Otherwise, put the memory operation in the time-sorted execution transcript. If this is
+        // padding, then that's fine, because there's as much padding here as in the memory
+        // transcript
         _ => new_evals.time_tr_exec.update(mem_op.to_ff(), chal),
     }
 
@@ -439,6 +451,18 @@ fn transcript_checker(
         assert
             ∧ prev.op != ReadPrimary
             ∧ prev.op != ReadAux
+
+        // In Harvard arch, program memory is separate. So we separate the mem-sorted transcript
+        // into a mem-sorted data transcript followed by a mem-sorted program transcript.
+        if prev.op != LoadPrg && cur.op == LoadPrg {
+            // If we're transitioning to program memory, skip the rest of the checks
+            continue;
+        }
+        // Once we're in the program memory, we can't go back to data memory. In other words, prev
+        // is a program op iff cur is a program op.
+        assert
+            ∨ (prev.op != LoadPrg ∧ cur.op != LoadPrg)
+            ∨ (prev.op == LoadPrg ∧ cur.op == LoadPrg)
 
         // The rest of these asserts pertain just to RAM loads and stores. These asserts are taken
         // from Figure 5 in Constant-Overhead Zero-Knowledge for RAM Programs:
@@ -457,9 +481,11 @@ fn transcript_checker(
 
         // On every tick, absorb the second entry in to the mem-sorted execution transcript
         new_evals.mem_tr_exec.update(cur.to_ff(), chal);
-        // If it's an initial load, also put it into tr_rinit_accessed
-        if prev.idx < cur.idx && cur.op == load {
-            new_evals.tr_rinit_accessed.update(cur.to_ff_notime(), chal);
+        // If it's an initial load, also put it into tr_(d/p)init_accessed
+        if prev.idx < cur.idx {
+            match cur.op {
+            Load => new_evals.tr_dinit_accessed.update(cur.to_ff_notime(), chal),
+            LoadPrg => new_evals.tr_pinit_accessed.update(cur.to_ff_notime(), chal),
         }
     }
 
@@ -505,6 +531,8 @@ them unique so we can establish a total ordering on them (both time-major and me
 notice that we add 1 to every timestamp no matter what. This is because the 0 timestamp is reserved
 for the initial padding of the mem-ordered trace, which we describe now.
 
+### Initial element of the mem-sorted transcript
+
 We have to make an initial padding element for the mem-sorted transcript. This is for two reasons:
 
 1. It is mathematically necessary. The mem-sorted transcript is checked in sliding windows of size 3
@@ -514,29 +542,27 @@ We have to make an initial padding element for the mem-sorted transcript. This i
    checker will only absorb the tail of the list it's given. So we need to give it a throwaway
    element that won't be absorbed
 
-We pick the placeholder element to be equal to the "real" first element of the mem-sorted
-transcript, but with the timestamp set to 0. As mentioned before, this is to preserve a total
-ordering, as mentioned before.
+We are further constrained by the fact that we don't want the placeholder element to change whether
+the next element is considered a first-access or not. Thus, we reserve RAM index 0 and timestamp 0
+for the placeholder value, and make the initial placeholder a `Load` of 0 from index 0 at time 0.
+Because nothing else uses index 0, this is essentially a no-op. Alternatively, we can use RAM index
+-1 if it makes dev ergonomics easier.
 
 ## Harvard arch
 
 We have to use a different tactic for Harvard than what we did above. Copying `op_i` to use as a
 memory operation doesn't work anymore, since `op_i` and `op_m` are in entirely different memory
 segments now. So instead we do something simpler: just repeat the data memory operation from the
-last tick, increment the timestamp, and set `is_padding=true`. That is, if `(t, op_m)` is the
-previous data memory op, then we set `(t', op_m') = (t+1, op_m[is_padding=true])`.
+last tick, increment the timestamp, set `is_padding=true`, and set the op type to `Load`. That is,
+if `(t, op_m)` is the previous data memory op, then we set `(t', op_m') = (t+1, op_m[type=Load,
+is_padding=true])`. This would technically be consistent even without `[type=Load]`, but we need it
+because padding entries must be loads. Padding entries aren't subject to checking by `exec_checker`,
+so a `Store` on a no-op instruction would still end up in the mem-sorted transcript and cause it to
+believe a real store happened.
 
-If there is no data memory op whatsoever in the data transcript, then we invent one. In fact, this
-will be the placeholder entry in the memory-sorted data transcript. It can be anything, so let it be
-a load of 0 from index 0, at timestamp 0. We can then use this as the template for `op_m` in the
-above expression.
+### Initial element of the mem-sorted transcript
 
-If there's already a mem op in the data transcript, then we let the initial placeholder be equal to
-this, but with the timestamp set to 0 (just like the von Neumann case).
-
-We also have to address how to pad out the program memory. This is easier, since there are no
-missing entries. The only question is what to pick for the initial placeholder value. As above, we
-simply let it equal the first "real" instruction load, with timestamp 0.
+We don't have to do anything different here. Let the placeholder element be all zeros.
 
 # Sketch of proving procedure
 
@@ -544,8 +570,8 @@ simply let it equal the first "real" instruction load, with timestamp 0.
 
 Before proving, the prover first runs the full computation and saves the transcripts.
 
-1. Interpret `tr_rinit` (possibly public), `tr_rinit_nonaccessed`, `tr_tinit` (public), and
-   `tr_tinit_nonaccessed` as polynomials. Commit to them, denoting them by `com_rinit`, `com_rna`,
+1. Interpret `tr_dinit` (possibly public), `tr_dinit_nonaccessed`, `tr_tinit` (public), and
+   `tr_tinit_nonaccessed` as polynomials. Commit to them, denoting them by `com_dinit`, `com_rna`,
    `com_tinit`, and `com_tna`.
 2. Compute and pad the memory-sorted transcript of the program. We feed slices of size 3 to each
    invocation of `transcript_checker`. Specifically (for consistency purposes) they're done in
@@ -558,7 +584,7 @@ Before proving, the prover first runs the full computation and saves the transcr
    transcript elements it will check)
 3. Let `com_tr` be the aggregate of all these slice commitments. We'll define what aggregation
    scheme we use later, but think MIPP-style commitment.
-4. Let `chal = H(com_rinit || com_rna || com_tinit || com_tna || com_tr)`
+4. Let `chal = H(com_dinit || com_pinit || com_rna || com_tinit || com_tna || com_tr)`
 5. Do all `T / chunk_size` transcript_checker proofs
 6. Enforce the following constraints in the aggregation phase. For each `i`, the input to the `i`-th
    instance of transcript_checker has:
@@ -573,15 +599,16 @@ Before proving, the prover first runs the full computation and saves the transcr
    Define `final_mem_tr_accessed`, `final_mem_tr_exec`, and `final_tape_tr_accessed` similarly.
    Prove the following outside the circuit:
     * `final_time_tr_exec == final_mem_tr_exec`
-    * `tr_rinit(chal) = tr_rinit_nonaccessed(chal) * final_mem_tr_accessed`
+    * `tr_dinit(chal) = tr_dinit_nonaccessed(chal) * final_mem_tr_accessed`
+    * `tr_pinit(chal) = tr_pinit_nonaccessed(chal) * final_pinit_tr_accessed`
     * `tr_tinit(chal) = tr_tinit_nonaccessed(chal) * final_tape_tr_accessed`
 
 ## Verifier
 
 1. Receive all the commitments from the prover and compute
-   `chal = H(com_rinit || com_rna || com_tinit || com_tna || com_tr)`
+   `chal = H(com_dinit || com_rna || com_tinit || com_tna || com_tr)`
 2. The verifier should check that they know the opening to `com_tinit`, since it's public.
-3. (Optional) If `tr_rinit` is known to the verifier, then the verifier should check that they know
-   the opening to `com_rinit`
+3. (Optional) If `tr_dinit` is known to the verifier, then the verifier should check that they know
+   the opening to `com_dinit`
 4. Check the aggregate proof, along with all the constraints in prover step 6.
-5. Check the polynomial evals in prover step 7.
+5. Check the polynomial evals in prover step 8.
