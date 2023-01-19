@@ -333,7 +333,7 @@ impl<W: Word> Instr<W> {
                 // Construct the memory operation
                 let mem_op = MemOp::Store {
                     val: (w0, w1),
-                    location: out,
+                    location: out.align_to_dword(),
                 };
 
                 Some(mem_op)
@@ -357,7 +357,7 @@ impl<W: Word> Instr<W> {
                 // Construct the memory operation
                 let mem_op = MemOp::Load {
                     val: (w0, w1),
-                    location: in1,
+                    location: in1.align_to_dword(),
                 };
                 // Set set the register to the first part of the dword if `is_high == false`.
                 // Otherwise use the second word.
@@ -503,10 +503,11 @@ pub fn run_program<W: Word, const NUM_REGS: usize>(
         let (new_cpu_state, mem_op) =
             instr.execute_and_update_pc(arch, cpu_state, &mut data_memory, &mut program_memory);
 
-        // Register the instruction load
+        // Register the instruction load. For transcript purposes, make sure the load is
+        // word-aligned.
         let pc_load = MemOp::Load {
             val: instr.to_dword::<NUM_REGS>(),
-            location: pc,
+            location: pc.align_to_dword(),
         };
 
         // Update the CPU state and save the transcript entry

@@ -39,6 +39,10 @@ pub trait Word:
         Self::try_from(val).map_err(|_| ())
     }
 
+    /// Clears out the bottom bits of the word so that it can be used an index to dword-aligned
+    /// memory, i.e., the memory format we use for transcripts
+    fn align_to_dword(&self) -> Self;
+
     /// Convert from big-endian bytes. Fails if `bytes.len() != Self::BYTELEN`
     fn from_be_bytes(bytes: &[u8]) -> Result<Self, ()>;
 
@@ -131,6 +135,13 @@ macro_rules! impl_word {
                 <$word>::to_le_bytes(*self).to_vec()
             }
 
+            fn align_to_dword(&self) -> Self {
+                // Clear the low log2(Self::BYTELEN)+1 bits of this word
+                let bitmask_len = log2(Self::BYTELEN) + 1;
+                let bitmask = !((1 << bitmask_len) - 1);
+                self & bitmask
+            }
+
             fn to_signed(self) -> Self::Signed {
                 self as Self::Signed
             }
@@ -201,3 +212,8 @@ impl_word!(u8, u16, i8, i16, 8);
 impl_word!(u16, u32, i16, i32, 16);
 impl_word!(u32, u64, i32, i64, 32);
 impl_word!(u64, u128, i64, i128, 64);
+
+/// A log2 function for small `usize` values
+pub(crate) fn log2(x: usize) -> usize {
+    (x as f32).log2().ceil() as usize
+}

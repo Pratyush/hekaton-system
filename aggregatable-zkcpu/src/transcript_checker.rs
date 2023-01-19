@@ -423,30 +423,6 @@ impl<W: WordVar<F>, F: PrimeField> ProcessedTranscriptEntryVar<W, F> {
         Ok(acc)
     }
 
-    // Extracts the byte at the given RAM index, returning it and an error flag. `err = true` iff
-    // `self.idx` and the high (non-byte-precision) bits of `idx` are not equal, or
-    // `self.is_padding == true`.
-    fn select_byte(&self, idx: W) -> Result<(UInt8<F>, Boolean<F>), SynthesisError> {
-        // Check if this is padding
-        let mut err = self.is_padding.clone();
-
-        // Do the index check. Mask out the bottom bits of idx. We just need to make sure that this
-        // load is the correct dword, i.e., all but the bottom bitmask bits of idx and self.ram_idx
-        // match.
-        let bytes_per_word = W::BITLEN / 8;
-        let bitmask_len = log2(bytes_per_word);
-        let idx_high_bits = idx.as_le_bits().into_iter().skip(bitmask_len);
-        for (b1, b2) in idx_high_bits.zip(self.ram_idx.as_le_bits().into_iter().skip(bitmask_len)) {
-            err = err.or(&b1.is_neq(&b2)?)?;
-        }
-
-        // Now use the low bits of idx to select the correct byte from self.val
-        let val_bytes = [self.val.w0.unpack(), self.val.w1.unpack()].concat();
-        let out = UInt8::conditionally_select_power_of_two_vector(&idx.as_be_bits(), &val_bytes)?;
-
-        Ok((out, err))
-    }
-
     // Extracts the word at the given RAM index, returning it and an error flag. `err = true` iff
     // `self.idx` and the high (non-byte-precision) bits of `idx` are not equal, or
     // `self.is_padding == true`.
@@ -458,17 +434,25 @@ impl<W: WordVar<F>, F: PrimeField> ProcessedTranscriptEntryVar<W, F> {
         // load is the correct dword, i.e., all but the bottom bitmask bits of idx and self.ram_idx
         // match.
         let bytes_per_word = W::BITLEN / 8;
-        let bitmask_len = log2(bytes_per_word);
-        let idx_high_bits: Vec<_> = idx.as_le_bits().into_iter().skip(bitmask_len).collect();
-        for (b1, b2) in idx_high_bits
-            .iter()
-            .zip(self.ram_idx.as_le_bits().into_iter().skip(bitmask_len))
-        {
+        let word_bitmask_len = log2(bytes_per_word);
+        let dword_bitmask_len = word_bitmask_len + 1;
+
+        let idx_bits = idx.as_le_bits();
+        let word_aligned_idx_bits = &idx_bits[word_bitmask_len..];
+        let dword_aligned_idx_bits = &idx_bits[dword_bitmask_len..];
+
+        // Check that the dword-aligned indices match
+        for (b1, b2) in dword_aligned_idx_bits.iter().zip(
+            self.ram_idx
+                .as_le_bits()
+                .into_iter()
+                .skip(dword_bitmask_len),
+        ) {
             err = err.or(&b1.is_neq(&b2)?)?;
         }
 
-        // Now use the lowest word-precision bit of idx to select the correct word from self.val
-        let word_selector = &idx_high_bits[0];
+        // Now get the word-aligned index and use the lowest word bit to select the word
+        let word_selector = &word_aligned_idx_bits[0];
         let out = W::conditionally_select(word_selector, &self.val.w1, &self.val.w0)?;
 
         Ok((out, err))
@@ -648,7 +632,6 @@ mod test {
             TinyRamArch::VonNeumann,
             &assembly,
         );
-        println!("output == {output}");
 
         // Create the time-sorted transcript, complete with padding memory ops. This has length 2T,
         // where T is the number of CPU ticks.
@@ -748,6 +731,35 @@ mod test {
 
          _acc: add r1, r1, r0     ; Accumulate i into acc
                xor r2, r2, r2     ; Clear mul3_ctr
+               jmp _loop          ; Jump back to the loop
+
+         _end: answer r1          ; Return acc
+        ",
+        );
+    }
+
+    // Tests that a RAM-heavy skip3 program passes the transcript checker
+    #[test]
+    fn skip3_withmem() {
+        transcript_tester(
+            "\
+        ; TinyRAM V=2.000 M=vn W=32 K=8
+        _loop: load.w r1, 600     ; acc <- RAM[600]
+               load.w r0, 604     ; i <- RAM[604]
+               add  r0, r0, 1     ; incr i
+               add  r2, r2, 1     ; incr mul3_ctr
+               cmpe r0, 17        ; if i == 17:
+               cjmp _end          ;     jump to end
+               cmpe r2, 3         ; else if mul3_ctr == 3:
+               cjmp _acc          ;     jump to acc
+                                  ; else
+               store.w 604, r0    ;     i -> RAM[604]
+               jmp  _loop         ;     jump to beginning
+
+         _acc: add r1, r1, r0     ; Accumulate i into acc
+               xor r2, r2, r2     ; Clear mul3_ctr
+               store.w 600, r1    ; acc -> RAM[600]
+               store.w 604, r0    ; i -> RAM[604]
                jmp _loop          ; Jump back to the loop
 
          _end: answer r1          ; Return acc
