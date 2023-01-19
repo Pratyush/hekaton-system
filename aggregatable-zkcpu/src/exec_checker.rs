@@ -366,6 +366,38 @@ fn run_instr<W: WordVar<F>, F: PrimeField>(
 
             Ok((state, err))
         }
+        LoadW => {
+            // Get the correct word from the memory op, and save it in the register
+            let (loaded_word, mut err) = mem_op.select_word(&imm_or_reg_val)?;
+            let new_regs = arr_set(&regs, reg1, &loaded_word)?;
+
+            // The PC is incremented (need to check overflow), and the registers are new.
+            let state = CpuState {
+                pc: incrd_pc.clone(),
+                flag: flag.clone(),
+                regs: new_regs,
+                answer: answer.clone(),
+            };
+            // load.w is a memory operation. This MUST NOT be padding.
+            err = err.or(&mem_op.is_padding)?;
+
+            Ok((state, err))
+        }
+        StoreW => {
+            // Storing doesn't change anything. We don't have to do anything here
+
+            // The PC is incremented (need to check overflow)
+            let state = CpuState {
+                pc: incrd_pc.clone(),
+                flag: flag.clone(),
+                regs: regs.clone(),
+                answer: answer.clone(),
+            };
+            // store.w is a memory operation. This MUST NOT be padding.
+            let err = mem_op.is_padding.clone();
+
+            Ok((state, err))
+        }
         _ => todo!(),
     }
 }
@@ -408,7 +440,11 @@ pub(crate) fn exec_checker<const NUM_REGS: usize, W: WordVar<F>, F: PrimeField>(
 
     // Enumerate all the opcodes we have to eval
     use tinyram_emu::instructions::Opcode::*;
-    let opcodes = [Add, Xor, CmpE, Jmp, CJmp, Answer];
+    let supported_opcodes = [Add, Xor, CmpE, Jmp, CJmp, Answer, LoadW, StoreW];
+    //let supported_opcodes = [
+    //    And, Or, Xor, Not, Add, Sub, MulL, UMulH, SMulH, UDiv, UMod, Shl, Shr, CmpE, CmpA, CmpAe,
+    //    CmpG, CmpGe, Mov, CMov, Jmp, CJmp, CnJmp, StoreB, LoadB, StoreW, LoadW, Read, Answer,
+    //];
 
     // Read the registers
     // reg1 (if used) is always the output register. So we don't need to read that
@@ -428,7 +464,7 @@ pub(crate) fn exec_checker<const NUM_REGS: usize, W: WordVar<F>, F: PrimeField>(
 
     // Go through every opcode, do the operation, and save the results in all_output_states and
     // all_mem_ops
-    for opcode in opcodes {
+    for opcode in supported_opcodes {
         let (new_state, err) = run_instr(
             opcode,
             cpu_state,

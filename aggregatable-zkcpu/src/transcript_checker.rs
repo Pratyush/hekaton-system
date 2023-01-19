@@ -446,6 +446,33 @@ impl<W: WordVar<F>, F: PrimeField> ProcessedTranscriptEntryVar<W, F> {
 
         Ok((out, err))
     }
+
+    // Extracts the word at the given RAM index, returning it and an error flag. `err = true` iff
+    // `self.idx` and the high (non-byte-precision) bits of `idx` are not equal, or
+    // `self.is_padding == true`.
+    pub(crate) fn select_word(&self, idx: &W) -> Result<(W, Boolean<F>), SynthesisError> {
+        // Check if this is padding
+        let mut err = self.is_padding.clone();
+
+        // Do the index check. Mask out the bottom bits of idx. We just need to make sure that this
+        // load is the correct dword, i.e., all but the bottom bitmask bits of idx and self.ram_idx
+        // match.
+        let bytes_per_word = W::BITLEN / 8;
+        let bitmask_len = log2(bytes_per_word);
+        let idx_high_bits: Vec<_> = idx.as_le_bits().into_iter().skip(bitmask_len).collect();
+        for (b1, b2) in idx_high_bits
+            .iter()
+            .zip(self.ram_idx.as_le_bits().into_iter().skip(bitmask_len))
+        {
+            err = err.or(&b1.is_neq(&b2)?)?;
+        }
+
+        // Now use the lowest word-precision bit of idx to select the correct word from self.val
+        let word_selector = &idx_high_bits[0];
+        let out = W::conditionally_select(word_selector, &self.val.w1, &self.val.w0)?;
+
+        Ok((out, err))
+    }
 }
 
 /// Running evals used inside `transcript_checker`
@@ -610,37 +637,18 @@ mod test {
     type WV = UInt32<F>;
     type W = <WV as WordVar<F>>::NativeWord;
 
-    // The skip3 program
-    pub(crate) const SKIP3_CODE: &str = "\
-        ; TinyRAM V=2.000 M=vn W=32 K=8
-        _loop: add  r0, r0, 1     ; incr i
-               add  r2, r2, 1     ; incr mul3_ctr
-               cmpe r0, 17        ; if i == 17:
-               cjmp _end          ;     jump to end
-               cmpe r2, 3         ; else if mul3_ctr == 3:
-               cjmp _acc          ;     jump to acc
-               jmp  _loop         ; else jump to beginning
-
-         _acc: add r1, r1, r0     ; Accumulate i into acc
-               xor r2, r2, r2     ; Clear mul3_ctr
-               jmp _loop          ; Jump back to the loop
-
-         _end: answer r1          ; Return acc
-        ";
-
-    // Tests that the skip3 program above passes the transcript checker
-    #[test]
-    fn skip3_transcript_checker() {
+    fn transcript_tester(code: &str) {
         let mut rng = rand::thread_rng();
         let cs = ConstraintSystem::new_ref();
 
-        let assembly = tinyram_emu::parser::assemble(SKIP3_CODE);
+        let assembly = tinyram_emu::parser::assemble(code);
         let arch = TinyRamArch::VonNeumann;
 
         let (output, transcript) = tinyram_emu::interpreter::run_program::<W, NUM_REGS>(
             TinyRamArch::VonNeumann,
             &assembly,
         );
+        println!("output == {output}");
 
         // Create the time-sorted transcript, complete with padding memory ops. This has length 2T,
         // where T is the number of CPU ticks.
@@ -708,6 +716,43 @@ mod test {
         // Check the output is set and correct
         assert!(cpu_state.answer.is_set.value().unwrap());
         assert_eq!(output, cpu_state.answer.val.value().unwrap());
+    }
+
+    // Tests that a simple store and load passes the transcript checker
+    #[test]
+    fn simple_mem() {
+        transcript_tester(
+            "\
+        ; TinyRAM V=2.000 M=vn W=32 K=8
+        add r0, r0, 10     ; let r0 = 10
+        store.w 998, r0    ; Dummy store: r0 -> RAM[999]
+        load.w r7, 999     ; Dummy load:  r7 <- RAM[999]
+        answer r7
+        ",
+        );
+    }
+
+    // Tests that a RAM-free skip3 program passes the transcript checker
+    #[test]
+    fn skip3_nomem() {
+        transcript_tester(
+            "\
+        ; TinyRAM V=2.000 M=vn W=32 K=8
+        _loop: add  r0, r0, 1     ; incr i
+               add  r2, r2, 1     ; incr mul3_ctr
+               cmpe r0, 17        ; if i == 17:
+               cjmp _end          ;     jump to end
+               cmpe r2, 3         ; else if mul3_ctr == 3:
+               cjmp _acc          ;     jump to acc
+               jmp  _loop         ; else jump to beginning
+
+         _acc: add r1, r1, r0     ; Accumulate i into acc
+               xor r2, r2, r2     ; Clear mul3_ctr
+               jmp _loop          ; Jump back to the loop
+
+         _end: answer r1          ; Return acc
+        ",
+        );
     }
 
     // Tests that ProcessedTranscriptEntry::as_ff and ProcessedTranscriptEntryVar::as_ff agree
