@@ -4,13 +4,14 @@ use crate::{
     util::{arr_set, log2, uint8_to_fpvar},
     word::{DWordVar, WordVar},
 };
-use tinyram_emu::{instructions::Opcode, word::Word, TinyRamArch};
+use tinyram_emu::{instructions::Opcode, program_state::CpuState, word::Word, TinyRamArch};
 
-use core::cmp::Ordering;
+use core::{borrow::Borrow, cmp::Ordering};
 use std::cmp::min;
 
 use ark_ff::PrimeField;
 use ark_r1cs_std::{
+    alloc::{AllocVar, AllocationMode},
     bits::ToBitsGadget,
     boolean::Boolean,
     eq::EqGadget,
@@ -21,7 +22,7 @@ use ark_r1cs_std::{
 };
 use ark_relations::{
     ns,
-    r1cs::{ConstraintSystemRef, SynthesisError},
+    r1cs::{ConstraintSystemRef, Namespace, SynthesisError},
 };
 
 /// An `ExecTickMemData` can be a LOAD (=0), a STORE (=1), or no-mem (=2)
@@ -166,7 +167,7 @@ fn decode_instr<const NUM_REGS: usize, W: WordVar<F>, F: PrimeField>(
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct CpuAnswer<W, F>
+pub(crate) struct CpuAnswerVar<W, F>
 where
     W: WordVar<F>,
     F: PrimeField,
@@ -175,16 +176,16 @@ where
     pub(crate) val: W,
 }
 
-impl<W: WordVar<F>, F: PrimeField> Default for CpuAnswer<W, F> {
+impl<W: WordVar<F>, F: PrimeField> Default for CpuAnswerVar<W, F> {
     fn default() -> Self {
-        CpuAnswer {
+        CpuAnswerVar {
             is_set: Boolean::FALSE,
             val: W::zero(),
         }
     }
 }
 
-impl<W: WordVar<F>, F: PrimeField> CondSelectGadget<F> for CpuAnswer<W, F> {
+impl<W: WordVar<F>, F: PrimeField> CondSelectGadget<F> for CpuAnswerVar<W, F> {
     fn conditionally_select(
         cond: &Boolean<F>,
         true_value: &Self,
@@ -193,12 +194,37 @@ impl<W: WordVar<F>, F: PrimeField> CondSelectGadget<F> for CpuAnswer<W, F> {
         let is_set = Boolean::conditionally_select(cond, &true_value.is_set, &false_value.is_set)?;
         let val = W::conditionally_select(cond, &true_value.val, &false_value.val)?;
 
-        Ok(CpuAnswer { is_set, val })
+        Ok(CpuAnswerVar { is_set, val })
+    }
+}
+
+impl<W: WordVar<F>, F: PrimeField> AllocVar<Option<W::NativeWord>, F> for CpuAnswerVar<W, F> {
+    fn new_variable<T: Borrow<Option<W::NativeWord>>>(
+        cs: impl Into<Namespace<F>>,
+        f: impl FnOnce() -> Result<T, SynthesisError>,
+        mode: AllocationMode,
+    ) -> Result<Self, SynthesisError> {
+        let ns = cs.into();
+        let cs = ns.cs();
+
+        f().and_then(|opt_word| {
+            let opt_word = opt_word.borrow();
+            Boolean::new_variable(ns!(cs, "is_set"), || Ok(opt_word.is_some()), mode).and_then(
+                |is_set| {
+                    W::new_variable(
+                        ns!(cs, "word"),
+                        || Ok(opt_word.unwrap_or(W::NativeWord::default())),
+                        mode,
+                    )
+                    .and_then(|val| Ok(CpuAnswerVar { is_set, val }))
+                },
+            )
+        })
     }
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct CpuState<W, F>
+pub(crate) struct CpuStateVar<W, F>
 where
     W: WordVar<F>,
     F: PrimeField,
@@ -206,21 +232,21 @@ where
     pub(crate) pc: PcVar<W>,
     pub(crate) flag: Boolean<F>,
     pub(crate) regs: RegistersVar<W>,
-    pub(crate) answer: CpuAnswer<W, F>,
+    pub(crate) answer: CpuAnswerVar<W, F>,
 }
 
-impl<W: WordVar<F>, F: PrimeField> CpuState<W, F> {
+impl<W: WordVar<F>, F: PrimeField> CpuStateVar<W, F> {
     pub(crate) fn default<const NUM_REGS: usize>() -> Self {
-        CpuState {
+        CpuStateVar {
             pc: W::zero(),
             flag: Boolean::FALSE,
             regs: vec![W::zero(); NUM_REGS],
-            answer: CpuAnswer::default(),
+            answer: CpuAnswerVar::default(),
         }
     }
 }
 
-impl<W: WordVar<F>, F: PrimeField> CondSelectGadget<F> for CpuState<W, F> {
+impl<W: WordVar<F>, F: PrimeField> CondSelectGadget<F> for CpuStateVar<W, F> {
     fn conditionally_select(
         cond: &Boolean<F>,
         true_value: &Self,
@@ -236,7 +262,43 @@ impl<W: WordVar<F>, F: PrimeField> CondSelectGadget<F> for CpuState<W, F> {
             .collect::<Result<RegistersVar<_>, _>>()?;
         let answer = PcVar::conditionally_select(cond, &true_value.answer, &false_value.answer)?;
 
-        Ok(CpuState {
+        Ok(CpuStateVar {
+            pc,
+            flag,
+            regs,
+            answer,
+        })
+    }
+}
+
+impl<const NUM_REGS: usize, W, F> AllocVar<CpuState<NUM_REGS, W::NativeWord>, F>
+    for CpuStateVar<W, F>
+where
+    W: WordVar<F>,
+    F: PrimeField,
+{
+    fn new_variable<T: Borrow<CpuState<NUM_REGS, W::NativeWord>>>(
+        cs: impl Into<Namespace<F>>,
+        f: impl FnOnce() -> Result<T, SynthesisError>,
+        mode: AllocationMode,
+    ) -> Result<Self, SynthesisError> {
+        let ns = cs.into();
+        let cs = ns.cs();
+
+        let f_res = f();
+
+        let state: Result<&CpuState<NUM_REGS, W::NativeWord>, _> =
+            f_res.as_ref().map(|s| s.borrow()).map_err(|e| e.clone());
+
+        let pc = PcVar::new_variable(ns!(cs, "pc"), || state.map(|s| s.program_counter), mode)?;
+        let flag =
+            Boolean::new_variable(ns!(cs, "flag"), || state.map(|s| s.condition_flag), mode)?;
+        let regs =
+            RegistersVar::new_variable(ns!(cs, "regs"), || state.map(|s| s.registers), mode)?;
+        let answer =
+            CpuAnswerVar::new_variable(ns!(cs, "answer"), || state.map(|s| s.answer), mode)?;
+
+        Ok(CpuStateVar {
             pc,
             flag,
             regs,
@@ -250,15 +312,15 @@ impl<W: WordVar<F>, F: PrimeField> CondSelectGadget<F> for CpuState<W, F> {
 /// instruction.
 fn run_instr<W: WordVar<F>, F: PrimeField>(
     op: Opcode,
-    cpu_state: &CpuState<W, F>,
+    cpu_state: &CpuStateVar<W, F>,
     mem_op: &ProcessedTranscriptEntryVar<W, F>,
     reg1: &FpVar<F>,
     reg2_val: &W,
     imm_or_reg_val: &W,
     incrd_pc: &W,
     pc_overflow: &Boolean<F>,
-) -> Result<(CpuState<W, F>, Boolean<F>), SynthesisError> {
-    let CpuState {
+) -> Result<(CpuStateVar<W, F>, Boolean<F>), SynthesisError> {
+    let CpuStateVar {
         pc: _,
         flag,
         regs,
@@ -272,7 +334,7 @@ fn run_instr<W: WordVar<F>, F: PrimeField>(
             let new_regs = arr_set(&regs, reg1, &output_val)?;
 
             // The PC is incremented (need to check overflow), and the flag and registers are new.
-            let state = CpuState {
+            let state = CpuStateVar {
                 pc: incrd_pc.clone(),
                 flag: new_flag,
                 regs: new_regs,
@@ -288,7 +350,7 @@ fn run_instr<W: WordVar<F>, F: PrimeField>(
             let new_regs = arr_set(&regs, reg1, &output_val)?;
 
             // The PC is incremented (need to check overflow), and the registers are new.
-            let state = CpuState {
+            let state = CpuStateVar {
                 pc: incrd_pc.clone(),
                 flag: flag.clone(),
                 regs: new_regs,
@@ -305,7 +367,7 @@ fn run_instr<W: WordVar<F>, F: PrimeField>(
 
             //  The PC is incremented (need to check overflow), and the flag is new
             pc_overflow.enforce_equal(&Boolean::FALSE)?;
-            let state = CpuState {
+            let state = CpuStateVar {
                 pc: incrd_pc.clone(),
                 flag: new_flag,
                 regs: regs.clone(),
@@ -320,7 +382,7 @@ fn run_instr<W: WordVar<F>, F: PrimeField>(
             // Set the new PC to be the imm-or-reg
             let new_pc = imm_or_reg_val.clone();
 
-            let state = CpuState {
+            let state = CpuStateVar {
                 pc: new_pc,
                 flag: flag.clone(),
                 regs: regs.clone(),
@@ -340,7 +402,7 @@ fn run_instr<W: WordVar<F>, F: PrimeField>(
             let relevant_pc_overflow = pc_overflow.and(&used_incrd_pc)?;
             relevant_pc_overflow.enforce_equal(&Boolean::FALSE)?;
 
-            let state = CpuState {
+            let state = CpuStateVar {
                 pc: new_pc,
                 flag: flag.clone(),
                 regs: regs.clone(),
@@ -352,11 +414,11 @@ fn run_instr<W: WordVar<F>, F: PrimeField>(
             Ok((state, err))
         }
         Answer => {
-            let state = CpuState {
+            let state = CpuStateVar {
                 pc: incrd_pc.clone(),
                 flag: flag.clone(),
                 regs: regs.clone(),
-                answer: CpuAnswer {
+                answer: CpuAnswerVar {
                     is_set: Boolean::TRUE,
                     val: imm_or_reg_val.clone(),
                 },
@@ -372,7 +434,7 @@ fn run_instr<W: WordVar<F>, F: PrimeField>(
             let new_regs = arr_set(&regs, reg1, &loaded_word)?;
 
             // The PC is incremented (need to check overflow), and the registers are new.
-            let state = CpuState {
+            let state = CpuStateVar {
                 pc: incrd_pc.clone(),
                 flag: flag.clone(),
                 regs: new_regs,
@@ -387,7 +449,7 @@ fn run_instr<W: WordVar<F>, F: PrimeField>(
             // Storing doesn't change anything. We don't have to do anything here
 
             // The PC is incremented (need to check overflow)
-            let state = CpuState {
+            let state = CpuStateVar {
                 pc: incrd_pc.clone(),
                 flag: flag.clone(),
                 regs: regs.clone(),
@@ -407,9 +469,9 @@ fn run_instr<W: WordVar<F>, F: PrimeField>(
 pub(crate) fn exec_checker<const NUM_REGS: usize, W: WordVar<F>, F: PrimeField>(
     arch: TinyRamArch,
     mem_op: &ProcessedTranscriptEntryVar<W, F>,
-    cpu_state: &CpuState<W, F>,
+    cpu_state: &CpuStateVar<W, F>,
     instr: &DWordVar<W, F>,
-) -> Result<CpuState<W, F>, SynthesisError> {
+) -> Result<CpuStateVar<W, F>, SynthesisError> {
     // Prepare to run all the instructions. This will hold new_state for all possible instructions,
     // and all_errors will hold the corresponding errors flags. At the end, we'll use the opcode to
     // select the output state we want to return, and assert that err == false.
@@ -418,7 +480,7 @@ pub(crate) fn exec_checker<const NUM_REGS: usize, W: WordVar<F>, F: PrimeField>(
     let mut all_errors = vec![Boolean::TRUE; 32];
 
     // Unpack the state and decode the instruction
-    let CpuState {
+    let CpuStateVar {
         pc,
         flag: _,
         regs,
@@ -484,8 +546,10 @@ pub(crate) fn exec_checker<const NUM_REGS: usize, W: WordVar<F>, F: PrimeField>(
 
     // Out of all the computed output states and memory operations, pick the ones that correspond
     // to this instruction's opcode
-    let out_state =
-        CpuState::conditionally_select_power_of_two_vector(&opcode_bits, &all_output_states[..])?;
+    let out_state = CpuStateVar::conditionally_select_power_of_two_vector(
+        &opcode_bits,
+        &all_output_states[..],
+    )?;
     // Check that this operation didn't error
     let err = Boolean::conditionally_select_power_of_two_vector(&opcode_bits, &all_errors[..])?;
     err.enforce_equal(&Boolean::FALSE)?;
@@ -581,7 +645,7 @@ mod test {
         let non_mem_op = ProcessedTranscriptEntryVar::default();
 
         // Run the CPU
-        let mut cpu_state = CpuState::default::<NUM_REGS>();
+        let mut cpu_state = CpuStateVar::default::<NUM_REGS>();
         for (i, transcript_entry) in transcript.into_iter().enumerate() {
             let TranscriptEntry { instr, .. } = transcript_entry;
             // Encode the instruction and witness it

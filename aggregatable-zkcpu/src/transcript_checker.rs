@@ -1,6 +1,6 @@
 use crate::{
     common::*,
-    exec_checker::{exec_checker, CpuState, ExecTickMemData},
+    exec_checker::{exec_checker, CpuStateVar, ExecTickMemData},
     util::log2,
     word::{DWord, DWordVar, WordVar},
 };
@@ -43,7 +43,7 @@ const TIMESTAMP_OFFSET: u64 = 1;
 // `time_tr_exec(X) = (X - op1)(X - op2) ...)` evaluated at some challenge point. This also
 // is used for unordered evals, such as `tr_init_accessed`.
 #[derive(Clone)]
-struct RunningEvalVar<F: PrimeField>(FpVar<F>);
+pub struct RunningEvalVar<F: PrimeField>(pub FpVar<F>);
 
 impl<F: PrimeField> Default for RunningEvalVar<F> {
     fn default() -> Self {
@@ -76,6 +76,16 @@ impl<F: PrimeField> RunningEvalVar<F> {
     /// Updates the running eval with the given entry and challenge point
     fn update(&mut self, entry: &FpVar<F>, chal: &FpVar<F>) -> Result<(), SynthesisError> {
         self.conditionally_update(&Boolean::TRUE, entry, chal)
+    }
+}
+
+impl<F: PrimeField> AllocVar<F, F> for RunningEvalVar<F> {
+    fn new_variable<T: Borrow<F>>(
+        cs: impl Into<Namespace<F>>,
+        f: impl FnOnce() -> Result<T, SynthesisError>,
+        mode: AllocationMode,
+    ) -> Result<Self, SynthesisError> {
+        FpVar::new_variable(cs, f, mode).map(RunningEvalVar)
     }
 }
 
@@ -461,15 +471,28 @@ impl<W: WordVar<F>, F: PrimeField> ProcessedTranscriptEntryVar<W, F> {
 
 /// Running evals used inside `transcript_checker`
 #[derive(Clone, Default)]
-struct TranscriptCheckerEvals<F: PrimeField> {
+pub struct TranscriptCheckerEvals<F: PrimeField> {
     // The time-sorted trace of our execution
-    time_tr_exec: RunningEvalVar<F>,
+    pub time_tr_exec: F,
 
     // The mem-sorted trace of our execution
-    mem_tr_exec: RunningEvalVar<F>,
+    pub mem_tr_exec: F,
 
     // The unsorted trace of the initial memory that's read in our execution
-    tr_init_accessed: RunningEvalVar<F>,
+    pub tr_init_accessed: F,
+}
+
+/// ZK version of TranscriptCheckerEvals
+#[derive(Clone, Default)]
+pub struct TranscriptCheckerEvalsVar<F: PrimeField> {
+    // The time-sorted trace of our execution
+    pub time_tr_exec: RunningEvalVar<F>,
+
+    // The mem-sorted trace of our execution
+    pub mem_tr_exec: RunningEvalVar<F>,
+
+    // The unsorted trace of the initial memory that's read in our execution
+    pub tr_init_accessed: RunningEvalVar<F>,
 }
 
 /// This function checks the time- and mem-sorted transcripts for consistency. It also accumulates
@@ -480,13 +503,13 @@ struct TranscriptCheckerEvals<F: PrimeField> {
 /// `mem_tr_adj_seq` MUST have length 3;
 fn transcript_checker<const NUM_REGS: usize, W: WordVar<F>, F: PrimeField>(
     arch: TinyRamArch,
-    cpu_state: &CpuState<W, F>,
+    cpu_state: &CpuStateVar<W, F>,
     chal: &FpVar<F>,
     instr_load: &ProcessedTranscriptEntryVar<W, F>,
     mem_op: &ProcessedTranscriptEntryVar<W, F>,
     mem_tr_adj_seq: &[ProcessedTranscriptEntryVar<W, F>],
-    evals: &TranscriptCheckerEvals<F>,
-) -> Result<(CpuState<W, F>, TranscriptCheckerEvals<F>), SynthesisError> {
+    evals: &TranscriptCheckerEvalsVar<F>,
+) -> Result<(CpuStateVar<W, F>, TranscriptCheckerEvalsVar<F>), SynthesisError> {
     assert_eq!(mem_tr_adj_seq.len(), 3);
 
     // pc_load occurs at time t
@@ -621,6 +644,7 @@ mod test {
     type WV = UInt32<F>;
     type W = <WV as WordVar<F>>::NativeWord;
 
+    // Helper function that runs the given TinyRAM code through the symbolic transcript checker
     fn transcript_tester(code: &str) {
         let mut rng = rand::thread_rng();
         let cs = ConstraintSystem::new_ref();
@@ -668,11 +692,11 @@ mod test {
         // Doesn't matter what the challenge value is just yet
         let chal = FpVar::constant(F::rand(&mut rng));
         // Let the evals be empty
-        let evals = TranscriptCheckerEvals::default();
+        let evals = TranscriptCheckerEvalsVar::default();
 
         // Run the CPU. Every tick takes in 2 time-sorted transcript entries, with no overlaps.
         // Also every tick takes in 3 mem-sorted transcript entries, with 1 overlap between ticks.
-        let mut cpu_state = CpuState::default::<NUM_REGS>();
+        let mut cpu_state = CpuStateVar::default::<NUM_REGS>();
         for (time_sorted_transcript_pair, mem_sorted_transcript_triple) in
             time_sorted_transcript_vars
                 .chunks(2)

@@ -1,3 +1,4 @@
+mod circuit_defs;
 mod common;
 mod exec_checker;
 mod prover;
