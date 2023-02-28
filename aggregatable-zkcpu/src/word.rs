@@ -1,5 +1,3 @@
-use crate::circuit_defs::InOutAllocVar;
-
 use core::{borrow::Borrow, fmt::Debug, marker::PhantomData};
 
 use tinyram_emu::word::Word;
@@ -225,47 +223,6 @@ macro_rules! impl_word {
             }
         }
     };
-}
-
-impl<F: PrimeField> InOutAllocVar<u8, F> for UInt8<F>
-where
-    Self: Sized,
-{
-    fn new_inout<T: Borrow<u8>>(
-        cs: impl Into<Namespace<F>>,
-        f: impl FnOnce() -> Result<(T, T), SynthesisError>,
-    ) -> Result<(Self, Self), SynthesisError> {
-        let cs = cs.into().cs();
-
-        let (in_val, out_val) = f()?;
-        let (in_val, out_val) = (in_val.borrow(), out_val.borrow());
-
-        // Explode the words into little-endian bits
-        let mut in_val_bits = [false; 8];
-        let mut out_val_bits = [false; 8];
-        in_val_bits
-            .iter_mut()
-            .zip(out_val_bits.iter_mut())
-            .enumerate()
-            .for_each(|(i, (inv, outv))| {
-                *inv = (in_val >> i) & 1 == 1;
-                *outv = (out_val >> i) & 1 == 1;
-            });
-
-        // Witness all the booleans in order
-        let mut in_vars = Vec::new();
-        let mut out_vars = Vec::new();
-        for (in_val, out_val) in in_val_bits.iter().zip(out_val_bits) {
-            in_vars.push(Boolean::new_input(ns!(cs, "input"), || Ok(in_val))?);
-            out_vars.push(Boolean::new_input(ns!(cs, "output"), || Ok(out_val))?);
-        }
-
-        // Make a UInt8 from the Booleans
-        Ok((
-            UInt8::from_bits_le(&in_vars),
-            UInt8::from_bits_le(&out_vars),
-        ))
-    }
 }
 
 impl_word!(UInt16, u16);
