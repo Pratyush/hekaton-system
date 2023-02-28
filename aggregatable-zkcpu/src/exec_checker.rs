@@ -224,7 +224,7 @@ impl<W: WordVar<F>, F: PrimeField> AllocVar<Option<W::NativeWord>, F> for CpuAns
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct CpuStateVar<W, F>
+pub struct CpuStateVar<W, F>
 where
     W: WordVar<F>,
     F: PrimeField,

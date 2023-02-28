@@ -4,7 +4,8 @@ use crate::{
     common::{PcVar, RegistersVar},
     exec_checker::{CpuAnswerVar, CpuStateVar},
     transcript_checker::{
-        ProcessedTranscriptEntry, RunningEvalVar, TranscriptCheckerEvals, TranscriptCheckerEvalsVar,
+        transcript_checker, MemOpKindVar, ProcessedTranscriptEntry, ProcessedTranscriptEntryVar,
+        RunningEvalVar, TimestampVar, TranscriptCheckerEvals, TranscriptCheckerEvalsVar,
     },
     word::WordVar,
 };
@@ -19,7 +20,7 @@ use tinyram_emu::{program_state::CpuState, word::Word, TinyRamArch};
 
 // Defines a trait that can allocate public inputs/outputs in an interleaving way. For every
 // input variable x with output x', this guarantees that x' is allocated immediately after x.
-trait InOutAllocVar<V: ?Sized, F: Field>
+pub trait InOutAllocVar<V: ?Sized, F: Field>
 where
     Self: Sized,
 {
@@ -250,21 +251,64 @@ where
     }
 }
 
-/// Does a transcript check for `n_ticks` ticks of the fictive CPU
+// Impl for MemOp
+impl<F, W, WV> InOutAllocVar<ProcessedTranscriptEntry<W>, F> for ProcessedTranscriptEntryVar<WV, F>
+where
+    Self: Sized,
+    F: PrimeField,
+    W: Word,
+    WV: WordVar<F, NativeWord = W> + InOutAllocVar<W, F>,
+{
+    fn new_inout<T: Borrow<ProcessedTranscriptEntry<W>>>(
+        cs: impl Into<Namespace<F>>,
+        f: impl FnOnce() -> Result<(T, T), SynthesisError>,
+    ) -> Result<(Self, Self), SynthesisError> {
+        let cs = cs.into().cs();
+
+        let (in_val, out_val) = f()?;
+        let (in_val, out_val) = (in_val.borrow(), out_val.borrow());
+
+        // Input/output padding
+        let (in_is_padding, out_is_padding) = Boolean::new_inout(ns!(cs, "is_padding"), || {
+            Ok((in_val.is_padding, out_val.is_padding))
+        })?;
+        // Input/output timestamp
+        let (in_timestamp, out_timestamp) = TimestampVar::new_inout(ns!(cs, "timestamp"), || {
+            Ok((F::from(in_val.timestamp), F::from(out_val.timestamp)))
+        })?;
+        // Input/output memory op kind
+        let (in_opkind, out_opkind) = MemOpKindVar::new_inout(ns!(cs, "opkind"), || {
+            Ok((
+                F::from(in_val.mem_op.kind() as u8),
+                F::from(out_val.mem_op.kind() as u8),
+            ))
+        })?;
+
+        let (in_ram_idx, out_ram_idx) = WV::new_inout(ns!(cs, "ram_idx"), || {
+            Ok((in_val.mem_op.location(), out_val.mem_op.location()))
+        })?;
+
+        todo!()
+    }
+}
+
+/// Does a transcript check for 1 tick of the ZK TinyRAM CPU
 struct MultitickCheckerCircuit<const NUM_REGS: usize, F, W, WV>
 where
     F: PrimeField,
     W: Word,
     WV: WordVar<F, NativeWord = W>,
 {
-    n_ticks: usize,
     arch: TinyRamArch,
-    cpu_state: CpuState<NUM_REGS, W>,
+
+    // Public values
+    cpu_state_inout: (CpuState<NUM_REGS, W>, CpuState<NUM_REGS, W>),
+    evals_inout: (TranscriptCheckerEvals<F>, TranscriptCheckerEvals<F>),
+
     chal: F,
     instr_load: ProcessedTranscriptEntry<W>,
     mem_op: ProcessedTranscriptEntry<W>,
-    mem_tr_adj_seq: Vec<ProcessedTranscriptEntry<W>>,
-    evals: TranscriptCheckerEvals<F>,
+    mem_tr_adj_seq: [ProcessedTranscriptEntry<W>; 3],
     _marker: PhantomData<WV>,
 }
 
@@ -276,6 +320,35 @@ where
     WV: WordVar<F, NativeWord = W>,
 {
     fn generate_constraints(self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
-        todo!();
+        // Get the public inputs/outputs
+        let (in_cpu_state, out_cpu_state) =
+            CpuStateVar::<WV, _>::new_inout(ns!(cs, "cpu state"), || Ok(self.cpu_state_inout))?;
+        let (in_evals, out_evals) =
+            TranscriptCheckerEvalsVar::new_inout(ns!(cs, "evals"), || Ok(self.evals_inout))?;
+
+        // Get the witnesses
+        let chal_var = FpVar::new_witness(ns!(cs, "chal"), || Ok(self.chal))?;
+        let instr_load_var =
+            ProcessedTranscriptEntryVar::<WV, _>::new_witness(ns!(cs, "instr load"), || {
+                Ok(self.instr_load)
+            })?;
+        let mem_op_var =
+            ProcessedTranscriptEntryVar::<WV, _>::new_witness(ns!(cs, "mem op"), || {
+                Ok(self.mem_op)
+            })?;
+
+        todo!()
+
+        /*
+        let (computed_cpu_state, computed_evals) = transcript_checker::<NUM_REGS, _, _>(
+            self.arch,
+            &in_cpu_state,
+            &self.chal,
+            instr_load_var,
+            mem_op_var,
+            &mem_sorted_transcript_triple,
+            &evals,
+        );
+        */
     }
 }

@@ -33,7 +33,7 @@ use rand::Rng;
 /// A timestamp in the memory access transcript
 type Timestamp = u64;
 /// A timestamp in the memory access transcript, in ZK land
-type TimestampVar<F> = FpVar<F>;
+pub type TimestampVar<F> = FpVar<F>;
 
 /// The offset to use when witnessing transcript entries. This gives us room for no-op entries at
 /// the beginning. We only really need 1 padding element.
@@ -90,7 +90,7 @@ impl<F: PrimeField> AllocVar<F, F> for RunningEvalVar<F> {
 }
 
 /// The kind of memory operation: load, store, read primary tape or read aux tape, in ZK land
-type MemOpKindVar<F> = FpVar<F>;
+pub type MemOpKindVar<F> = FpVar<F>;
 
 /// This is the placeholder transcript entry that MUST begin the memory-ordered transcript. This is
 /// never interpreted by the program, and its encoded values do not represent memory state.
@@ -170,13 +170,13 @@ impl<W: Word> ProcessedTranscriptEntry<W> {
 /// This is a transcript entry with just 1 associated memory operation, and a padding flag. This is
 /// easier to directly use than a [`TranscriptEntry`]
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct ProcessedTranscriptEntry<W: Word> {
+pub struct ProcessedTranscriptEntry<W: Word> {
     /// Tells whether or not this entry is padding
-    is_padding: bool,
+    pub is_padding: bool,
     /// The timestamp of this entry. This MUST be greater than 0
-    timestamp: u64,
+    pub timestamp: Timestamp,
     /// The memory operation that occurred at this timestamp
-    mem_op: MemOp<W>,
+    pub mem_op: MemOp<W>,
 }
 
 impl<W: Word> ProcessedTranscriptEntry<W> {
@@ -278,7 +278,7 @@ impl<W: WordVar<F>, F: PrimeField> AllocVar<ProcessedTranscriptEntry<W::NativeWo
 /// The ZK version of `ProcessedTranscriptEntry`. It's also flattened so all the fields are right
 /// here.
 #[derive(Clone)]
-pub(crate) struct ProcessedTranscriptEntryVar<W: WordVar<F>, F: PrimeField> {
+pub struct ProcessedTranscriptEntryVar<W: WordVar<F>, F: PrimeField> {
     /// Tells whether or not this entry is padding
     pub(crate) is_padding: Boolean<F>,
     /// The timestamp of this entry. This is at most 64 bits
@@ -501,7 +501,7 @@ pub struct TranscriptCheckerEvalsVar<F: PrimeField> {
 /// # Requires
 ///
 /// `mem_tr_adj_seq` MUST have length 3;
-fn transcript_checker<const NUM_REGS: usize, W: WordVar<F>, F: PrimeField>(
+pub fn transcript_checker<const NUM_REGS: usize, W: WordVar<F>, F: PrimeField>(
     arch: TinyRamArch,
     cpu_state: &CpuStateVar<W, F>,
     chal: &FpVar<F>,
