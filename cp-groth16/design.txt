@@ -59,22 +59,22 @@ the initial and final commitments, which contain chal as the 0-th elem in the at
 
 Pre-challenge and post-challenge vars
 Pre: trace
-post: cpu state, chal
-
+Post: cpu state, chal
 
 Prechallenge constraint system:
-do some allocation (witness)
+do some allocation (input)
 have some constraints
 pass this into function f
 
 Compute chal from all commitments
 
 Postchallenge constraint system #1:
-Witness chal
-Witness out cpu state
+Input chal
+Input in CPU state
 
 Postchallenge constraint system #2:
-Witness out CPU state
+Input chal (yes, repeated because we need to have the same structure as post system #1)
+Input out CPU state
 
 With these 3 constraint systems, we can now do the Commit SRS setup for CP-Groth16
 

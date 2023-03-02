@@ -8,6 +8,7 @@ edition = "2021"
 [dependencies]
 ark-ec = "0.4.1"
 ark-ff = "0.4.1"
+ark-groth16 = "0.4.0"
 ark-poly = "0.4.1"
 ark-relations = "0.4.0"
 ark-serialize = "0.4.1"

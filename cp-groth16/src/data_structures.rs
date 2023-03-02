@@ -121,7 +121,7 @@ pub struct ProvingKey<E: Pairing> {
     pub h_query: Vec<E::G1Affine>,
     /// The elements `l_i * G` in `E::G1`.
     pub l_query: Vec<E::G1Affine>,
-    /// A vec where element j is `etaⱼ^{-1} * (beta * a_i + alpha * b_i + c_i) * H`, where `H` is
-    /// the generator of `E::G1`.
-    pub etas_abc_g1: Vec<E::G1Affine>,
+    /// A vec where element `(j,i)` is`etaⱼ^{-1} * (beta * a_i + alpha * b_i + c_i) * H`, where `H`
+    /// is the generator of `E::G1`.
+    pub etas_abc_g1: Vec<Vec<E::G1Affine>>,
 }

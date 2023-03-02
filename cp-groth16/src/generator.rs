@@ -1,11 +1,20 @@
+use crate::{
+    data_structures::ProvingKey, data_structures::VerifyingKey, InputAllocator,
+    MultistageConstraintSystem,
+};
+
+use core::iter;
+use core::ops::Deref;
+use std::boxed::Box;
+
 use ark_ec::{pairing::Pairing, scalar_mul::fixed_base::FixedBase, CurveGroup, Group};
 use ark_ff::{Field, PrimeField, UniformRand, Zero};
+use ark_groth16::r1cs_to_qap::R1CSToQAP;
 use ark_poly::{EvaluationDomain, GeneralEvaluationDomain};
 use ark_relations::r1cs::{
     ConstraintSynthesizer, ConstraintSystem, OptimizationGoal, SynthesisError, SynthesisMode,
 };
-use ark_std::rand::Rng;
-use ark_std::{cfg_into_iter, cfg_iter};
+use ark_std::{cfg_into_iter, cfg_iter, end_timer, rand::Rng, start_timer};
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -13,28 +22,35 @@ use rayon::prelude::*;
 /// Generates a random common reference string for
 /// a circuit using the provided R1CS-to-QAP reduction.
 #[inline]
-pub fn generate_random_parameters_with_reduction<C, E>(
+pub fn generate_random_parameters_with_reduction<C, E, QAP>(
+    preallocators: &[Box<dyn InputAllocator<E::ScalarField>>],
     circuit: C,
     rng: &mut impl Rng,
 ) -> Result<ProvingKey<E>, SynthesisError>
 where
     C: ConstraintSynthesizer<E::ScalarField>,
     E: Pairing,
+    QAP: R1CSToQAP,
 {
     let alpha = E::ScalarField::rand(rng);
     let beta = E::ScalarField::rand(rng);
     let gamma = E::ScalarField::rand(rng);
     let delta = E::ScalarField::rand(rng);
+    let etas = iter::repeat_with(|| E::ScalarField::rand(rng))
+        .take(preallocators.len())
+        .collect();
 
     let g1_generator = E::G1::rand(rng);
     let g2_generator = E::G2::rand(rng);
 
-    Self::generate_parameters_with_qap(
+    generate_parameters_with_qap::<_, _, QAP>(
+        preallocators,
         circuit,
         alpha,
         beta,
         gamma,
         delta,
+        etas,
         g1_generator,
         g2_generator,
         rng,
@@ -42,35 +58,49 @@ where
 }
 
 /// Create parameters for a circuit, given some toxic waste, R1CS to QAP calculator and group generators
-pub fn generate_parameters_with_qap<C, E>(
+pub fn generate_parameters_with_qap<C, E, QAP>(
+    preallocators: &[Box<dyn InputAllocator<E::ScalarField>>],
     circuit: C,
     alpha: E::ScalarField,
     beta: E::ScalarField,
     gamma: E::ScalarField,
     delta: E::ScalarField,
+    etas: Vec<E::ScalarField>,
     g1_generator: E::G1,
     g2_generator: E::G2,
     rng: &mut impl Rng,
-) -> R1CSResult<ProvingKey<E>>
+) -> Result<ProvingKey<E>, SynthesisError>
 where
     C: ConstraintSynthesizer<E::ScalarField>,
     E: Pairing,
+    QAP: R1CSToQAP,
 {
     type D<F> = GeneralEvaluationDomain<F>;
 
     let setup_time = start_timer!(|| "Groth16::Generator");
-    let cs = ConstraintSystem::new_ref();
-    cs.set_optimization_goal(OptimizationGoal::Constraints);
-    cs.set_mode(SynthesisMode::Setup);
+    let mut mscs = MultistageConstraintSystem::default();
+    mscs.cs.set_optimization_goal(OptimizationGoal::Constraints);
+    mscs.cs.set_mode(SynthesisMode::Setup);
+
+    // Run preallocation
+    for a in preallocators {
+        mscs.alloc_stage(a.deref())?;
+    }
 
     // Synthesize the circuit.
     let synthesis_time = start_timer!(|| "Constraint synthesis");
-    circuit.generate_constraints(cs.clone())?;
+    circuit.generate_constraints(mscs.cs.clone())?;
     end_timer!(synthesis_time);
 
     let lc_time = start_timer!(|| "Inlining LCs");
-    cs.finalize();
+    mscs.cs.finalize();
     end_timer!(lc_time);
+
+    // Deconstruct the multistage constraint system
+    let MultistageConstraintSystem {
+        cs,
+        instance_var_idx_ranges,
+    } = mscs;
 
     // Following is the mapping of symbols from the Groth16 paper to this implementation
     // l -> num_instance_variables
@@ -108,14 +138,42 @@ where
 
     let scalar_bits = E::ScalarField::MODULUS_BIT_SIZE as usize;
 
-    let gamma_inverse = gamma.inverse().ok_or(SynthesisError::UnexpectedIdentity)?;
-    let delta_inverse = delta.inverse().ok_or(SynthesisError::UnexpectedIdentity)?;
+    // Step 1: For each pre-allocation stage, compute the polynomial corresponding to the instances
+    // in that stage
 
-    let gamma_abc = cfg_iter!(a[..num_instance_variables])
-        .zip(&b[..num_instance_variables])
-        .zip(&c[..num_instance_variables])
+    let mut etas_abc = Vec::new();
+    for (eta, range) in etas.iter().zip(instance_var_idx_ranges.iter()) {
+        let eta_inverse = eta.inverse().ok_or(SynthesisError::UnexpectedIdentity)?;
+
+        let eta_abc = cfg_iter!(a[range.clone()])
+            .zip(&b[range.clone()])
+            .zip(&c[range.clone()])
+            .map(|((a, b), c)| (beta * a + &(alpha * b) + c) * &eta_inverse)
+            .collect::<Vec<_>>();
+
+        etas_abc.push(eta_abc);
+    }
+
+    //
+    // Step 2: Compute the polynomial correpsonding to the remaining public inputs
+    //
+
+    // Get the index of the first instance variable that's not preallocated
+    let first_inst_var = instance_var_idx_ranges.last().map(|r| r.end).unwrap_or(0);
+
+    // Compute the gamma ABCs
+    let gamma_inverse = gamma.inverse().ok_or(SynthesisError::UnexpectedIdentity)?;
+    let gamma_abc = cfg_iter!(a[first_inst_var..num_instance_variables])
+        .zip(&b[first_inst_var..num_instance_variables])
+        .zip(&c[first_inst_var..num_instance_variables])
         .map(|((a, b), c)| (beta * a + &(alpha * b) + c) * &gamma_inverse)
         .collect::<Vec<_>>();
+
+    //
+    // Step 3: Compute the polynomial corresponding to the witnesses
+    //
+
+    let delta_inverse = delta.inverse().ok_or(SynthesisError::UnexpectedIdentity)?;
 
     let l = cfg_iter!(a[num_instance_variables..])
         .zip(&b[num_instance_variables..])
@@ -152,6 +210,10 @@ where
     let beta_g2 = g2_generator.mul_bigint(&beta.into_bigint());
     let delta_g1 = g1_generator.mul_bigint(&delta.into_bigint());
     let delta_g2 = g2_generator.mul_bigint(&delta.into_bigint());
+    let etas_g2 = etas
+        .iter()
+        .map(|e| g2_generator.mul_bigint(&e.into_bigint()).into_affine())
+        .collect();
 
     // Compute the A-query
     let a_time = start_timer!(|| "Calculate A");
@@ -188,6 +250,15 @@ where
     let verifying_key_time = start_timer!(|| "Generate the R1CS verification key");
     let gamma_g2 = g2_generator.mul_bigint(&gamma.into_bigint());
     let gamma_abc_g1 = FixedBase::msm::<E::G1>(scalar_bits, g1_window, &g1_table, &gamma_abc);
+    let etas_abc_g1 = etas_abc
+        .into_iter()
+        .map(|v| {
+            FixedBase::msm::<E::G1>(scalar_bits, g1_window, &g1_table, &v)
+                .into_iter()
+                .map(CurveGroup::into_affine)
+                .collect()
+        })
+        .collect();
 
     drop(g1_table);
 
@@ -198,6 +269,7 @@ where
         beta_g2: beta_g2.into_affine(),
         gamma_g2: gamma_g2.into_affine(),
         delta_g2: delta_g2.into_affine(),
+        etas_g2,
         gamma_abc_g1: E::G1::normalize_batch(&gamma_abc_g1),
     };
 
@@ -219,5 +291,6 @@ where
         b_g2_query,
         h_query,
         l_query,
+        etas_abc_g1,
     })
 }
