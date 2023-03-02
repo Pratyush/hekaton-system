@@ -1,0 +1,84 @@
+// Make a new kind of constraint system
+// This contains a new kind of counter. One for public inputs
+// This will require updating the constraint system too
+struct NewConstraintSystem
+
+struct CommittedInput {
+    // fields here
+}
+
+struct CommittedInputVars {
+    // fields here
+}
+
+impl CommittedInput {
+    fn alloc(&self) -> CommittedInputVars {
+        // Do normal AllocVar::new_input() allocations
+    }
+}
+
+// Need this because the underlying cs() needs to be used for the circuit
+impl R1CSVar for CommittedInputVar {
+    fn cs() -> NewConstraintSystem;
+}
+
+struct TranscriptCheckerCircuit {
+    // Pre-allocated values
+        com_input: CommittedInputVars,
+    // Constants
+    // Public inputs
+    // Private inputs
+}
+
+impl ConstraintSynthesizer for TranscriptCheckerCircuit {
+    type PreAllocInput = CommittedInput;
+
+    fn generate_constraints(&self, com_input: Self::PreAllocInput) {
+        let cs = com_input.cs();
+
+        // Do all the normal allocations
+        // Use self.com_input as allocated content
+    }
+}
+
+// PROBLEM: cs is input to generate_constraints. Also where does the CS processing happen?
+
+---
+
+We use committed inputs to commit to the trace before hashing it and getting the SZ challenge
+
+What ends up being a public input:
+The challenge
+The running evals (bc they're derived from the challenge)
+The state (or not; it can be public input bc it's a deterministic function of the committed inputs)
+
+We should do committed input/output. It's both faster and more succinct
+
+Everything will be committed. Even chal. We will check chal at the end of computation by opening
+the initial and final commitments, which contain chal as the 0-th elem in the attribute set.
+
+Pre-challenge and post-challenge vars
+Pre: trace
+post: cpu state, chal
+
+
+Prechallenge constraint system:
+do some allocation (witness)
+have some constraints
+pass this into function f
+
+Compute chal from all commitments
+
+Postchallenge constraint system #1:
+Witness chal
+Witness out cpu state
+
+Postchallenge constraint system #2:
+Witness out CPU state
+
+With these 3 constraint systems, we can now do the Commit SRS setup for CP-Groth16
+
+Postchallenge constraint system #3:
+Run TranscriptCheckerCircuit, taking as input all the vars that have been allocated so far
+    So ALL vars must be in this CS and consistent
+    Prechallenge cs -> post #1 -> post #2 -> post #3

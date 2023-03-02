@@ -3,6 +3,7 @@
 members = [
     "aggregatable-zkcpu",
     "tinyram-emu",
+    "cp-groth16",
 ]
 
 [profile.release]
