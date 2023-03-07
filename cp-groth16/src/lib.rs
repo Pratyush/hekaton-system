@@ -6,18 +6,19 @@ use ark_groth16::r1cs_to_qap::{LibsnarkReduction, R1CSToQAP};
 use ark_relations::r1cs::{ConstraintSystem, ConstraintSystemRef, SynthesisError};
 use ark_std::vec::Vec;
 
-mod data_structures;
-mod generator;
-mod verifier;
+pub mod committer;
+pub mod data_structures;
+pub mod generator;
+pub mod verifier;
 
 /// Represents a constraint system whose variables come from a number of distinct allocation
 /// stages. Each allocation stage happens separately, and adds to the total instance variable
 /// count.
-struct MultistageConstraintSystem<F: Field> {
-    cs: ConstraintSystemRef<F>,
+pub struct MultistageConstraintSystem<F: Field> {
+    pub cs: ConstraintSystemRef<F>,
     /// Keeps track of the instance variables. The value at element `i` is the set of instance
     /// variable indices in `self.cs` that correspond to stage `i` of allocation
-    instance_var_idx_ranges: Vec<Range<usize>>,
+    pub instance_var_idx_ranges: Vec<Range<usize>>,
 }
 
 impl<F: Field> Default for MultistageConstraintSystem<F> {
@@ -31,12 +32,12 @@ impl<F: Field> Default for MultistageConstraintSystem<F> {
 
 /// Defines a way for a type to allocate all its content as _instances_ or _constants_. It can
 /// allocate witnesses too, but only the instances will be committed to.
-trait InputAllocator<F: Field> {
+pub trait InputAllocator<F: Field> {
     fn alloc(&self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError>;
 }
 
 impl<F: Field> MultistageConstraintSystem<F> {
-    fn alloc_stage(&mut self, val: &dyn InputAllocator<F>) -> Result<(), SynthesisError> {
+    pub fn alloc_stage(&mut self, val: &dyn InputAllocator<F>) -> Result<(), SynthesisError> {
         // Mark the starting variable index (inclusive)
         let start_var_idx = self.cs.num_instance_variables();
         // Run the allocation routine

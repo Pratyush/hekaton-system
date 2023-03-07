@@ -3,7 +3,6 @@ use crate::data_structures::{PreparedVerifyingKey, VerifyingKey};
 use core::ops::Neg;
 
 use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup};
-use ark_ff::PrimeField;
 
 /// Prepare the verifying key `vk` for use in proof verification.
 pub fn prepare_verifying_key<E: Pairing>(vk: &VerifyingKey<E>) -> PreparedVerifyingKey<E> {

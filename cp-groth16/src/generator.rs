@@ -11,9 +11,7 @@ use ark_ec::{pairing::Pairing, scalar_mul::fixed_base::FixedBase, CurveGroup, Gr
 use ark_ff::{Field, PrimeField, UniformRand, Zero};
 use ark_groth16::r1cs_to_qap::R1CSToQAP;
 use ark_poly::{EvaluationDomain, GeneralEvaluationDomain};
-use ark_relations::r1cs::{
-    ConstraintSynthesizer, ConstraintSystem, OptimizationGoal, SynthesisError, SynthesisMode,
-};
+use ark_relations::r1cs::{ConstraintSynthesizer, OptimizationGoal, SynthesisError, SynthesisMode};
 use ark_std::{cfg_into_iter, cfg_iter, end_timer, rand::Rng, start_timer};
 
 #[cfg(feature = "parallel")]

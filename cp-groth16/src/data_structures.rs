@@ -125,3 +125,25 @@ pub struct ProvingKey<E: Pairing> {
     /// is the generator of `E::G1`.
     pub etas_abc_g1: Vec<Vec<E::G1Affine>>,
 }
+
+////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////
+
+/// Holds all the elements from [`ProvingKey`] necessary to commit to inputs
+#[derive(Clone, Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
+pub struct CommittingKey<E: Pairing> {
+    /// The element `delta * G` in `E::G1`.
+    pub delta_g1: E::G1Affine,
+    /// A vec where element `(j,i)` is`etaⱼ^{-1} * (beta * a_i + alpha * b_i + c_i) * H`, where `H`
+    /// is the generator of `E::G1`.
+    pub etas_abc_g1: Vec<Vec<E::G1Affine>>,
+}
+
+/// Represents the commitment to a set of Groth16 inputs
+#[derive(Clone, Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
+pub struct InputCom<E: Pairing>(pub E::G1Affine);
+
+/// Represents the secret randomness used to blind an [`InputCom`]. Once the proof is done, this
+/// should be deleted
+#[derive(Clone, Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
+pub struct InputComRandomness<E: Pairing>(pub E::ScalarField);
