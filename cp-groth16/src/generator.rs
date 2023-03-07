@@ -1,6 +1,6 @@
 use crate::{
-    data_structures::ProvingKey, data_structures::VerifyingKey, InputAllocator,
-    MultistageConstraintSystem,
+    data_structures::ProvingKey, data_structures::VerifyingKey, MultistageConstraintSystem,
+    PlaceholderInputAllocator,
 };
 
 use core::iter;
@@ -21,7 +21,7 @@ use rayon::prelude::*;
 /// a circuit using the provided R1CS-to-QAP reduction.
 #[inline]
 pub fn generate_random_parameters_with_reduction<C, E, QAP>(
-    preallocators: &[Box<dyn InputAllocator<E::ScalarField>>],
+    preallocators: &[Box<dyn PlaceholderInputAllocator<E::ScalarField>>],
     circuit: C,
     rng: &mut impl Rng,
 ) -> Result<ProvingKey<E>, SynthesisError>
@@ -57,7 +57,7 @@ where
 
 /// Create parameters for a circuit, given some toxic waste, R1CS to QAP calculator and group generators
 pub fn generate_parameters_with_qap<C, E, QAP>(
-    preallocators: &[Box<dyn InputAllocator<E::ScalarField>>],
+    preallocators: &[Box<dyn PlaceholderInputAllocator<E::ScalarField>>],
     circuit: C,
     alpha: E::ScalarField,
     beta: E::ScalarField,
@@ -82,7 +82,7 @@ where
 
     // Run preallocation
     for a in preallocators {
-        mscs.alloc_stage(a.deref())?;
+        mscs.run_placeholder_allocator(a.deref())?;
     }
 
     // Synthesize the circuit.
