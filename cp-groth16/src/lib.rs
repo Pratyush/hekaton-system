@@ -1,4 +1,4 @@
-use core::{marker::PhantomData, ops::Range};
+use core::ops::Range;
 
 use ark_ec::pairing::Pairing;
 use ark_ff::Field;
@@ -153,7 +153,7 @@ pub fn verify_proof_with_prepared_inputs<E: Pairing>(
 ) -> Result<bool, SynthesisError> {
     use core::iter::once;
 
-    // Todo: Put this stuff in a PreparedVerifyingKey
+    // TODO: Put this stuff in a PreparedVerifyingKey
     let alpha_g1_beta_g2 = E::pairing(vk.alpha_g1, vk.beta_g2).0;
     let gamma_g2_neg_pc: E::G2Prepared = vk.gamma_g2.into_group().neg().into_affine().into();
     let delta_g2_neg_pc: E::G2Prepared = vk.delta_g2.into_group().neg().into_affine().into();
@@ -176,4 +176,92 @@ pub fn verify_proof_with_prepared_inputs<E: Pairing>(
     let test = E::final_exponentiation(qap).ok_or(SynthesisError::UnexpectedIdentity)?;
 
     Ok(test.0 == alpha_g1_beta_g2)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use ark_bls12_381::Fr as F;
+    use ark_ff::UniformRand;
+    use ark_r1cs_std::{alloc::AllocVar, eq::EqGadget, fields::fp::FpVar};
+    use ark_relations::{
+        ns,
+        r1cs::{ConstraintSystem, ConstraintSystemRef, SynthesisError},
+    };
+    use ark_std::test_rng;
+
+    /// A circuit that proves knowledge of a zero for a given polynomial
+    struct PolynZeroCircuit {
+        // Coefficients of a polynomial, from lowest to highest degree
+        polyn: Vec<F>,
+        // The alleged root of the polynomial
+        root: F,
+    }
+
+    impl ConstraintSynthesizer<F> for PolynZeroCircuit {
+        fn generate_constraints(self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
+            let polyn_var = self
+                .polyn
+                .into_iter()
+                .map(|c| FpVar::new_input(ns!(cs, "coeff"), || Ok(c)))
+                .collect::<Result<Vec<_>, _>>()?;
+            // The X on which we evaluate P(X). This should be 0
+            let x_var = FpVar::new_witness(ns!(cs, "root"), || Ok(self.root))?;
+
+            // Evaluate the polynomial
+            let mut poly_eval = FpVar::Constant(F::ZERO);
+            let mut pow_x = FpVar::Constant(F::ONE);
+            for coeff in polyn_var {
+                poly_eval += coeff * &pow_x;
+                pow_x *= &x_var;
+            }
+
+            // Assert that it's a root
+            poly_eval.enforce_equal(&FpVar::Constant(F::ZERO))?;
+
+            Ok(())
+        }
+    }
+
+    // Do a Groth16 test that involves no commitment
+    #[test]
+    fn nocommit() {
+        let mut rng = test_rng();
+
+        // Pick a root, then make a degree 10 polyn with that root
+        let deg = 10;
+        let root = F::rand(&mut rng);
+        // Start with P(X) = X - root
+        let mut polyn = vec![-root, F::ONE];
+        // Now iteratively compute P'(X) = P(X) * (X - r) for some random r each time
+        for _ in 0..deg - 1 {
+            let rand_root = F::rand(&mut rng);
+            // Multiply everything by X, i.e., shift all the coeffs down
+            polyn.insert(0, F::ZERO);
+            // Subtract rP(X)
+            for i in 0..polyn.len() - 1 {
+                let tmp = polyn[i + 1];
+                polyn[i] -= rand_root * tmp;
+            }
+        }
+
+        // Check that P(root) == 0
+        let mut poly_eval = F::ZERO;
+        let mut pow_x = F::ONE;
+        for c in polyn.iter() {
+            poly_eval += c * &pow_x;
+            pow_x *= root;
+            println!("poly eval == {poly_eval}");
+        }
+        assert_eq!(poly_eval, F::ZERO);
+
+        // Now run the circuit and make sure it succeeds
+        let circuit = PolynZeroCircuit { polyn, root };
+        let cs = ConstraintSystem::new_ref();
+        circuit.generate_constraints(cs.clone()).unwrap();
+        assert!(cs.is_satisfied().unwrap());
+
+        //let polyn = core::iter::repeat_with(|| F::rand(&mut rng) - root).take(
+    }
 }
