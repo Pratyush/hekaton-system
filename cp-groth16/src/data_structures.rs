@@ -105,25 +105,14 @@ impl<E: Pairing> Default for PreparedVerifyingKey<E> {
 /// The prover key for for the Groth16 zkSNARK.
 #[derive(Clone, Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct ProvingKey<E: Pairing> {
-    /// The underlying verification key.
-    pub vk: VerifyingKey<E>,
-    /// The element `beta * G` in `E::G1`.
-    pub beta_g1: E::G1Affine,
-    /// The element `delta * G` in `E::G1`.
-    pub delta_g1: E::G1Affine,
-    /// The elements `a_i * G` in `E::G1`.
-    pub a_query: Vec<E::G1Affine>,
-    /// The elements `b_i * G` in `E::G1`.
-    pub b_g1_query: Vec<E::G1Affine>,
-    /// The elements `b_i * H` in `E::G2`.
-    pub b_g2_query: Vec<E::G2Affine>,
-    /// The elements `h_i * G` in `E::G1`.
-    pub h_query: Vec<E::G1Affine>,
-    /// The elements `l_i * G` in `E::G1`.
-    pub l_query: Vec<E::G1Affine>,
-    /// A vec where element `(j,i)` is`etaⱼ^{-1} * (beta * a_i + alpha * b_i + c_i) * H`, where `H`
-    /// is the generator of `E::G1`.
-    pub etas_abc_g1: Vec<Vec<E::G1Affine>>,
+    /// The proving key for the Groth16 instance, not including any of the committing bits
+    pub g16_pk: ark_groth16::ProvingKey<E>,
+    /// The underlying committing key.
+    pub ck: CommittingKey<E>,
+    /// The elements `etaᵢ * G` in `E::G1`.
+    pub etas_g1: Vec<E::G1Affine>,
+    /// The elements `etaᵢ * H` in `E::G2`.
+    pub etas_g2: Vec<E::G2Affine>,
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -140,10 +129,8 @@ pub struct CommittingKey<E: Pairing> {
 }
 
 /// Represents the commitment to a set of Groth16 inputs
-#[derive(Clone, Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
-pub struct InputCom<E: Pairing>(pub E::G1Affine);
+pub type InputCom<E> = <E as Pairing>::G1Affine;
 
 /// Represents the secret randomness used to blind an [`InputCom`]. Once the proof is done, this
 /// should be deleted
-#[derive(Clone, Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
-pub struct InputComRandomness<E: Pairing>(pub E::ScalarField);
+pub type InputComRandomness<E> = <E as Pairing>::ScalarField;

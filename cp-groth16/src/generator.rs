@@ -1,6 +1,6 @@
 use crate::{
-    data_structures::ProvingKey, data_structures::VerifyingKey, MultistageConstraintSystem,
-    PlaceholderInputAllocator,
+    data_structures::{CommittingKey, ProvingKey, VerifyingKey},
+    MultistageConstraintSystem, PlaceholderInputAllocator,
 };
 
 use core::iter;
@@ -161,11 +161,15 @@ where
 
     // Compute the gamma ABCs
     let gamma_inverse = gamma.inverse().ok_or(SynthesisError::UnexpectedIdentity)?;
-    let gamma_abc = cfg_iter!(a[first_inst_var..num_instance_variables])
+    let mut gamma_abc = cfg_iter!(a[first_inst_var..num_instance_variables])
         .zip(&b[first_inst_var..num_instance_variables])
         .zip(&c[first_inst_var..num_instance_variables])
         .map(|((a, b), c)| (beta * a + &(alpha * b) + c) * &gamma_inverse)
         .collect::<Vec<_>>();
+
+    // We also need to put the 0th instance var in the this list. This is the variable that's
+    // always set to 1
+    gamma_abc.insert(0, (beta * a[0] + &(alpha * b[0]) + c[0]) * &gamma_inverse);
 
     //
     // Step 3: Compute the polynomial corresponding to the witnesses
@@ -206,7 +210,8 @@ where
     let alpha_g1 = g1_generator.mul_bigint(&alpha.into_bigint());
     let beta_g1 = g1_generator.mul_bigint(&beta.into_bigint());
     let beta_g2 = g2_generator.mul_bigint(&beta.into_bigint());
-    let delta_g1 = g1_generator.mul_bigint(&delta.into_bigint());
+    let delta_g1 = g1_generator.mul_bigint(&delta.into_bigint()).into_affine();
+    let etas_g1 = FixedBase::msm::<E::G1>(scalar_bits, g1_window, &g1_table, &etas);
     let delta_g2 = g2_generator.mul_bigint(&delta.into_bigint());
     let etas_g2 = etas
         .iter()
@@ -244,10 +249,7 @@ where
 
     end_timer!(proving_key_time);
 
-    // Generate R1CS verification key
-    let verifying_key_time = start_timer!(|| "Generate the R1CS verification key");
-    let gamma_g2 = g2_generator.mul_bigint(&gamma.into_bigint());
-    let gamma_abc_g1 = FixedBase::msm::<E::G1>(scalar_bits, g1_window, &g1_table, &gamma_abc);
+    // Generate the R1CS commitment key
     let etas_abc_g1 = etas_abc
         .into_iter()
         .map(|v| {
@@ -257,17 +259,25 @@ where
                 .collect()
         })
         .collect();
+    let ck = CommittingKey {
+        delta_g1,
+        etas_abc_g1,
+    };
+
+    // Generate R1CS verification key
+    let verifying_key_time = start_timer!(|| "Generate the R1CS verification key");
+    let gamma_g2 = g2_generator.mul_bigint(&gamma.into_bigint());
+    let gamma_abc_g1 = FixedBase::msm::<E::G1>(scalar_bits, g1_window, &g1_table, &gamma_abc);
 
     drop(g1_table);
 
     end_timer!(verifying_key_time);
 
-    let vk = VerifyingKey::<E> {
+    let g16_vk = ark_groth16::VerifyingKey::<E> {
         alpha_g1: alpha_g1.into_affine(),
         beta_g2: beta_g2.into_affine(),
         gamma_g2: gamma_g2.into_affine(),
         delta_g2: delta_g2.into_affine(),
-        etas_g2,
         gamma_abc_g1: E::G1::normalize_batch(&gamma_abc_g1),
     };
 
@@ -277,18 +287,40 @@ where
     let b_g2_query = E::G2::normalize_batch(&b_g2_query);
     let h_query = E::G1::normalize_batch(&h_query);
     let l_query = E::G1::normalize_batch(&l_query);
+    let etas_g1 = E::G1::normalize_batch(&etas_g1);
     end_timer!(batch_normalization_time);
     end_timer!(setup_time);
 
-    Ok(ProvingKey {
-        vk,
+    let g16_pk = ark_groth16::ProvingKey {
+        vk: g16_vk,
         beta_g1: beta_g1.into_affine(),
-        delta_g1: delta_g1.into_affine(),
+        delta_g1,
         a_query,
         b_g1_query,
         b_g2_query,
         h_query,
         l_query,
-        etas_abc_g1,
+    };
+
+    Ok(ProvingKey {
+        g16_pk,
+        ck,
+        etas_g1,
+        etas_g2,
     })
+}
+
+impl<E: Pairing> ProvingKey<E> {
+    /// Returns the verifying key corresponding to this proving key
+    pub fn vk(&self) -> VerifyingKey<E> {
+        let g16_vk = &self.g16_pk.vk;
+        VerifyingKey::<E> {
+            alpha_g1: g16_vk.alpha_g1.clone(),
+            beta_g2: g16_vk.beta_g2.clone(),
+            gamma_g2: g16_vk.gamma_g2.clone(),
+            delta_g2: g16_vk.delta_g2.clone(),
+            gamma_abc_g1: g16_vk.gamma_abc_g1.clone(),
+            etas_g2: self.etas_g2.clone(),
+        }
+    }
 }

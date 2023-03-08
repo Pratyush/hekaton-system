@@ -2,7 +2,6 @@ use core::{marker::PhantomData, ops::Range};
 
 use ark_ec::pairing::Pairing;
 use ark_ff::Field;
-use ark_groth16::r1cs_to_qap::{LibsnarkReduction, R1CSToQAP};
 use ark_relations::r1cs::{ConstraintSystem, ConstraintSystemRef, SynthesisError};
 use ark_std::vec::Vec;
 
@@ -109,7 +108,72 @@ impl<F: Field> MultistageConstraintSystem<F> {
     }
 }
 
-/// The SNARK of [[Groth16]](https://eprint.iacr.org/2016/260.pdf).
-pub struct Groth16<E: Pairing, QAP: R1CSToQAP = LibsnarkReduction> {
-    _p: PhantomData<(E, QAP)>,
+/// Impl the prover
+use crate::data_structures::{InputCom, InputComRandomness, Proof, ProvingKey};
+use ark_ec::{AffineRepr, CurveGroup, VariableBaseMSM};
+use ark_groth16::Groth16;
+use ark_relations::r1cs::ConstraintSynthesizer;
+use ark_std::rand::Rng;
+
+pub fn prove<C, E>(
+    rng: &mut impl Rng,
+    circuit: C,
+    pk: &ProvingKey<E>,
+    coms: Vec<InputCom<E>>,
+    com_rands: &[InputComRandomness<E>],
+) -> Result<Proof<E>, SynthesisError>
+where
+    C: ConstraintSynthesizer<E::ScalarField>,
+    E: Pairing,
+{
+    let ark_groth16::Proof { a, b, c } =
+        Groth16::<E>::create_random_proof_with_reduction(circuit, &pk.g16_pk, rng)?;
+
+    // Compute Σ [κᵢηᵢ] and subtract it from C
+    let kappas_etas_g1 =
+        E::G1::msm(&pk.etas_g1, com_rands).expect("incorrect number of commitment randomness vals");
+    let c = (c.into_group() - &kappas_etas_g1).into_affine();
+
+    Ok(Proof { a, b, c, ds: coms })
+}
+
+// Impl the verifier
+
+use data_structures::VerifyingKey;
+
+use core::ops::Neg;
+
+/// Verify a Groth16 proof `proof` against the prepared verification key `pvk` and prepared public
+/// inputs. This should be preferred over [`verify_proof`] if the instance's public inputs are
+/// known in advance.
+pub fn verify_proof_with_prepared_inputs<E: Pairing>(
+    vk: VerifyingKey<E>,
+    proof: &Proof<E>,
+    prepared_inputs: &E::G1,
+) -> Result<bool, SynthesisError> {
+    use core::iter::once;
+
+    // Todo: Put this stuff in a PreparedVerifyingKey
+    let alpha_g1_beta_g2 = E::pairing(vk.alpha_g1, vk.beta_g2).0;
+    let gamma_g2_neg_pc: E::G2Prepared = vk.gamma_g2.into_group().neg().into_affine().into();
+    let delta_g2_neg_pc: E::G2Prepared = vk.delta_g2.into_group().neg().into_affine().into();
+    let etas_g2_neg_pc = vk
+        .etas_g2
+        .into_iter()
+        .map(|p| p.into_group().neg().into_affine().into());
+
+    let lhs = once(<E::G1Affine as Into<E::G1Prepared>>::into(proof.a))
+        .chain(once(prepared_inputs.into_affine().into()))
+        .chain(once(proof.c.into()))
+        .chain(proof.ds.iter().map(E::G1Prepared::from));
+    let rhs = once(proof.b.into())
+        .chain(once(gamma_g2_neg_pc.clone()))
+        .chain(once(delta_g2_neg_pc.clone()))
+        .chain(etas_g2_neg_pc);
+
+    let qap = E::multi_miller_loop(lhs, rhs);
+
+    let test = E::final_exponentiation(qap).ok_or(SynthesisError::UnexpectedIdentity)?;
+
+    Ok(test.0 == alpha_g1_beta_g2)
 }
