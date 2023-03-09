@@ -21,9 +21,9 @@ use rayon::prelude::*;
 /// a circuit using the provided R1CS-to-QAP reduction.
 #[inline]
 pub fn generate_random_parameters_with_reduction<C, E, QAP>(
+    rng: &mut impl Rng,
     preallocators: &[Box<dyn PlaceholderInputAllocator<E::ScalarField>>],
     circuit: C,
-    rng: &mut impl Rng,
 ) -> Result<ProvingKey<E>, SynthesisError>
 where
     C: ConstraintSynthesizer<E::ScalarField>,
@@ -167,9 +167,11 @@ where
         .map(|((a, b), c)| (beta * a + &(alpha * b) + c) * &gamma_inverse)
         .collect::<Vec<_>>();
 
-    // We also need to put the 0th instance var in the this list. This is the variable that's
-    // always set to 1
-    gamma_abc.insert(0, (beta * a[0] + &(alpha * b[0]) + c[0]) * &gamma_inverse);
+    // If we haven't already, we need to put the 0th instance var in the this list. This is the
+    // variable that's always set to 1
+    if first_inst_var != 0 {
+        gamma_abc.insert(0, (beta * a[0] + &(alpha * b[0]) + c[0]) * &gamma_inverse);
+    }
 
     //
     // Step 3: Compute the polynomial corresponding to the witnesses
@@ -313,13 +315,8 @@ where
 impl<E: Pairing> ProvingKey<E> {
     /// Returns the verifying key corresponding to this proving key
     pub fn vk(&self) -> VerifyingKey<E> {
-        let g16_vk = &self.g16_pk.vk;
         VerifyingKey::<E> {
-            alpha_g1: g16_vk.alpha_g1.clone(),
-            beta_g2: g16_vk.beta_g2.clone(),
-            gamma_g2: g16_vk.gamma_g2.clone(),
-            delta_g2: g16_vk.delta_g2.clone(),
-            gamma_abc_g1: g16_vk.gamma_abc_g1.clone(),
+            g16_vk: self.g16_pk.vk.clone(),
             etas_g2: self.etas_g2.clone(),
         }
     }

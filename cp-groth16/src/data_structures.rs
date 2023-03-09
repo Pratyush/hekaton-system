@@ -32,29 +32,17 @@ impl<E: Pairing> Default for Proof<E> {
 /// A verification key in the Groth16 SNARK.
 #[derive(Clone, Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct VerifyingKey<E: Pairing> {
-    /// The `alpha * G`, where `G` is the generator of `E::G1`.
-    pub alpha_g1: E::G1Affine,
-    /// The `alpha * H`, where `H` is the generator of `E::G2`.
-    pub beta_g2: E::G2Affine,
-    /// The `gamma * H`, where `H` is the generator of `E::G2`.
-    pub gamma_g2: E::G2Affine,
-    /// The `delta * H`, where `H` is the generator of `E::G2`.
-    pub delta_g2: E::G2Affine,
+    /// The verifying key for the underlying Groth16 system
+    pub g16_vk: ark_groth16::VerifyingKey<E>,
     /// The `etaᵢ * H`, where `H` is the generator of `E::G2`.
     pub etas_g2: Vec<E::G2Affine>,
-    /// The `gamma^{-1} * (beta * a_i + alpha * b_i + c_i) * H`, where `H` is the generator of `E::G1`.
-    pub gamma_abc_g1: Vec<E::G1Affine>,
 }
 
 impl<E: Pairing> Default for VerifyingKey<E> {
     fn default() -> Self {
         Self {
-            alpha_g1: E::G1Affine::default(),
-            beta_g2: E::G2Affine::default(),
-            gamma_g2: E::G2Affine::default(),
-            delta_g2: E::G2Affine::default(),
+            g16_vk: ark_groth16::VerifyingKey::default(),
             etas_g2: Vec::new(),
-            gamma_abc_g1: Vec::new(),
         }
     }
 }
@@ -64,36 +52,15 @@ impl<E: Pairing> Default for VerifyingKey<E> {
 #[derive(Clone, Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct PreparedVerifyingKey<E: Pairing> {
     /// The unprepared verification key.
-    pub vk: VerifyingKey<E>,
-    /// The element `e(alpha * G, beta * H)` in `E::GT`.
-    pub alpha_g1_beta_g2: E::TargetField,
-    /// The element `- gamma * H` in `E::G2`, prepared for use in pairings.
-    pub gamma_g2_neg_pc: E::G2Prepared,
-    /// The element `- delta * H` in `E::G2`, prepared for use in pairings.
-    pub delta_g2_neg_pc: E::G2Prepared,
+    pub g16_pvk: ark_groth16::PreparedVerifyingKey<E>,
     /// The elements `- etaᵢ * H` in `E::G2`, prepared for use in pairings.
     pub etas_g2_neg_pc: Vec<E::G2Prepared>,
-}
-
-impl<E: Pairing> From<PreparedVerifyingKey<E>> for VerifyingKey<E> {
-    fn from(other: PreparedVerifyingKey<E>) -> Self {
-        other.vk
-    }
-}
-
-impl<E: Pairing> From<VerifyingKey<E>> for PreparedVerifyingKey<E> {
-    fn from(other: VerifyingKey<E>) -> Self {
-        crate::verifier::prepare_verifying_key(&other)
-    }
 }
 
 impl<E: Pairing> Default for PreparedVerifyingKey<E> {
     fn default() -> Self {
         Self {
-            vk: VerifyingKey::default(),
-            alpha_g1_beta_g2: E::TargetField::default(),
-            gamma_g2_neg_pc: E::G2Prepared::default(),
-            delta_g2_neg_pc: E::G2Prepared::default(),
+            g16_pvk: ark_groth16::PreparedVerifyingKey::default(),
             etas_g2_neg_pc: Vec::new(),
         }
     }
