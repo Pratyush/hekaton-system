@@ -9,16 +9,17 @@ keywords = ["cryptography", "crypto", "zero-knowledge", "snark"]
 categories = ["cryptography", "no-std"]
 
 [dependencies]
-ark-ff = {version = "0.3", default-features = false }
-ark-poly = { version = "0.3.0" }
-ark-r1cs-std = { version = "0.3", default-features = false }
-ark-relations = { version = "0.3", default-features = false }
-ark-serialize = { version = "0.3", default-features = false }
-rand = "0.8.5"
+ark-ff = {version = "0.4", default-features = false }
+ark-poly = { version = "0.4.0" }
+ark-r1cs-std = { version = "0.4", default-features = false }
+ark-relations = { version = "0.4", default-features = false }
+ark-serialize = { version = "0.4", default-features = false }
+rand = "0.8"
 tinyram-emu = { path = "../tinyram-emu" }
+cp-groth16 = { path = "../cp-groth16" }
 
 [dev-dependencies]
-ark-bls12-381 = "0.3.0"
+ark-bls12-381 = "0.4"
 
 [features]
 default = ["asm", "parallel"]

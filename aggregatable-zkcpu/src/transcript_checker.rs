@@ -13,7 +13,7 @@ use tinyram_emu::{
     TinyRamArch,
 };
 
-use ark_ff::{Field, FpParameters, PrimeField};
+use ark_ff::{Field, PrimeField};
 use ark_r1cs_std::{
     alloc::{AllocVar, AllocationMode},
     boolean::Boolean,
@@ -145,7 +145,7 @@ impl<W: Word> ProcessedTranscriptEntry<W> {
         shift += W::BITLEN;
 
         // Make sure we didn't over-pack the field element
-        assert!(shift < F::size_in_bits());
+        assert!(shift < F::MODULUS_BIT_SIZE as usize);
 
         acc
     }
@@ -312,7 +312,7 @@ impl<W: WordVar<F>, F: PrimeField> R1CSVar<F> for ProcessedTranscriptEntryVar<W,
         let is_padding = self.is_padding.value()?;
         let timestamp = {
             // Make sure the timestamp is at most a single u64
-            let repr = self.timestamp.value()?.into_repr();
+            let repr = self.timestamp.value()?.into_bigint();
             let limbs: &[u64] = repr.as_ref();
             // The number of limbs can exceed 1, but everything after the first must be 0
             assert!(limbs.iter().skip(1).all(|&x| x == 0));
@@ -320,7 +320,7 @@ impl<W: WordVar<F>, F: PrimeField> R1CSVar<F> for ProcessedTranscriptEntryVar<W,
         };
         // Get the discriminant of the memory op
         let op_disc = {
-            let repr = self.op.value()?.into_repr();
+            let repr = self.op.value()?.into_bigint();
 
             // Make sure the op kind is at most one u64
             let limbs: &[u64] = repr.as_ref();
