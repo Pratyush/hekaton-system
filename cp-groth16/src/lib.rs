@@ -79,14 +79,11 @@ impl<F: Field> MultistageConstraintSystem<F> {
         // Mark the ending variable index (exclusive)
         let end_var_idx = self.cs.num_instance_variables();
 
-        // Record the variable range. If it's empty, do nothing
-        let range = Range {
+        // Record the variable range. This may be empty. That's fine.
+        self.instance_var_idx_ranges.push(Range {
             start: start_var_idx,
             end: end_var_idx,
-        };
-        if !range.is_empty() {
-            self.instance_var_idx_ranges.push(range);
-        }
+        });
 
         Ok(out)
     }
@@ -104,14 +101,11 @@ impl<F: Field> MultistageConstraintSystem<F> {
         // Mark the ending variable index (exclusive)
         let end_var_idx = self.cs.num_instance_variables();
 
-        // Record the variable range. If it's empty, do nothing
-        let range = Range {
+        // Record the variable range. This may be empty. That's fine.
+        self.instance_var_idx_ranges.push(Range {
             start: start_var_idx,
             end: end_var_idx,
-        };
-        if !range.is_empty() {
-            self.instance_var_idx_ranges.push(range);
-        }
+        });
 
         Ok(())
     }
