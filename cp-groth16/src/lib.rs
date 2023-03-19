@@ -29,6 +29,15 @@ impl<F: Field> Default for MultistageConstraintSystem<F> {
     }
 }
 
+// TODO: refactor this crate to only use AllocVar for input allocation. The reason this doesn't
+// work right now is because
+// 1) if you just give a Box<dyn AllocVar<V, F>> to an allocator, then this isn't sufficient
+//    information for allocating a V=Vec<_>
+// 2) for placeholder allocation, you need a &[Box<dyn PlaceholderAlloc<F>>]. It's important that V
+//    is not part of the type, since otherwise it would be a heterogeneous slice. But how do you
+//    rip V out of the type of AllocVar without doing an associated type (not allowed for Box dyn)
+//    or making V the Self of the trait (what we effectively have now)?
+
 /// Defines a way for a type to allocate all its content as _instances_ or _constants_. It can
 /// allocate witnesses too, but only the instances will be committed to.
 pub trait InputAllocator<F: Field> {

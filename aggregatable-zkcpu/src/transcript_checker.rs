@@ -79,6 +79,12 @@ impl<F: PrimeField> RunningEvalVar<F> {
     }
 }
 
+impl<F: PrimeField> EqGadget<F> for RunningEvalVar<F> {
+    fn is_eq(&self, other: &Self) -> Result<Boolean<F>, SynthesisError> {
+        self.0.is_eq(&other.0)
+    }
+}
+
 impl<F: PrimeField> AllocVar<F, F> for RunningEvalVar<F> {
     fn new_variable<T: Borrow<F>>(
         cs: impl Into<Namespace<F>>,
@@ -223,10 +229,10 @@ impl<W: Word> ProcessedTranscriptEntry<W> {
     }
 }
 
-impl<W: WordVar<F>, F: PrimeField> AllocVar<ProcessedTranscriptEntry<W::NativeWord>, F>
-    for ProcessedTranscriptEntryVar<W, F>
+impl<WV: WordVar<F>, F: PrimeField> AllocVar<ProcessedTranscriptEntry<WV::NativeWord>, F>
+    for ProcessedTranscriptEntryVar<WV, F>
 {
-    fn new_variable<T: Borrow<ProcessedTranscriptEntry<W::NativeWord>>>(
+    fn new_variable<T: Borrow<ProcessedTranscriptEntry<WV::NativeWord>>>(
         cs: impl Into<Namespace<F>>,
         f: impl FnOnce() -> Result<T, SynthesisError>,
         mode: AllocationMode,
@@ -253,7 +259,7 @@ impl<W: WordVar<F>, F: PrimeField> AllocVar<ProcessedTranscriptEntry<W::NativeWo
             mode,
         )?;
         // Witness the mem op RAM idx
-        let ram_idx = W::new_variable(
+        let ram_idx = WV::new_variable(
             ns!(cs, "ram idx"),
             || entry.map(|e| e.mem_op.location()),
             mode,
@@ -278,7 +284,7 @@ impl<W: WordVar<F>, F: PrimeField> AllocVar<ProcessedTranscriptEntry<W::NativeWo
 /// The ZK version of `ProcessedTranscriptEntry`. It's also flattened so all the fields are right
 /// here.
 #[derive(Clone)]
-pub struct ProcessedTranscriptEntryVar<W: WordVar<F>, F: PrimeField> {
+pub struct ProcessedTranscriptEntryVar<WV: WordVar<F>, F: PrimeField> {
     /// Tells whether or not this entry is padding
     pub(crate) is_padding: Boolean<F>,
     /// The timestamp of this entry. This is at most 64 bits
@@ -287,17 +293,17 @@ pub struct ProcessedTranscriptEntryVar<W: WordVar<F>, F: PrimeField> {
     /// The type of memory op this is. This is determined by the discriminant of [`MemOpKind`]
     op: MemOpKindVar<F>,
     /// Either the index being loaded from or stored to
-    ram_idx: W,
+    ram_idx: WV,
     /// `ram_idx` as a field element
     ram_idx_fp: FpVar<F>,
     /// The value being loaded or stored
-    val: DWordVar<W, F>,
+    val: DWordVar<WV, F>,
     /// `val` as a field element
     val_fp: FpVar<F>,
 }
 
-impl<W: WordVar<F>, F: PrimeField> R1CSVar<F> for ProcessedTranscriptEntryVar<W, F> {
-    type Value = ProcessedTranscriptEntry<W::NativeWord>;
+impl<WV: WordVar<F>, F: PrimeField> R1CSVar<F> for ProcessedTranscriptEntryVar<WV, F> {
+    type Value = ProcessedTranscriptEntry<WV::NativeWord>;
 
     fn cs(&self) -> ConstraintSystemRef<F> {
         self.timestamp
@@ -351,13 +357,13 @@ impl<W: WordVar<F>, F: PrimeField> R1CSVar<F> for ProcessedTranscriptEntryVar<W,
     }
 }
 
-impl<W: WordVar<F>, F: PrimeField> Default for ProcessedTranscriptEntryVar<W, F> {
+impl<WV: WordVar<F>, F: PrimeField> Default for ProcessedTranscriptEntryVar<WV, F> {
     fn default() -> Self {
         ProcessedTranscriptEntryVar {
             is_padding: Boolean::TRUE,
             timestamp: TimestampVar::zero(),
             op: MemOpKindVar::zero(),
-            ram_idx: W::zero(),
+            ram_idx: WV::zero(),
             ram_idx_fp: FpVar::zero(),
             val: DWordVar::zero(),
             val_fp: FpVar::zero(),
@@ -365,7 +371,7 @@ impl<W: WordVar<F>, F: PrimeField> Default for ProcessedTranscriptEntryVar<W, F>
     }
 }
 
-impl<W: WordVar<F>, F: PrimeField> ProcessedTranscriptEntryVar<W, F> {
+impl<WV: WordVar<F>, F: PrimeField> ProcessedTranscriptEntryVar<WV, F> {
     /// Returns whether this memory operation is a load
     fn is_load(&self) -> Result<Boolean<F>, SynthesisError> {
         self.op
@@ -379,7 +385,7 @@ impl<W: WordVar<F>, F: PrimeField> ProcessedTranscriptEntryVar<W, F> {
     }
 }
 
-impl<W: WordVar<F>, F: PrimeField> ProcessedTranscriptEntryVar<W, F> {
+impl<WV: WordVar<F>, F: PrimeField> ProcessedTranscriptEntryVar<WV, F> {
     fn pow_two<G: PrimeField>(n: usize) -> FpVar<G> {
         FpVar::Constant(G::from(2u8).pow([n as u64]))
     }
@@ -411,7 +417,7 @@ impl<W: WordVar<F>, F: PrimeField> ProcessedTranscriptEntryVar<W, F> {
 
         // Encode `ram_idx` as aword
         acc += &self.ram_idx_fp * Self::pow_two(shift);
-        shift += W::NativeWord::BITLEN;
+        shift += WV::NativeWord::BITLEN;
 
         // Encode `val` as a dword
         acc += &self.val_fp * Self::pow_two(shift);
@@ -436,14 +442,14 @@ impl<W: WordVar<F>, F: PrimeField> ProcessedTranscriptEntryVar<W, F> {
     // Extracts the word at the given RAM index, returning it and an error flag. `err = true` iff
     // `self.idx` and the high (non-byte-precision) bits of `idx` are not equal, or
     // `self.is_padding == true`.
-    pub(crate) fn select_word(&self, idx: &W) -> Result<(W, Boolean<F>), SynthesisError> {
+    pub(crate) fn select_word(&self, idx: &WV) -> Result<(WV, Boolean<F>), SynthesisError> {
         // Check if this is padding
         let mut err = self.is_padding.clone();
 
         // Do the index check. Mask out the bottom bits of idx. We just need to make sure that this
         // load is the correct dword, i.e., all but the bottom bitmask bits of idx and self.ram_idx
         // match.
-        let bytes_per_word = W::BITLEN / 8;
+        let bytes_per_word = WV::BITLEN / 8;
         let word_bitmask_len = log2(bytes_per_word);
         let dword_bitmask_len = word_bitmask_len + 1;
 
@@ -463,7 +469,7 @@ impl<W: WordVar<F>, F: PrimeField> ProcessedTranscriptEntryVar<W, F> {
 
         // Now get the word-aligned index and use the lowest word bit to select the word
         let word_selector = &word_aligned_idx_bits[0];
-        let out = W::conditionally_select(word_selector, &self.val.w1, &self.val.w0)?;
+        let out = WV::conditionally_select(word_selector, &self.val.w1, &self.val.w0)?;
 
         Ok((out, err))
     }
@@ -495,21 +501,70 @@ pub struct TranscriptCheckerEvalsVar<F: PrimeField> {
     pub tr_init_accessed: RunningEvalVar<F>,
 }
 
+impl<F: PrimeField> EqGadget<F> for TranscriptCheckerEvalsVar<F> {
+    fn is_eq(&self, other: &Self) -> Result<Boolean<F>, SynthesisError> {
+        self.time_tr_exec
+            .is_eq(&other.time_tr_exec)?
+            .and(&self.mem_tr_exec.is_eq(&other.mem_tr_exec)?)?
+            .and(&self.tr_init_accessed.is_eq(&other.tr_init_accessed)?)
+    }
+}
+
+impl<F: PrimeField> AllocVar<TranscriptCheckerEvals<F>, F> for TranscriptCheckerEvalsVar<F> {
+    fn new_variable<T: Borrow<TranscriptCheckerEvals<F>>>(
+        cs: impl Into<Namespace<F>>,
+        f: impl FnOnce() -> Result<T, SynthesisError>,
+        mode: AllocationMode,
+    ) -> Result<Self, SynthesisError> {
+        let ns = cs.into();
+        let cs = ns.cs();
+
+        let res = f();
+        let evals = res.as_ref().map(|e| e.borrow()).map_err(|err| *err);
+
+        // Allocate all the fields
+        let time_tr_exec = FpVar::new_variable(
+            ns!(cs, "time tr exec"),
+            || evals.map(|e| F::from(e.time_tr_exec)),
+            mode,
+        )
+        .map(RunningEvalVar)?;
+        let mem_tr_exec = FpVar::new_variable(
+            ns!(cs, "mem tr exec"),
+            || evals.map(|e| F::from(e.mem_tr_exec)),
+            mode,
+        )
+        .map(RunningEvalVar)?;
+        let tr_init_accessed = FpVar::new_variable(
+            ns!(cs, "tr init accessed"),
+            || evals.map(|e| F::from(e.tr_init_accessed)),
+            mode,
+        )
+        .map(RunningEvalVar)?;
+
+        Ok(TranscriptCheckerEvalsVar {
+            time_tr_exec,
+            mem_tr_exec,
+            tr_init_accessed,
+        })
+    }
+}
+
 /// This function checks the time- and mem-sorted transcripts for consistency. It also accumulates
 /// both transcripts into their respective polynomial evaluations.
 ///
 /// # Requires
 ///
 /// `mem_tr_adj_seq` MUST have length 3;
-pub fn transcript_checker<const NUM_REGS: usize, W: WordVar<F>, F: PrimeField>(
+pub fn transcript_checker<const NUM_REGS: usize, WV: WordVar<F>, F: PrimeField>(
     arch: TinyRamArch,
-    cpu_state: &CpuStateVar<W, F>,
+    cpu_state: &CpuStateVar<WV, F>,
     chal: &FpVar<F>,
-    instr_load: &ProcessedTranscriptEntryVar<W, F>,
-    mem_op: &ProcessedTranscriptEntryVar<W, F>,
-    mem_tr_adj_seq: &[ProcessedTranscriptEntryVar<W, F>],
+    instr_load: &ProcessedTranscriptEntryVar<WV, F>,
+    mem_op: &ProcessedTranscriptEntryVar<WV, F>,
+    mem_tr_adj_seq: &[ProcessedTranscriptEntryVar<WV, F>],
     evals: &TranscriptCheckerEvalsVar<F>,
-) -> Result<(CpuStateVar<W, F>, TranscriptCheckerEvalsVar<F>), SynthesisError> {
+) -> Result<(CpuStateVar<WV, F>, TranscriptCheckerEvalsVar<F>), SynthesisError> {
     assert_eq!(mem_tr_adj_seq.len(), 3);
 
     // pc_load occurs at time t
