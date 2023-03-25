@@ -25,44 +25,6 @@ use rayon::prelude::*;
 type D<F> = GeneralEvaluationDomain<F>;
 
 impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
-    /// Create a Groth16 proof using randomness `r` and `s` and
-    /// the provided R1CS-to-QAP reduction, using the provided
-    /// R1CS constraint matrices.
-    #[inline]
-    pub fn create_proof_with_reduction_and_matrices(
-        pk: &ProvingKey<E>,
-        r: E::ScalarField,
-        s: E::ScalarField,
-        matrices: &ConstraintMatrices<E::ScalarField>,
-        num_inputs: usize,
-        num_constraints: usize,
-        full_assignment: &[E::ScalarField],
-    ) -> R1CSResult<Proof<E>> {
-        let prover_time = start_timer!(|| "Groth16::Prover");
-        let witness_map_time = start_timer!(|| "R1CS to QAP witness map");
-        let h = QAP::witness_map_from_matrices::<E::ScalarField, D<E::ScalarField>>(
-            matrices,
-            num_inputs,
-            num_constraints,
-            full_assignment,
-        )?;
-        end_timer!(witness_map_time);
-        let input_assignment = &full_assignment[1..num_inputs];
-        let aux_assignment = &full_assignment[num_inputs..];
-        let proof = Self::create_proof_with_assignment(
-            pk,
-            r,
-            s,
-            &h,
-            todo!(),
-            input_assignment,
-            aux_assignment,
-        )?;
-        end_timer!(prover_time);
-
-        Ok(proof)
-    }
-
     #[inline]
     fn create_proof_with_assignment(
         pk: &ProvingKey<E>,
@@ -170,74 +132,6 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
         let s = E::ScalarField::rand(rng);
 
         Self::create_proof_with_reduction(circuit, pk, r, s)
-    }
-
-    /// Create a Groth16 proof that is *not* zero-knowledge with the provided
-    /// R1CS-to-QAP reduction.
-    #[inline]
-    pub fn create_proof_with_reduction_no_zk<C>(
-        circuit: C,
-        pk: &ProvingKey<E>,
-    ) -> R1CSResult<Proof<E>>
-    where
-        C: ConstraintSynthesizer<E::ScalarField>,
-    {
-        Self::create_proof_with_reduction(
-            circuit,
-            pk,
-            E::ScalarField::zero(),
-            E::ScalarField::zero(),
-        )
-    }
-
-    /// Create a Groth16 proof using randomness `r` and `s` and the provided
-    /// R1CS-to-QAP reduction.
-    #[inline]
-    pub fn create_proof_with_reduction<C>(
-        circuit: C,
-        pk: &ProvingKey<E>,
-        r: E::ScalarField,
-        s: E::ScalarField,
-    ) -> R1CSResult<Proof<E>>
-    where
-        E: Pairing,
-        C: ConstraintSynthesizer<E::ScalarField>,
-        QAP: R1CSToQAP,
-    {
-        let prover_time = start_timer!(|| "Groth16::Prover");
-        let cs = ConstraintSystem::new_ref();
-
-        // Set the optimization goal
-        cs.set_optimization_goal(OptimizationGoal::Constraints);
-
-        // Synthesize the circuit.
-        let synthesis_time = start_timer!(|| "Constraint synthesis");
-        circuit.generate_constraints(cs.clone())?;
-        debug_assert!(cs.is_satisfied().unwrap());
-        end_timer!(synthesis_time);
-
-        let lc_time = start_timer!(|| "Inlining LCs");
-        cs.finalize();
-        end_timer!(lc_time);
-
-        let witness_map_time = start_timer!(|| "R1CS to QAP witness map");
-        let h = QAP::witness_map::<E::ScalarField, D<E::ScalarField>>(cs.clone())?;
-        end_timer!(witness_map_time);
-
-        let prover = cs.borrow().unwrap();
-        let proof = Self::create_proof_with_assignment(
-            pk,
-            r,
-            s,
-            &h,
-            todo!(),
-            &prover.instance_assignment[1..],
-            &prover.witness_assignment,
-        )?;
-
-        end_timer!(prover_time);
-
-        Ok(proof)
     }
 
     fn calculate_coeff<G: AffineRepr>(

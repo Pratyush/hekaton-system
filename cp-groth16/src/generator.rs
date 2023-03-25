@@ -143,7 +143,7 @@ where
     for (eta, range) in etas.iter().zip(instance_var_idx_ranges.iter()) {
         let eta_inverse = eta.inverse().ok_or(SynthesisError::UnexpectedIdentity)?;
 
-        let eta_abc = cfg_iter!(a[range.clone()])
+        let eta_abc = cfg_iter!(a[dbg!(range).clone()])
             .zip(&b[range.clone()])
             .zip(&c[range.clone()])
             .map(|((a, b), c)| (beta * a + &(alpha * b) + c) * &eta_inverse)
