@@ -8,7 +8,12 @@ use ark_std::vec::Vec;
 pub mod committer;
 pub mod data_structures;
 pub mod generator;
+pub mod prover;
 pub mod verifier;
+
+pub use committer::CommitmentBuilder;
+pub use data_structures::{CommittingKey, ProvingKey, VerifyingKey};
+pub use prover::Groth16;
 
 /// Represents a constraint system whose variables come from a number of distinct allocation
 /// stages. Each allocation stage happens separately, and adds to the total instance variable
@@ -112,38 +117,17 @@ impl<F: Field> MultistageConstraintSystem<F> {
 }
 
 /// Impl the prover
-use crate::data_structures::{InputCom, InputComRandomness, Proof, ProvingKey};
+use crate::data_structures::{InputCom, InputComRandomness, Proof};
 use ark_ec::{AffineRepr, CurveGroup, VariableBaseMSM};
-use ark_groth16::Groth16;
+use ark_groth16::r1cs_to_qap::R1CSToQAP;
 use ark_relations::r1cs::ConstraintSynthesizer;
 use ark_std::rand::Rng;
-
-pub fn prove<C, E>(
-    rng: &mut impl Rng,
-    circuit: C,
-    pk: &ProvingKey<E>,
-    coms: Vec<InputCom<E>>,
-    com_rands: &[InputComRandomness<E>],
-) -> Result<Proof<E>, SynthesisError>
-where
-    C: ConstraintSynthesizer<E::ScalarField>,
-    E: Pairing,
-{
-    let ark_groth16::Proof { a, b, c } =
-        Groth16::<E>::create_random_proof_with_reduction(circuit, &pk.g16_pk, rng)?;
-
-    // Compute Σ [κᵢηᵢ] and subtract it from C
-    let kappas_etas_g1 =
-        E::G1::msm(&pk.etas_g1, com_rands).expect("incorrect number of commitment randomness vals");
-    let c = (c.into_group() - &kappas_etas_g1).into_affine();
-
-    Ok(Proof { a, b, c, ds: coms })
-}
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{
+        committer::CommitmentBuilder,
         generator::generate_random_parameters_with_reduction,
         verifier::{prepare_verifying_key, verify_proof_with_prepared_inputs},
     };
@@ -158,9 +142,19 @@ mod tests {
     };
     use ark_std::test_rng;
 
+    impl InputAllocator<F> for F {
+        type AllocatedSelf = FpVar<F>;
+
+        fn alloc(&self, cs: ConstraintSystemRef<F>) -> Result<Self::AllocatedSelf, SynthesisError> {
+            FpVar::new_input(ns!(cs, "f"), || Ok(self))
+        }
+    }
+
     /// A circuit that proves knowledge of a root for a given monic polynomial
     #[derive(Clone)]
     struct PolynZeroCircuit {
+        // A committed value that must be zero
+        zero_var: FpVar<F>,
         // Coefficients of a monic polynomial, from lowest to highest degree
         polyn: Vec<F>,
         // An alleged root of the polynomial
@@ -175,10 +169,12 @@ mod tests {
                 .into_iter()
                 .map(|c| FpVar::new_input(ns!(cs, "coeff"), || Ok(c)))
                 .collect::<Result<Vec<_>, _>>()?;
+            /*
             polyn_var
                 .last()
                 .unwrap()
                 .enforce_equal(&FpVar::Constant(F::ONE))?;
+            */
 
             // The X on which we evaluate P(X)
             let x_var = FpVar::new_witness(ns!(cs, "root"), || Ok(self.root))?;
@@ -219,6 +215,7 @@ mod tests {
                 polyn[i] -= rand_root * tmp;
             }
         }
+        polyn = vec![F::ZERO; deg + 1];
 
         //
         // Sanity check
@@ -238,7 +235,8 @@ mod tests {
         //
 
         // Now run the circuit and make sure it succeeds
-        let circuit = PolynZeroCircuit {
+        let mut circuit = PolynZeroCircuit {
+            zero_var: FpVar::Constant(F::ZERO),
             polyn: polyn.clone(),
             root,
         };
@@ -250,17 +248,30 @@ mod tests {
         // Proof check
         //
 
+        let allocator = F::ZERO;
+
         // Make the proving key and compute the proof
-        let pk =
-            generate_random_parameters_with_reduction::<_, E, QAP>(&mut rng, &[], circuit.clone())
-                .unwrap();
+        let pk = generate_random_parameters_with_reduction::<_, E, QAP>(
+            &mut rng,
+            &[Box::new(allocator)],
+            circuit.clone(),
+        )
+        .unwrap();
+        let mut cb = CommitmentBuilder::<_, QAP>::new(pk.ck.clone());
+        let (com, rand, zero_var) = cb.commit(&mut rng, &allocator).unwrap();
+        circuit.zero_var = zero_var;
         // Do the proof. The empty values are because we haven't committed to anything
-        let proof = prove(&mut rng, circuit, &pk, vec![], &[]).unwrap();
+        //let proof = prove(&mut rng, circuit, &pk, vec![com], &[rand]).unwrap();
+        let proof = cb
+            .prove(&mut rng, circuit, &pk, vec![com], &[rand])
+            .unwrap();
 
         // Verify. The public input
         let pvk = prepare_verifying_key(&pk.vk());
         let inputs = polyn.to_field_elements().unwrap();
-        let prepared_inputs = Groth16::<E, QAP>::prepare_inputs(&pvk.g16_pvk, &inputs).unwrap();
+        let prepared_inputs =
+            ark_groth16::Groth16::<E, QAP>::prepare_inputs(&pvk.g16_pvk, &inputs).unwrap();
+        dbg!(pvk.g16_pvk.vk.gamma_abc_g1[0].into_group() == prepared_inputs);
         assert!(verify_proof_with_prepared_inputs(pvk, &proof, &prepared_inputs).unwrap());
 
         //let polyn = core::iter::repeat_with(|| F::rand(&mut rng) - root).take(

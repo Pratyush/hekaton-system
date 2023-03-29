@@ -1,15 +1,12 @@
-use crate::{
-    data_structures::{Proof, ProvingKey},
-    Groth16,
-};
-
 use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup, Group, VariableBaseMSM};
-use ark_ff::{Field, PrimeField, UniformRand, Zero};
-use ark_groth16::r1cs_to_qap::R1CSToQAP;
+use ark_ff::{PrimeField, UniformRand, Zero};
+use ark_groth16::{
+    r1cs_to_qap::{LibsnarkReduction, R1CSToQAP},
+    Proof as ProofWithoutComs, ProvingKey,
+};
 use ark_poly::GeneralEvaluationDomain;
 use ark_relations::r1cs::{
-    ConstraintMatrices, ConstraintSynthesizer, ConstraintSystem, OptimizationGoal,
-    Result as R1CSResult,
+    ConstraintSynthesizer, ConstraintSystem, ConstraintSystemRef, Result as R1CSResult,
 };
 use ark_std::{
     cfg_into_iter, cfg_iter, end_timer,
@@ -24,17 +21,21 @@ use rayon::prelude::*;
 
 type D<F> = GeneralEvaluationDomain<F>;
 
+/// The SNARK of [[Groth16]](https://eprint.iacr.org/2016/260.pdf).
+pub struct Groth16<E: Pairing, QAP: R1CSToQAP = LibsnarkReduction> {
+    _p: core::marker::PhantomData<(E, QAP)>,
+}
+
 impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
     #[inline]
     fn create_proof_with_assignment(
         pk: &ProvingKey<E>,
         r: E::ScalarField,
         s: E::ScalarField,
-        kappas: &[E::ScalarField],
         h: &[E::ScalarField],
         input_assignment: &[E::ScalarField],
         aux_assignment: &[E::ScalarField],
-    ) -> R1CSResult<Proof<E>> {
+    ) -> R1CSResult<ProofWithoutComs<E>> {
         let c_acc_time = start_timer!(|| "Compute C");
         let h_assignment = cfg_into_iter!(h)
             .map(|s| s.into_bigint())
@@ -54,10 +55,6 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
             .into_group()
             .mul_bigint(&r.into_bigint())
             .mul_bigint(&s.into_bigint());
-
-        // Compute Σ [κᵢηᵢ]₁
-        let kappas_etas_g1 = E::G1::msm(&pk.etas_g1, kappas)
-            .expect("incorrect number of commitment randomness vals");
 
         end_timer!(c_acc_time);
 
@@ -104,12 +101,11 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
         let mut g_c = s_g_a;
         g_c += &r_g1_b;
         g_c -= &r_s_delta_g1;
-        g_c -= &kappas_etas_g1;
         g_c += &l_aux_acc;
         g_c += &h_acc;
         end_timer!(c_time);
 
-        Ok(Proof {
+        Ok(ProofWithoutComs {
             a: g_a.into_affine(),
             b: g2_b.into_affine(),
             c: g_c.into_affine(),
@@ -121,17 +117,64 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
     /// This method samples randomness for zero knowledges via `rng`.
     #[inline]
     pub fn create_random_proof_with_reduction<C>(
+        cs: ConstraintSystemRef<E::ScalarField>,
         circuit: C,
         pk: &ProvingKey<E>,
         rng: &mut impl Rng,
-    ) -> R1CSResult<Proof<E>>
+    ) -> R1CSResult<ProofWithoutComs<E>>
     where
         C: ConstraintSynthesizer<E::ScalarField>,
     {
         let r = E::ScalarField::rand(rng);
         let s = E::ScalarField::rand(rng);
 
-        Self::create_proof_with_reduction(circuit, pk, r, s)
+        Self::create_proof_with_reduction(cs, circuit, pk, r, s)
+    }
+
+    /// Create a Groth16 proof using randomness `r` and `s` and the provided
+    /// R1CS-to-QAP reduction.
+    #[inline]
+    pub fn create_proof_with_reduction<C>(
+        cs: ConstraintSystemRef<E::ScalarField>,
+        circuit: C,
+        pk: &ProvingKey<E>,
+        r: E::ScalarField,
+        s: E::ScalarField,
+    ) -> R1CSResult<ProofWithoutComs<E>>
+    where
+        E: Pairing,
+        C: ConstraintSynthesizer<E::ScalarField>,
+        QAP: R1CSToQAP,
+    {
+        let prover_time = start_timer!(|| "Groth16::Prover");
+
+        // Synthesize the circuit.
+        let synthesis_time = start_timer!(|| "Constraint synthesis");
+        circuit.generate_constraints(cs.clone())?;
+        debug_assert!(cs.is_satisfied().unwrap());
+        end_timer!(synthesis_time);
+
+        let lc_time = start_timer!(|| "Inlining LCs");
+        cs.finalize();
+        end_timer!(lc_time);
+
+        let witness_map_time = start_timer!(|| "R1CS to QAP witness map");
+        let h = QAP::witness_map::<E::ScalarField, D<E::ScalarField>>(cs.clone())?;
+        end_timer!(witness_map_time);
+
+        let prover = cs.borrow().unwrap();
+        let proof = Self::create_proof_with_assignment(
+            pk,
+            r,
+            s,
+            &h,
+            &prover.instance_assignment[1..],
+            &prover.witness_assignment,
+        )?;
+
+        end_timer!(prover_time);
+
+        Ok(proof)
     }
 
     fn calculate_coeff<G: AffineRepr>(

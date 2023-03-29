@@ -1,5 +1,6 @@
 use crate::{
-    data_structures::{CommittingKey, InputCom, InputComRandomness},
+    data_structures::{CommittingKey, InputCom, InputComRandomness, Proof, ProvingKey},
+    prover::Groth16,
     InputAllocator, MultistageConstraintSystem,
 };
 
@@ -8,10 +9,12 @@ use core::{
     ops::{Deref, Range},
 };
 
-use ark_ec::{pairing::Pairing, scalar_mul::variable_base::VariableBaseMSM, AffineRepr};
+use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup, VariableBaseMSM};
 use ark_ff::{PrimeField, UniformRand};
 use ark_groth16::r1cs_to_qap::R1CSToQAP;
-use ark_relations::r1cs::{ConstraintSystem, SynthesisError};
+use ark_relations::r1cs::{
+    ConstraintSynthesizer, ConstraintSystem, OptimizationGoal, SynthesisError,
+};
 use ark_std::rand::Rng;
 
 /// A struct that sequentially runs [`InputAllocators`] and commits to the variables allocated therein
@@ -35,8 +38,12 @@ where
     QAP: R1CSToQAP,
 {
     pub fn new(com_key: CommittingKey<E>) -> Self {
+        // Make a new constraint system and set the optimization goal
+        let mscs = MultistageConstraintSystem::default();
+        mscs.cs.set_optimization_goal(OptimizationGoal::Constraints);
+
         CommitmentBuilder {
-            cs: MultistageConstraintSystem::default(),
+            cs: mscs,
             com_key,
             num_allocated: 0,
             _marker: PhantomData,
@@ -85,13 +92,16 @@ where
             .etas_abc_g1
             .get(self.num_allocated)
             .expect("no more values left in committing key");
-        assert_eq!(relevant_assignments.len(), relevant_group_elems.len());
+        assert_eq!(
+            dbg!(&relevant_assignments).len(),
+            relevant_group_elems.len()
+        );
 
         // Compute the commitment. First compute [J(s)/ηᵢ]₁ where i is the allocation stage we're
         // in
         let committed_val = E::G1::msm_bigint(&relevant_group_elems, &relevant_assignments);
         // Now compute the blinder [κδ]₁
-        let randomness = E::ScalarField::rand(rng);
+        let randomness = E::ScalarField::from(0u64); //E::ScalarField::rand(rng);
         let blinder = self.com_key.delta_g1.mul_bigint(randomness.into_bigint());
         // Now sum them
         let com = committed_val + blinder;
@@ -101,5 +111,37 @@ where
 
         // Return the commitment and the randomness
         Ok((com.into(), randomness, allocated_vals))
+    }
+
+    pub fn prove<C>(
+        &self,
+        rng: &mut impl Rng,
+        circuit: C,
+        pk: &ProvingKey<E>,
+        coms: Vec<InputCom<E>>,
+        com_rands: &[InputComRandomness<E>],
+    ) -> Result<Proof<E>, SynthesisError>
+    where
+        C: ConstraintSynthesizer<E::ScalarField>,
+        E: Pairing,
+    {
+        let ark_groth16::Proof { a, b, c } = Groth16::<E>::create_random_proof_with_reduction(
+            self.cs.cs.clone(),
+            circuit,
+            &pk.g16_pk,
+            rng,
+        )?;
+
+        // Compute Σ [κᵢηᵢ] and subtract it from C
+        let kappas_etas_g1 = E::G1::msm(&pk.etas_g1, com_rands)
+            .expect("incorrect number of commitment randomness vals");
+        let c = (c.into_group() - &kappas_etas_g1).into_affine();
+
+        Ok(Proof {
+            a,
+            b,
+            c,
+            ds: dbg!(coms),
+        })
     }
 }
