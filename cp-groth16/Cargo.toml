@@ -11,7 +11,7 @@ ark-ff = "0.4.1"
 ark-groth16 = "0.4.0"
 ark-poly = "0.4.1"
 ark-r1cs-std = "0.4"
-ark-relations = "0.4.0"
+ark-relations = { version = "0.4.0", features = ["std"] }
 ark-serialize = "0.4.1"
 ark-std = "0.4.0"
 

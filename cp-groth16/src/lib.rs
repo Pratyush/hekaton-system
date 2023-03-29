@@ -176,6 +176,10 @@ mod tests {
                 .enforce_equal(&FpVar::Constant(F::ONE))?;
             */
 
+            // Assert the zero var is zero
+            // NOTE: If you comment out this line, the test succeeds
+            self.zero_var.enforce_equal(&FpVar::Constant(F::ZERO))?;
+
             // The X on which we evaluate P(X)
             let x_var = FpVar::new_witness(ns!(cs, "root"), || Ok(self.root))?;
 
@@ -189,6 +193,10 @@ mod tests {
 
             // Assert that it's a root
             poly_eval.enforce_equal(&FpVar::Constant(F::ZERO))?;
+            println!(
+                "a constraints after poly_eval eq: {:?}",
+                cs.constraint_names(),
+            );
 
             Ok(())
         }
@@ -248,17 +256,20 @@ mod tests {
         // Proof check
         //
 
-        let allocator = F::ZERO;
-
-        // Make the proving key and compute the proof
+        // Generate the proving key
+        let placeholder_allocator = F::ZERO;
         let pk = generate_random_parameters_with_reduction::<_, E, QAP>(
             &mut rng,
-            &[Box::new(allocator)],
+            &[Box::new(placeholder_allocator)],
             circuit.clone(),
         )
         .unwrap();
+
+        // Create the commitment and proof
+        let allocator = F::ZERO;
         let mut cb = CommitmentBuilder::<_, QAP>::new(pk.ck.clone());
         let (com, rand, zero_var) = cb.commit(&mut rng, &allocator).unwrap();
+        // Add the committed variable to the circuit context
         circuit.zero_var = zero_var;
         // Do the proof. The empty values are because we haven't committed to anything
         //let proof = prove(&mut rng, circuit, &pk, vec![com], &[rand]).unwrap();
@@ -266,7 +277,7 @@ mod tests {
             .prove(&mut rng, circuit, &pk, vec![com], &[rand])
             .unwrap();
 
-        // Verify. The public input
+        // Verify
         let pvk = prepare_verifying_key(&pk.vk());
         let inputs = polyn.to_field_elements().unwrap();
         let prepared_inputs =

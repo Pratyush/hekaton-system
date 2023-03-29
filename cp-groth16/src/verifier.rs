@@ -29,10 +29,12 @@ pub fn verify_proof_with_prepared_inputs<E: Pairing>(
 
     let lhs = once(<E::G1Affine as Into<E::G1Prepared>>::into(proof.a))
         .chain(once(prepared_inputs.into_affine().into()))
-        .chain(once(proof.c.into())); //.chain(proof.ds.iter().map(E::G1Prepared::from));
+        .chain(once(proof.c.into()))
+        .chain(proof.ds.iter().map(E::G1Prepared::from));
     let rhs = once(proof.b.into())
         .chain(once(pvk.g16_pvk.gamma_g2_neg_pc.clone()))
-        .chain(once(pvk.g16_pvk.delta_g2_neg_pc.clone())); //.chain(pvk.etas_g2_neg_pc);
+        .chain(once(pvk.g16_pvk.delta_g2_neg_pc.clone()))
+        .chain(pvk.etas_g2_neg_pc);
 
     let qap = E::multi_miller_loop(lhs, rhs);
 
