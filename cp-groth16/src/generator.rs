@@ -73,8 +73,8 @@ where
 
     // Synthesize the circuit.
     let synthesis_time = start_timer!(|| "Constraint synthesis");
-    for _ in 0..circuit.total_num_stages() {
-        circuit.generate_constraints(&mut mscs)?;
+    for stage in 0..circuit.total_num_stages() {
+        circuit.generate_constraints(stage, &mut mscs)?;
     }
     end_timer!(synthesis_time);
 
@@ -211,7 +211,6 @@ where
     let b_g = FixedBase::msm::<E::G1>(scalar_bits, g1_window, &g1_table, &b);
     drop(b);
     end_timer!(b_g1_time);
-    
 
     // Compute the H-query
     let h_time = start_timer!(|| "Calculate H");

@@ -1,6 +1,9 @@
 use crate::data_structures::{PreparedVerifyingKey, Proof, VerifyingKey};
 
+use core::ops::AddAssign;
+
 use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup};
+use ark_ff::PrimeField;
 use ark_relations::r1cs::SynthesisError;
 
 /// Prepare the verifying key `vk` for use in proof verification.
@@ -40,4 +43,22 @@ pub fn verify_proof_with_prepared_inputs<E: Pairing>(
     let test = E::final_exponentiation(qap).ok_or(SynthesisError::UnexpectedIdentity)?;
 
     Ok(test == pvk.alpha_beta_gt)
+}
+
+/// Prepare proof inputs for use with [`verify_proof_with_prepared_inputs`], wrt the prepared
+/// verification key `pvk` and instance public inputs.
+pub fn prepare_inputs<E: Pairing>(
+    pvk: &PreparedVerifyingKey<E>,
+    public_inputs: &[E::ScalarField],
+) -> Result<E::G1, SynthesisError> {
+    if (public_inputs.len() + 1) != pvk.vk.gamma_abc_g.len() {
+        return Err(SynthesisError::MalformedVerifyingKey);
+    }
+
+    let mut g_ic = pvk.vk.gamma_abc_g[0].into_group();
+    for (i, b) in public_inputs.iter().zip(pvk.vk.gamma_abc_g.iter().skip(1)) {
+        g_ic.add_assign(&b.mul_bigint(i.into_bigint()));
+    }
+
+    Ok(g_ic)
 }

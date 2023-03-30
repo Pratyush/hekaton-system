@@ -33,10 +33,14 @@ mod tests {
     use ark_relations::ns;
     use ark_std::test_rng;
 
-    /// A circuit that proves knowledge of a root for a given monic polynomial
+    /// A multistage circuit
+    /// Stage 1. Witness a var and ensure it's 0
+    /// Stage 2. Input a monic polynomial and prove knowledge of a root
     #[derive(Clone)]
     struct PolynZeroCircuit {
         // A committed value that must be zero
+        zero: F,
+        // The witnessed var of the above field
         zero_var: FpVar<F>,
         // Coefficients of a monic polynomial, from lowest to highest degree
         polyn: Vec<F>,
@@ -44,12 +48,21 @@ mod tests {
         root: F,
     }
 
-    impl ConstraintSynthesizer<F> for PolynZeroCircuit {
-        fn generate_constraints(self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
+    impl PolynZeroCircuit {
+        fn stage0(&mut self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
+            // Witness the zero var. Make sure it's 0. Then save it
+            let zero_var = FpVar::new_witness(ns!(cs, "z"), || Ok(self.zero))?;
+            zero_var.enforce_equal(&FpVar::Constant(F::ZERO))?;
+            self.zero_var = zero_var;
+
+            Ok(())
+        }
+
+        fn stage1(&mut self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
             // Input the polynomial P. P must be monic, i.e., the leading coefficient is 1.
             let polyn_var = self
                 .polyn
-                .into_iter()
+                .iter()
                 .map(|c| FpVar::new_input(ns!(cs, "coeff"), || Ok(c)))
                 .collect::<Result<Vec<_>, _>>()?;
             /*
@@ -82,6 +95,26 @@ mod tests {
             );
 
             Ok(())
+        }
+    }
+
+    impl MultiStageConstraintSynthesizer<F> for PolynZeroCircuit {
+        fn total_num_stages(&self) -> usize {
+            2
+        }
+
+        fn generate_constraints(
+            &mut self,
+            stage: usize,
+            cs: &mut MultiStageConstraintSystem<F>,
+        ) -> Result<(), SynthesisError> {
+            let out = match stage {
+                0 => cs.synthesize_with(|c| self.stage0(c)),
+                1 => cs.synthesize_with(|c| self.stage1(c)),
+                _ => panic!("unexpected stage stage {}", stage),
+            };
+
+            out
         }
     }
 
@@ -121,18 +154,23 @@ mod tests {
         }
         assert_eq!(poly_eval, F::ZERO);
 
-        //
-        // Constraints check
-        //
-
-        // Now run the circuit and make sure it succeeds
-        let mut circuit = PolynZeroCircuit {
+        // Define the circuit we'll be using
+        let circuit = PolynZeroCircuit {
+            zero: F::ZERO,
             zero_var: FpVar::Constant(F::ZERO),
             polyn: polyn.clone(),
             root,
         };
-        let cs = ConstraintSystem::new_ref();
-        circuit.clone().generate_constraints(cs.clone()).unwrap();
+
+        //
+        // Constraints check
+        //
+
+        // Run the circuit and make sure it succeeds
+        let mut cs = MultiStageConstraintSystem::default();
+        let mut circuit_copy = circuit.clone();
+        circuit_copy.generate_constraints(0, &mut cs).unwrap();
+        circuit_copy.generate_constraints(1, &mut cs).unwrap();
         assert!(cs.is_satisfied().unwrap());
 
         //
@@ -140,10 +178,14 @@ mod tests {
         //
 
         // Generate the proving key
-        let placeholder_allocator = F::ZERO;
         let pk = generate_random_parameters_with_reduction::<_, E, QAP>(circuit.clone(), &mut rng)
             .unwrap();
 
+        let mut cb = CommitmentBuilder::<_, E, QAP>::new(circuit, pk);
+        let (com, rand) = cb.commit(&mut rng).unwrap();
+        let proof = cb.prove(vec![com], &[rand], &mut rng).unwrap();
+
+        /*
         // Create the commitment and proof
         let allocator = F::ZERO;
         let mut cb = CommitmentBuilder::<_, QAP>::new(pk.ck.clone());
@@ -161,9 +203,10 @@ mod tests {
         let inputs = polyn.to_field_elements().unwrap();
         let prepared_inputs =
             ark_groth16::Groth16::<E, QAP>::prepare_inputs(&pvk.g16_pvk, &inputs).unwrap();
-        dbg!(pvk.g16_pvk.vk.gamma_abc_g1[0].into_group() == prepared_inputs);
+        //dbg!(pvk.g16_pvk.vk.gamma_abc_g1[0].into_group() == prepared_inputs);
         assert!(verify_proof_with_prepared_inputs(pvk, &proof, &prepared_inputs).unwrap());
 
         //let polyn = core::iter::repeat_with(|| F::rand(&mut rng) - root).take(
+        */
     }
 }

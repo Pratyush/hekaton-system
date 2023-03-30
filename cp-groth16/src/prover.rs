@@ -78,7 +78,7 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
         // Synthesize the circuit.
         let synthesis_time = start_timer!(|| "Constraint synthesis");
         // We're generating the last stage of constraints.
-        circuit.generate_constraints(cs)?;
+        circuit.generate_constraints(circuit.total_num_stages() - 1, cs)?;
         debug_assert!(cs.is_satisfied()?);
         end_timer!(synthesis_time);
 
@@ -89,35 +89,34 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
         let witness_map_time = start_timer!(|| "R1CS to QAP witness map");
         let h = QAP::witness_map::<E::ScalarField, D<E::ScalarField>>(cs.cs.clone())?;
         end_timer!(witness_map_time);
-        
-        
+
         let c_acc_time = start_timer!(|| "Compute C");
         let h_acc = E::G1::msm(&pk.h_g, &h).unwrap();
-        
+
         // Compute C
-        
+
         let current_witness = cs.current_stage_witness_assignment();
         let l_aux_acc = E::G1::msm(&pk.last_ck(), &current_witness).unwrap();
-        
+
         let r_s_delta_g = pk.last_delta_g() * (r * s);
-        
+
         end_timer!(c_acc_time);
-        
+
         let assignment = cs.full_assignment();
         let assignment = cfg_into_iter!(assignment)
-        .skip(1) // we're skipping the one-variable
-        .map(|e| e.into_bigint())
-        .collect::<Vec<_>>();
-        
+            .skip(1) // we're skipping the one-variable
+            .map(|e| e.into_bigint())
+            .collect::<Vec<_>>();
+
         // Compute A
         let a_acc_time = start_timer!(|| "Compute A");
         let r_delta_g = pk.last_delta_g() * r;
-        
+
         let a_g = Self::calculate_coeff(r_delta_g, &pk.a_g, pk.vk.alpha_g, &assignment);
-        
+
         let s_a_g = a_g * s;
         end_timer!(a_acc_time);
-        
+
         // Compute B in G1 if needed
         let b_g = if r.is_zero() {
             E::G1::zero()
@@ -125,21 +124,21 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
             let b_g1_acc_time = start_timer!(|| "Compute B in G1");
             let s_g = pk.last_delta_g() * s;
             let b_g = Self::calculate_coeff(s_g, &pk.b_g, pk.beta_g, &assignment);
-            
+
             end_timer!(b_g1_acc_time);
-            
+
             b_g
         };
-        
+
         // Compute B in G2
         let b_g2_acc_time = start_timer!(|| "Compute B in G2");
         let s_h = pk.last_delta_h() * s;
         let b_h = Self::calculate_coeff(s_h, &pk.b_h, pk.vk.beta_h, &assignment);
         let r_b_g = b_g * r;
         drop(assignment);
-        
+
         end_timer!(b_g2_acc_time);
-        
+
         let c_time = start_timer!(|| "Finish C");
         let mut c_g = s_a_g;
         c_g += &r_b_g;
@@ -147,7 +146,7 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
         c_g += &l_aux_acc;
         c_g += &h_acc;
         end_timer!(c_time);
-        
+
         end_timer!(prover_time);
         Ok(ProofWithoutComms {
             a: a_g.into_affine(),
