@@ -7,8 +7,8 @@ use crate::{
 use core::marker::PhantomData;
 
 use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup, VariableBaseMSM};
-use ark_ff::{UniformRand};
-use ark_groth16::{Proof as ProofWithoutComms, r1cs_to_qap::R1CSToQAP};
+use ark_ff::UniformRand;
+use ark_groth16::{r1cs_to_qap::R1CSToQAP, Proof as ProofWithoutComms};
 use ark_relations::r1cs::{OptimizationGoal, SynthesisError};
 use ark_std::rand::Rng;
 
@@ -74,8 +74,8 @@ where
         // in
 
         let randomness = E::ScalarField::rand(rng);
-        let commitment =
-            E::G1::msm(current_ck, &current_witness).unwrap() + (self.pk.ck.last_delta_g * randomness);
+        let commitment = E::G1::msm(current_ck, &current_witness).unwrap()
+            + (self.pk.ck.last_delta_g * randomness);
 
         // Return the commitment and the randomness
         Ok((commitment.into(), randomness))
@@ -87,12 +87,8 @@ where
         comm_rands: &[CommRandomness<E>],
         rng: &mut impl Rng,
     ) -> Result<Proof<E>, SynthesisError> {
-        let ProofWithoutComms { a, b, c } = Groth16::<E>::prove_last_stage_with_zk(
-            &mut self.cs,
-            &mut self.circuit,
-            &self.pk,
-            rng,
-        )?;
+        let ProofWithoutComms { a, b, c } =
+            Groth16::<E>::prove_last_stage_with_zk(&mut self.cs, &mut self.circuit, &self.pk, rng)?;
 
         // Compute Σ [κᵢηᵢ] and subtract it from C
         let kappas_etas_g1 = E::G1::msm(&self.pk.deltas_g, comm_rands)

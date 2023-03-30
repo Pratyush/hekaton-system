@@ -211,7 +211,6 @@ where
     let b_g = FixedBase::msm::<E::G1>(scalar_bits, g1_window, &g1_table, &b);
     drop(b);
     end_timer!(b_g1_time);
-    
 
     // Compute the H-query
     let h_time = start_timer!(|| "Calculate H");
