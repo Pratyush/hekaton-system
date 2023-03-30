@@ -1,13 +1,10 @@
 use crate::{
-    data_structures::{CommitterKey, Comm, CommRandomness, Proof, ProvingKey},
+    data_structures::{Comm, CommRandomness, CommitterKey, Proof, ProvingKey},
     prover::Groth16,
-    MultiStageConstraintSystem, MultiStageConstraintSynthesizer,
+    MultiStageConstraintSynthesizer, MultiStageConstraintSystem,
 };
 
-use core::{
-    marker::PhantomData,
-    ops::Range,
-};
+use core::{marker::PhantomData, ops::Range};
 
 use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup, VariableBaseMSM};
 use ark_ff::{PrimeField, UniformRand};
@@ -72,19 +69,14 @@ where
             .deltas_abc_g
             .get(self.circuit.current_stage())
             .expect("no more values left in committing key");
-        assert_eq!(
-            current_witness.len(),
-            current_ck.len(),
-        );
+        assert_eq!(current_witness.len(), current_ck.len(),);
 
         // Compute the commitment. First compute [J(s)/ηᵢ]₁ where i is the allocation stage we're
         // in
 
         let randomness = E::ScalarField::rand(rng);
-        let commitment = 
-            E::G1::msm(current_ck, current_witness).unwrap() +
-            self.ck.last_delta_g * randomness;
-
+        let commitment =
+            E::G1::msm(current_ck, current_witness).unwrap() + self.ck.last_delta_g * randomness;
 
         // Return the commitment and the randomness
         Ok((commitment.into(), randomness))

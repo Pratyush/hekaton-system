@@ -1,16 +1,14 @@
-pub mod constraint_synthesizer;
 pub mod committer;
+pub mod constraint_synthesizer;
 pub mod data_structures;
 pub mod generator;
 pub mod prover;
 pub mod verifier;
 
 pub use committer::CommitmentBuilder;
+pub use constraint_synthesizer::*;
 pub use data_structures::{CommitterKey, ProvingKey, VerifyingKey};
 pub use prover::Groth16;
-pub use constraint_synthesizer::*;
-
-
 
 /// Impl the prover
 #[cfg(test)]
@@ -28,15 +26,11 @@ mod tests {
     use ark_ec::AffineRepr;
     use ark_relations::r1cs::ConstraintSynthesizer;
 
-
-
     use ark_bls12_381::{Bls12_381 as E, Fr as F};
     use ark_ff::{ToConstraintField, UniformRand};
     use ark_groth16::r1cs_to_qap::LibsnarkReduction as QAP;
     use ark_r1cs_std::{alloc::AllocVar, eq::EqGadget, fields::fp::FpVar};
-    use ark_relations::{
-        ns,
-    };
+    use ark_relations::ns;
     use ark_std::test_rng;
 
     /// A circuit that proves knowledge of a root for a given monic polynomial
@@ -147,11 +141,8 @@ mod tests {
 
         // Generate the proving key
         let placeholder_allocator = F::ZERO;
-        let pk = generate_random_parameters_with_reduction::<_, E, QAP>(
-            circuit.clone(),
-            &mut rng,
-        )
-        .unwrap();
+        let pk = generate_random_parameters_with_reduction::<_, E, QAP>(circuit.clone(), &mut rng)
+            .unwrap();
 
         // Create the commitment and proof
         let allocator = F::ZERO;

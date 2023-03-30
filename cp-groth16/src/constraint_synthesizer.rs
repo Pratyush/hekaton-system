@@ -1,12 +1,12 @@
 use core::ops::Range;
 
-use ark_relations::r1cs::{SynthesisError, ConstraintSystemRef, ConstraintSystem};
 use ark_ff::Field;
+use ark_relations::r1cs::{ConstraintSystem, ConstraintSystemRef, SynthesisError};
 
 /// Represents a constraint system whose variables come from a number of distinct allocation
 /// stages. Each allocation stage happens separately, and adds to the total instance variable
 /// count.
-/// 
+///
 /// We assume that the indexing of witness variables increases linearly. e.g. it is not the case
 /// that stage 1 allocates variables 1, 2, 100, and stage 2 allocates variables 3, 4, 5.
 pub struct MultiStageConstraintSystem<F: Field> {
@@ -49,7 +49,10 @@ impl<F: Field> MultiStageConstraintSystem<F> {
     }
 
     /// This is the method that should be used to synthesize constraints inside `generate_constraints`.
-    pub fn synthesize_with(&mut self, constraints: impl FnOnce(ConstraintSystemRef<F>) -> Result<(), SynthesisError>) -> Result<(), SynthesisError> {
+    pub fn synthesize_with(
+        &mut self,
+        constraints: impl FnOnce(ConstraintSystemRef<F>) -> Result<(), SynthesisError>,
+    ) -> Result<(), SynthesisError> {
         self.initialize_stage();
         constraints(self.cs.clone())?;
         self.finalize_stage();
@@ -61,7 +64,7 @@ impl<F: Field> MultiStageConstraintSystem<F> {
     //     let range = self.variable_range_for_stage[i];
     //     &self.cs.witness_variables()[range]
     // }
-    
+
     pub fn num_instance_variables(&self) -> usize {
         self.cs.num_instance_variables()
     }
@@ -85,7 +88,7 @@ impl<F: Field> MultiStageConstraintSystem<F> {
     }
 }
 
-/// A multi-stage constraint synthesizer that iteratively constructs 
+/// A multi-stage constraint synthesizer that iteratively constructs
 /// a constraint system.
 pub trait MultiStageConstraintSynthesizer<F: Field> {
     /// The number of stages required to construct the constraint system.
@@ -95,5 +98,8 @@ pub trait MultiStageConstraintSynthesizer<F: Field> {
     fn current_stage(&self) -> usize;
 
     /// Generates constraints for the i-th stage.
-    fn generate_constraints(&mut self, cs: MultiStageConstraintSystem<F>) -> Result<(), SynthesisError>;
+    fn generate_constraints(
+        &mut self,
+        cs: MultiStageConstraintSystem<F>,
+    ) -> Result<(), SynthesisError>;
 }
