@@ -1,10 +1,4 @@
-use core::ops::Range;
-
-use ark_ec::pairing::Pairing;
-use ark_ff::Field;
-use ark_relations::r1cs::{ConstraintSystem, ConstraintSystemRef, SynthesisError};
-use ark_std::vec::Vec;
-
+pub mod constraint_synthesizer;
 pub mod committer;
 pub mod data_structures;
 pub mod generator;
@@ -12,125 +6,29 @@ pub mod prover;
 pub mod verifier;
 
 pub use committer::CommitmentBuilder;
-pub use data_structures::{CommittingKey, ProvingKey, VerifyingKey};
+pub use data_structures::{CommitterKey, ProvingKey, VerifyingKey};
 pub use prover::Groth16;
+pub use constraint_synthesizer::*;
 
-/// Represents a constraint system whose variables come from a number of distinct allocation
-/// stages. Each allocation stage happens separately, and adds to the total instance variable
-/// count.
-pub struct MultistageConstraintSystem<F: Field> {
-    pub cs: ConstraintSystemRef<F>,
-    /// Keeps track of the instance variables. The value at element `i` is the set of instance
-    /// variable indices in `self.cs` that correspond to stage `i` of allocation
-    pub instance_var_idx_ranges: Vec<Range<usize>>,
-}
 
-impl<F: Field> Default for MultistageConstraintSystem<F> {
-    fn default() -> Self {
-        MultistageConstraintSystem {
-            cs: ConstraintSystem::new_ref(),
-            instance_var_idx_ranges: Vec::new(),
-        }
-    }
-}
-
-// TODO: refactor this crate to only use AllocVar for input allocation. The reason this doesn't
-// work right now is because
-// 1) if you just give a Box<dyn AllocVar<V, F>> to an allocator, then this isn't sufficient
-//    information for allocating a V=Vec<_>
-// 2) for placeholder allocation, you need a &[Box<dyn PlaceholderAlloc<F>>]. It's important that V
-//    is not part of the type, since otherwise it would be a heterogeneous slice. But how do you
-//    rip V out of the type of AllocVar without doing an associated type (not allowed for Box dyn)
-//    or making V the Self of the trait (what we effectively have now)?
-
-/// Defines a way for a type to allocate all its content as _instances_ or _constants_. It can
-/// allocate witnesses too, but only the instances will be committed to.
-pub trait InputAllocator<F: Field> {
-    /// The ZK allocated vars version of this type
-    type AllocatedSelf;
-
-    fn alloc(&self, cs: ConstraintSystemRef<F>) -> Result<Self::AllocatedSelf, SynthesisError>;
-}
-
-/// An unfortunate helper trait we need in order to make Rust's generics work. This is the same
-/// thing as [`InputAllocator`] but it doesn't return anything when allocating. This is used in
-/// CRS generation
-pub trait PlaceholderInputAllocator<F: Field> {
-    fn alloc(&self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError>;
-}
-
-/// Every [`InputAllocator`] is an [`PlaceholderInputAllocator`]. The `alloc()` method just returns
-/// nothing
-impl<I, F> PlaceholderInputAllocator<F> for I
-where
-    I: InputAllocator<F>,
-    F: Field,
-{
-    fn alloc(&self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
-        InputAllocator::alloc(self, cs).map(|_| ())
-    }
-}
-
-impl<F: Field> MultistageConstraintSystem<F> {
-    /// Runs the given allocator, records its allocations, and returns the output
-    pub fn run_allocator<A: InputAllocator<F>>(
-        &mut self,
-        a: &A,
-    ) -> Result<A::AllocatedSelf, SynthesisError> {
-        // Mark the starting variable index (inclusive)
-        let start_var_idx = self.cs.num_instance_variables();
-        // Run the allocation routine and save the output
-        let out = a.alloc(self.cs.clone())?;
-        // Mark the ending variable index (exclusive)
-        let end_var_idx = self.cs.num_instance_variables();
-
-        // Record the variable range. This may be empty. That's fine.
-        self.instance_var_idx_ranges.push(Range {
-            start: start_var_idx,
-            end: end_var_idx,
-        });
-
-        Ok(out)
-    }
-
-    // TODO: Figure out a way to not repeat the code from above
-    /// Runs the given placeholder allocator and records its allocations
-    pub fn run_placeholder_allocator(
-        &mut self,
-        val: &dyn PlaceholderInputAllocator<F>,
-    ) -> Result<(), SynthesisError> {
-        // Mark the starting variable index (inclusive)
-        let start_var_idx = self.cs.num_instance_variables();
-        // Run the allocation routine
-        val.alloc(self.cs.clone())?;
-        // Mark the ending variable index (exclusive)
-        let end_var_idx = self.cs.num_instance_variables();
-
-        // Record the variable range. This may be empty. That's fine.
-        self.instance_var_idx_ranges.push(Range {
-            start: start_var_idx,
-            end: end_var_idx,
-        });
-
-        Ok(())
-    }
-}
 
 /// Impl the prover
-use crate::data_structures::{InputCom, InputComRandomness, Proof};
-use ark_ec::{AffineRepr, CurveGroup, VariableBaseMSM};
-use ark_groth16::r1cs_to_qap::R1CSToQAP;
-use ark_relations::r1cs::ConstraintSynthesizer;
-use ark_std::rand::Rng;
-
 #[cfg(test)]
 mod tests {
+    use ark_ff::Field;
+    use ark_relations::r1cs::{ConstraintSystem, ConstraintSystemRef, SynthesisError};
+    use ark_std::vec::Vec;
+
     use super::*;
     use crate::{
         committer::CommitmentBuilder,
         generator::generate_random_parameters_with_reduction,
         verifier::{prepare_verifying_key, verify_proof_with_prepared_inputs},
     };
+    use ark_ec::AffineRepr;
+    use ark_relations::r1cs::ConstraintSynthesizer;
+
+
 
     use ark_bls12_381::{Bls12_381 as E, Fr as F};
     use ark_ff::{ToConstraintField, UniformRand};
@@ -138,17 +36,8 @@ mod tests {
     use ark_r1cs_std::{alloc::AllocVar, eq::EqGadget, fields::fp::FpVar};
     use ark_relations::{
         ns,
-        r1cs::{ConstraintSystem, ConstraintSystemRef, SynthesisError},
     };
     use ark_std::test_rng;
-
-    impl InputAllocator<F> for F {
-        type AllocatedSelf = FpVar<F>;
-
-        fn alloc(&self, cs: ConstraintSystemRef<F>) -> Result<Self::AllocatedSelf, SynthesisError> {
-            FpVar::new_input(ns!(cs, "f"), || Ok(self))
-        }
-    }
 
     /// A circuit that proves knowledge of a root for a given monic polynomial
     #[derive(Clone)]
@@ -259,9 +148,8 @@ mod tests {
         // Generate the proving key
         let placeholder_allocator = F::ZERO;
         let pk = generate_random_parameters_with_reduction::<_, E, QAP>(
-            &mut rng,
-            &[Box::new(placeholder_allocator)],
             circuit.clone(),
+            &mut rng,
         )
         .unwrap();
 
