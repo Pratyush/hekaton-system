@@ -13,20 +13,26 @@ use ark_relations::r1cs::{OptimizationGoal, SynthesisError};
 use ark_std::rand::Rng;
 
 /// A struct that sequentially runs [`InputAllocators`] and commits to the variables allocated therein
-pub struct CommitmentBuilder<E: Pairing, C: MultiStageConstraintSynthesizer<E::ScalarField>, QAP> {
+pub struct CommitmentBuilder<C, E, QAP>
+where
+    C: MultiStageConstraintSynthesizer<E::ScalarField>,
+    E: Pairing,
+{
     /// The enhanced constraint system that keeps track of public inputs
     pub cs: MultiStageConstraintSystem<E::ScalarField>,
     /// The circuit that generates assignments for the commitment.
     pub circuit: C,
+    /// The cirrent stage
+    cur_stage: usize,
     /// The committer key that will be used to generate commitments at each step.
     pk: ProvingKey<E>,
     _qap: PhantomData<QAP>,
 }
 
-impl<E, C, QAP> CommitmentBuilder<E, C, QAP>
+impl<C, E, QAP> CommitmentBuilder<C, E, QAP>
 where
-    E: Pairing,
     C: MultiStageConstraintSynthesizer<E::ScalarField>,
+    E: Pairing,
     QAP: R1CSToQAP,
 {
     pub fn new(circuit: C, pk: ProvingKey<E>) -> Self {
@@ -37,6 +43,7 @@ where
         Self {
             cs: mscs,
             circuit,
+            cur_stage: 0,
             pk,
             _qap: PhantomData,
         }
@@ -49,7 +56,8 @@ where
         &mut self,
         rng: &mut impl Rng,
     ) -> Result<(Comm<E>, CommRandomness<E>), SynthesisError> {
-        self.circuit.generate_constraints(&mut self.cs)?;
+        self.circuit
+            .generate_constraints(self.cur_stage, &mut self.cs)?;
 
         // Inline/outline the relevant linear combinations.
         self.cs.finalize();
@@ -66,8 +74,18 @@ where
             .pk
             .ck
             .deltas_abc_g
-            .get(self.circuit.current_stage())
+            .get(self.cur_stage)
             .expect("no more values left in committing key");
+
+        println!(
+            "length of deltas_abc_g == {:?}",
+            self.pk
+                .ck
+                .deltas_abc_g
+                .iter()
+                .map(|v| v.len())
+                .collect::<Vec<usize>>()
+        );
         assert_eq!(current_witness.len(), current_ck.len(),);
 
         // Compute the commitment. First compute [J(s)/ηᵢ]₁ where i is the allocation stage we're
@@ -76,6 +94,8 @@ where
         let randomness = E::ScalarField::rand(rng);
         let commitment = E::G1::msm(current_ck, &current_witness).unwrap()
             + (self.pk.ck.last_delta_g * randomness);
+
+        self.cur_stage += 1;
 
         // Return the commitment and the randomness
         Ok((commitment.into(), randomness))

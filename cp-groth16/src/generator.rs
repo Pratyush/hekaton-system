@@ -73,8 +73,8 @@ where
 
     // Synthesize the circuit.
     let synthesis_time = start_timer!(|| "Constraint synthesis");
-    for _ in 0..circuit.total_num_stages() {
-        circuit.generate_constraints(&mut mscs)?;
+    for stage in 0..circuit.total_num_stages() {
+        circuit.generate_constraints(stage, &mut mscs)?;
     }
     end_timer!(synthesis_time);
 
