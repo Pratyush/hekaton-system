@@ -71,8 +71,6 @@ pub struct ProvingKey<E: Pairing> {
     pub ck: CommitterKey<E>,
     /// The elements `deltaᵢ * G` in `E::G1`.
     pub deltas_g: Vec<E::G1Affine>,
-    /// The elements `deltaᵢ * H` in `E::G2`.
-    pub deltas_h: Vec<E::G2Affine>,
 }
 
 impl<E: Pairing> ProvingKey<E> {
@@ -86,7 +84,7 @@ impl<E: Pairing> ProvingKey<E> {
     }
 
     pub fn last_delta_h(&self) -> E::G2Affine {
-        self.deltas_h.last().unwrap().clone()
+        self.vk.deltas_h.last().unwrap().clone()
     }
 
     pub fn last_ck(&self) -> &[E::G1Affine] {

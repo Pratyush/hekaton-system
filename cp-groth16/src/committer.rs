@@ -1,17 +1,15 @@
 use crate::{
-    data_structures::{Comm, CommRandomness, CommitterKey, Proof, ProvingKey},
+    data_structures::{Comm, CommRandomness, Proof, ProvingKey},
     prover::Groth16,
     MultiStageConstraintSynthesizer, MultiStageConstraintSystem,
 };
 
-use core::{marker::PhantomData, ops::Range};
+use core::marker::PhantomData;
 
 use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup, VariableBaseMSM};
-use ark_ff::{PrimeField, UniformRand};
-use ark_groth16::r1cs_to_qap::R1CSToQAP;
-use ark_relations::r1cs::{
-    ConstraintSynthesizer, ConstraintSystem, OptimizationGoal, SynthesisError,
-};
+use ark_ff::{UniformRand};
+use ark_groth16::{Proof as ProofWithoutComms, r1cs_to_qap::R1CSToQAP};
+use ark_relations::r1cs::{OptimizationGoal, SynthesisError};
 use ark_std::rand::Rng;
 
 /// A struct that sequentially runs [`InputAllocators`] and commits to the variables allocated therein
@@ -21,7 +19,7 @@ pub struct CommitmentBuilder<E: Pairing, C: MultiStageConstraintSynthesizer<E::S
     /// The circuit that generates assignments for the commitment.
     pub circuit: C,
     /// The committer key that will be used to generate commitments at each step.
-    ck: CommitterKey<E>,
+    pk: ProvingKey<E>,
     _qap: PhantomData<QAP>,
 }
 
@@ -31,7 +29,7 @@ where
     C: MultiStageConstraintSynthesizer<E::ScalarField>,
     QAP: R1CSToQAP,
 {
-    pub fn new(circuit: C, ck: CommitterKey<E>) -> Self {
+    pub fn new(circuit: C, pk: ProvingKey<E>) -> Self {
         // Make a new constraint system and set the optimization goal
         let mscs = MultiStageConstraintSystem::default();
         mscs.cs.set_optimization_goal(OptimizationGoal::Constraints);
@@ -39,7 +37,7 @@ where
         Self {
             cs: mscs,
             circuit,
-            ck,
+            pk,
             _qap: PhantomData,
         }
     }
@@ -51,7 +49,7 @@ where
         &mut self,
         rng: &mut impl Rng,
     ) -> Result<(Comm<E>, CommRandomness<E>), SynthesisError> {
-        self.circuit.generate_constraints(self.cs)?;
+        self.circuit.generate_constraints(&mut self.cs)?;
 
         // Inline/outline the relevant linear combinations.
         self.cs.finalize();
@@ -65,6 +63,7 @@ where
         // The below unwrap is permitted because `run_allocator` is guaranteed to add a range to
         // the list (though it may be empty)
         let current_ck = &self
+            .pk
             .ck
             .deltas_abc_g
             .get(self.circuit.current_stage())
@@ -76,40 +75,35 @@ where
 
         let randomness = E::ScalarField::rand(rng);
         let commitment =
-            E::G1::msm(current_ck, current_witness).unwrap() + self.ck.last_delta_g * randomness;
+            E::G1::msm(current_ck, &current_witness).unwrap() + (self.pk.ck.last_delta_g * randomness);
 
         // Return the commitment and the randomness
         Ok((commitment.into(), randomness))
     }
 
     pub fn prove(
-        &self,
-        pk: &ProvingKey<E>,
+        &mut self,
         comms: Vec<Comm<E>>,
         comm_rands: &[CommRandomness<E>],
         rng: &mut impl Rng,
-    ) -> Result<Proof<E>, SynthesisError>
-    where
-        C: ConstraintSynthesizer<E::ScalarField>,
-        E: Pairing,
-    {
-        let ark_groth16::Proof { a, b, c } = Groth16::<E>::create_random_proof_with_reduction(
-            self.cs.cs.clone(),
-            circuit,
-            &pk.g16_pk,
+    ) -> Result<Proof<E>, SynthesisError> {
+        let ProofWithoutComms { a, b, c } = Groth16::<E>::prove_last_stage_with_zk(
+            &mut self.cs,
+            &mut self.circuit,
+            &self.pk,
             rng,
         )?;
 
         // Compute Σ [κᵢηᵢ] and subtract it from C
-        let kappas_etas_g1 = E::G1::msm(&pk.etas_g1, com_rands)
+        let kappas_etas_g1 = E::G1::msm(&self.pk.deltas_g, comm_rands)
             .expect("incorrect number of commitment randomness vals");
-        let c = (c.into_group() - &kappas_etas_g1).into_affine();
+        let c = (c.into_group() - kappas_etas_g1).into_affine();
 
         Ok(Proof {
             a,
             b,
             c,
-            ds: dbg!(coms),
+            ds: dbg!(comms),
         })
     }
 }

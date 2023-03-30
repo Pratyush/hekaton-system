@@ -9,7 +9,11 @@ pub fn prepare_verifying_key<E: Pairing>(vk: &VerifyingKey<E>) -> PreparedVerify
         vk: vk.clone(),
         alpha_beta_gt: E::pairing(vk.alpha_g, vk.beta_h),
         neg_gamma_h: (-vk.gamma_h.into_group()).into_affine().into(),
-        neg_deltas_h: vk.deltas_h.iter().map(|g| (-g.into_group()).into_affine().into()).collect(),
+        neg_deltas_h: vk
+            .deltas_h
+            .iter()
+            .map(|g| (-g.into_group()).into_affine().into())
+            .collect(),
     }
 }
 

@@ -73,7 +73,7 @@ where
 
     // Synthesize the circuit.
     let synthesis_time = start_timer!(|| "Constraint synthesis");
-    for i in 0..circuit.total_num_stages() {
+    for _ in 0..circuit.total_num_stages() {
         circuit.generate_constraints(&mut mscs)?;
     }
     end_timer!(synthesis_time);
@@ -127,9 +127,10 @@ where
         .iter()
         .zip(&mscs.variable_range_for_stage)
         .map(|(delta, range)| {
-            let range = (range.start + num_instance_variables)..(range.end + num_instance_variables);
+            let range =
+                (range.start + num_instance_variables)..(range.end + num_instance_variables);
             let delta_inv = delta.inverse().expect("deltas should be non-zero");
-            cfg_iter!(a[dbg!(range).clone()])
+            cfg_iter!(a[dbg!(range.clone())])
                 .zip(&b[range.clone()])
                 .zip(&c[range.clone()])
                 .map(|((a, b), c)| (beta * a + alpha * b + c) * &delta_inv)
@@ -143,7 +144,7 @@ where
 
     // Compute the gamma ABCs
     let gamma_inverse = gamma.inverse().ok_or(SynthesisError::UnexpectedIdentity)?;
-    let mut gamma_abc = cfg_iter!(a[..num_instance_variables])
+    let gamma_abc = cfg_iter!(a[..num_instance_variables])
         .zip(&b[..num_instance_variables])
         .zip(&c[..num_instance_variables])
         .map(|((a, b), c)| (beta * a + &(alpha * b) + c) * &gamma_inverse)
@@ -155,7 +156,6 @@ where
 
     let last_delta = deltas.last().expect("we should have at least one witness.");
     let last_delta_inv = last_delta.inverse().expect("delta should not be zero");
-    let l = deltas_abc.last().unwrap();
 
     drop(c);
 
@@ -164,11 +164,9 @@ where
     let g2_window = FixedBase::get_mul_window_size(non_zero_b);
     let g2_table = FixedBase::get_window_table::<E::G2>(scalar_bits, g2_window, g2_generator);
     end_timer!(g2_time);
-
     // Compute the B-query in G2
     let b_g2_time = start_timer!(|| "Calculate B G2");
-    let b_g2_query = FixedBase::msm::<E::G2>(scalar_bits, g2_window, &g2_table, &b);
-    drop(g2_table);
+    let b_h = FixedBase::msm::<E::G2>(scalar_bits, g2_window, &g2_table, &b);
     end_timer!(b_g2_time);
 
     // Compute G window table
@@ -192,14 +190,15 @@ where
         let t = FixedBase::msm::<E::G2>(scalar_bits, g2_window, &g2_table, &deltas);
         E::G2::normalize_batch(&t)
     };
+    drop(g2_table);
     let gamma_h = g2_generator.mul_bigint(&gamma.into_bigint()).into_affine();
     let gamma_abc_g = {
         let t = FixedBase::msm::<E::G1>(scalar_bits, g1_window, &g1_table, &gamma_abc);
         E::G1::normalize_batch(&t)
     };
 
-    let last_delta_g = deltas_g.last().unwrap().into_affine();
-    let last_delta_h = deltas_h.last().unwrap().into_affine();
+    let last_delta_g = *deltas_g.last().unwrap();
+    let last_delta_h = *deltas_h.last().unwrap();
 
     // Compute the A-query
     let a_time = start_timer!(|| "Calculate A");
@@ -212,11 +211,7 @@ where
     let b_g = FixedBase::msm::<E::G1>(scalar_bits, g1_window, &g1_table, &b);
     drop(b);
     end_timer!(b_g1_time);
-    // Compute the B-query in G2
-    let b_g2_time = start_timer!(|| "Calculate B G2");
-    let b_h = FixedBase::msm::<E::G2>(scalar_bits, g2_window, &g2_table, &b);
-    drop(b);
-    end_timer!(b_g2_time);
+    
 
     // Compute the H-query
     let h_time = start_timer!(|| "Calculate H");
@@ -233,12 +228,11 @@ where
         .map(|v| {
             FixedBase::msm::<E::G1>(scalar_bits, g1_window, &g1_table, &v)
                 .into_iter()
-                .map(CurveGroup::into_affine)
+                .map(E::G1::into_affine)
                 .collect()
         })
-        .collect();
+        .collect::<Vec<_>>();
     end_timer!(ck_time);
-    let l_query = deltas_abc_g.last().unwrap();
 
     let ck = CommitterKey {
         last_delta_g,
@@ -278,6 +272,5 @@ where
         b_h,
         h_g,
         deltas_g,
-        deltas_h,
     })
 }

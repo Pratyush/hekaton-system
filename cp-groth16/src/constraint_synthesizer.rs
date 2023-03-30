@@ -45,7 +45,7 @@ impl<F: Field> MultiStageConstraintSystem<F> {
     /// for the i-th stage.
     pub fn finalize_stage(&mut self) {
         let end = self.cs.num_witness_variables();
-        self.variable_range_for_stage.last().as_mut().unwrap().end = end;
+        self.variable_range_for_stage.last_mut().unwrap().end = end;
     }
 
     /// This is the method that should be used to synthesize constraints inside `generate_constraints`.
@@ -78,25 +78,15 @@ impl<F: Field> MultiStageConstraintSystem<F> {
     }
 
     /// Returns the assignments to witness variables allocated in the current stage.
-    pub fn current_stage_witness_assignment(&self) -> &[F] {
+    pub fn current_stage_witness_assignment(&self) -> Vec<F> {
         let range = self.variable_range_for_stage.last().unwrap();
-        &self.cs.borrow().unwrap().witness_assignment[range.clone()]
-    }
-
-    /// Returns the assignments to all witness variables.
-    pub fn full_witness_assignment(&self) -> &[F] {
-        &self.cs.borrow().unwrap().witness_assignment
-    }
-
-    /// Returns the assignments to public input variables.
-    pub fn instance_assignment(&self) -> &[F] {
-        &self.cs.borrow().unwrap().instance_assignment
+        self.cs.borrow().unwrap().witness_assignment[range.clone()].to_vec()
     }
 
     /// Returns the assignments to all variables.
     pub fn full_assignment(&self) -> Vec<F> {
-        let mut full_assignment = self.instance_assignment().to_vec();
-        full_assignment.extend_from_slice(self.full_witness_assignment());
+        let mut full_assignment = self.cs.borrow().unwrap().instance_assignment.to_vec();
+        full_assignment.extend_from_slice(&self.cs.borrow().unwrap().witness_assignment);
         full_assignment
     }
 
