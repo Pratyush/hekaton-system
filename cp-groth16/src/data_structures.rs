@@ -1,4 +1,4 @@
-use ark_ec::pairing::Pairing;
+use ark_ec::pairing::{Pairing, PairingOutput};
 use ark_serialize::*;
 use ark_std::vec::Vec;
 
@@ -42,7 +42,7 @@ pub struct PreparedVerifyingKey<E: Pairing> {
     /// The unprepared verification key.
     pub vk: VerifyingKey<E>,
     /// The element `e(alpha * G, beta * H)` in `E::GT`.
-    pub alpha_beta_gt: E::TargetField,
+    pub alpha_beta_gt: PairingOutput<E>,
     /// The element `- gamma * H` in `E::G2`, prepared for use in pairings.
     pub neg_gamma_h: E::G2Prepared,
     /// The element `- deltaᵢ * H` in `E::G2`, prepared for use in pairings.
