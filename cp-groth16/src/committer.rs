@@ -82,13 +82,12 @@ where
         Ok((commitment.into(), randomness))
     }
 
-    pub fn prove<C>(
+    pub fn prove(
         &self,
-        rng: &mut impl Rng,
-        circuit: C,
         pk: &ProvingKey<E>,
-        coms: Vec<Comm<E>>,
-        com_rands: &[CommRandomness<E>],
+        comms: Vec<Comm<E>>,
+        comm_rands: &[CommRandomness<E>],
+        rng: &mut impl Rng,
     ) -> Result<Proof<E>, SynthesisError>
     where
         C: ConstraintSynthesizer<E::ScalarField>,

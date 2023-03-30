@@ -80,6 +80,18 @@ impl<E: Pairing> ProvingKey<E> {
     pub fn vk(&self) -> VerifyingKey<E> {
         self.vk.clone()
     }
+
+    pub fn last_delta_g(&self) -> E::G1Affine {
+        self.deltas_g.last().unwrap().clone()
+    }
+
+    pub fn last_delta_h(&self) -> E::G2Affine {
+        self.deltas_h.last().unwrap().clone()
+    }
+
+    pub fn last_ck(&self) -> &[E::G1Affine] {
+        self.ck.deltas_abc_g.last().unwrap()
+    }
 }
 
 ////////////////////////////////////////////////////////////////////////////////

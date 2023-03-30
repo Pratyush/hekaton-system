@@ -83,8 +83,29 @@ impl<F: Field> MultiStageConstraintSystem<F> {
         &self.cs.borrow().unwrap().witness_assignment[range.clone()]
     }
 
+    /// Returns the assignments to all witness variables.
+    pub fn full_witness_assignment(&self) -> &[F] {
+        &self.cs.borrow().unwrap().witness_assignment
+    }
+
+    /// Returns the assignments to public input variables.
+    pub fn instance_assignment(&self) -> &[F] {
+        &self.cs.borrow().unwrap().instance_assignment
+    }
+
+    /// Returns the assignments to all variables.
+    pub fn full_assignment(&self) -> Vec<F> {
+        let mut full_assignment = self.instance_assignment().to_vec();
+        full_assignment.extend_from_slice(self.full_witness_assignment());
+        full_assignment
+    }
+
     pub fn finalize(&mut self) {
         self.cs.finalize();
+    }
+
+    pub fn is_satisfied(&self) -> Result<bool, SynthesisError> {
+        self.cs.is_satisfied()
     }
 }
 
@@ -100,6 +121,6 @@ pub trait MultiStageConstraintSynthesizer<F: Field> {
     /// Generates constraints for the i-th stage.
     fn generate_constraints(
         &mut self,
-        cs: MultiStageConstraintSystem<F>,
+        cs: &mut MultiStageConstraintSystem<F>,
     ) -> Result<(), SynthesisError>;
 }

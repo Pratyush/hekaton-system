@@ -74,7 +74,7 @@ where
     // Synthesize the circuit.
     let synthesis_time = start_timer!(|| "Constraint synthesis");
     for i in 0..circuit.total_num_stages() {
-        circuit.generate_constraints(mscs)?;
+        circuit.generate_constraints(&mut mscs)?;
     }
     end_timer!(synthesis_time);
 
@@ -127,8 +127,7 @@ where
         .iter()
         .zip(&mscs.variable_range_for_stage)
         .map(|(delta, range)| {
-            // TODO: fix range with num_instance_variables (add num_instance_variables to each range.start)
-            // Maybe add a `finalize_prove()` method to `MultiStageConstraintSystem`.
+            let range = (range.start + num_instance_variables)..(range.end + num_instance_variables);
             let delta_inv = delta.inverse().expect("deltas should be non-zero");
             cfg_iter!(a[dbg!(range).clone()])
                 .zip(&b[range.clone()])
