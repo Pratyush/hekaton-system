@@ -265,6 +265,10 @@ mod tests {
         )
         .unwrap();
 
+        // Create multistage circuit type
+        // should be able to do circuit.alloc_stage::<1>() or something
+        // circuit will save the allocd vars in its own struct for later stages.
+
         // Create the commitment and proof
         let allocator = F::ZERO;
         let mut cb = CommitmentBuilder::<_, QAP>::new(pk.ck.clone());

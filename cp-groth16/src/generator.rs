@@ -139,7 +139,7 @@ where
     // Step 1: For each pre-allocation stage, compute the polynomial corresponding to the instances
     // in that stage
 
-    let etas_abc: Vec<Vec<E::ScalarField>> = vec![vec![E::ScalarField::from(0u8)]];
+    //let etas_abc: Vec<Vec<E::ScalarField>> = vec![vec![E::ScalarField::from(0u8)]];
     let mut etas_abc = Vec::new();
     for (eta, range) in etas.iter().zip(instance_var_idx_ranges.iter()) {
         let eta_inverse = eta.inverse().ok_or(SynthesisError::UnexpectedIdentity)?;
