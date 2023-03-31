@@ -21,8 +21,7 @@ pub struct Groth16<E: Pairing, QAP: R1CSToQAP = LibsnarkReduction> {
 }
 
 impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
-    /// Create a Groth16 proof that is zero-knowledge using the provided
-    /// R1CS-to-QAP reduction.
+    /// Create a Groth16 proof that is zero-knowledge.
     /// This method samples randomness for zero knowledges via `rng`.
     #[inline]
     pub fn prove_last_stage_with_zk<C>(
@@ -40,9 +39,7 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
         Self::prove_last_stage(cs, circuit, pk, r, s)
     }
 
-    /// Create a Groth16 proof that is zero-knowledge using the provided
-    /// R1CS-to-QAP reduction.
-    /// This method samples randomness for zero knowledges via `rng`.
+    /// Create a Groth16 proof that is *not* zero-knowledge.
     #[inline]
     pub fn prove_last_stage_without_zk<C>(
         cs: &mut MultiStageConstraintSystem<E::ScalarField>,

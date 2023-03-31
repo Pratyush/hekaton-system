@@ -163,9 +163,7 @@ mod tests {
         // Verify
         let pvk = prepare_verifying_key(&pk.vk());
         let inputs = [point, cb.circuit.evaluation.unwrap()];
-        //dbg!(pvk.g16_pvk.vk.gamma_abc_g1[0].into_group() == prepared_inputs);
         assert!(verify_proof(&pvk, &proof, &inputs).unwrap());
 
-        //let polyn = core::iter::repeat_with(|| F::rand(&mut rng) - root).take(
     }
 }
