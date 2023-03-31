@@ -529,7 +529,7 @@ pub(crate) fn exec_checker<const NUM_REGS: usize, WV: WordVar<F>, F: PrimeField>
     // Enumerate all the opcodes we have to eval
     use tinyram_emu::instructions::Opcode::*;
     let supported_opcodes = [Add, Xor, CmpE, Jmp, CJmp, Answer, LoadW, StoreW];
-    //let supported_opcodes = [
+    // let supported_opcodes = [
     //    And, Or, Xor, Not, Add, Sub, MulL, UMulH, SMulH, UDiv, UMod, Shl, Shr, CmpE, CmpA, CmpAe,
     //    CmpG, CmpGe, Mov, CMov, Jmp, CJmp, CnJmp, StoreB, LoadB, StoreW, LoadW, Read, Answer,
     //];

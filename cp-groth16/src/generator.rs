@@ -140,7 +140,6 @@ where
         })
         .collect::<Vec<_>>();
 
-    //
     // Step 2: Compute the polynomial correpsonding to the public inputs
     //
 
@@ -152,7 +151,6 @@ where
         .map(|((a, b), c)| (beta * a + &(alpha * b) + c) * &gamma_inverse)
         .collect::<Vec<_>>();
 
-    //
     // Step 3: Compute the polynomial corresponding to the witnesses
     //
 

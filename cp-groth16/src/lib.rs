@@ -17,10 +17,11 @@ mod tests {
     use ark_ff::Field;
     use ark_groth16::r1cs_to_qap::LibsnarkReduction as QAP;
     use ark_r1cs_std::{alloc::AllocVar, eq::EqGadget, fields::fp::FpVar, prelude::FieldVar};
-    use ark_relations::ns;
-    use ark_relations::r1cs::{ConstraintSystemRef, SynthesisError};
-    use ark_std::test_rng;
-    use ark_std::{vec::Vec, UniformRand};
+    use ark_relations::{
+        ns,
+        r1cs::{ConstraintSystemRef, SynthesisError},
+    };
+    use ark_std::{test_rng, vec::Vec, UniformRand};
 
     use crate::{
         committer::CommitmentBuilder,
@@ -142,7 +143,6 @@ mod tests {
         }
         println!("Hello!");
 
-        //
         // Proof check
         //
 

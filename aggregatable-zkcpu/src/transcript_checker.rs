@@ -421,7 +421,7 @@ impl<WV: WordVar<F>, F: PrimeField> ProcessedTranscriptEntryVar<WV, F> {
 
         // Encode `val` as a dword
         acc += &self.val_fp * Self::pow_two(shift);
-        //shift += 2 * W::NativeWord::BITLEN;
+        // shift += 2 * W::NativeWord::BITLEN;
 
         Ok(acc)
     }
@@ -623,7 +623,6 @@ pub fn transcript_checker<const NUM_REGS: usize, WV: WordVar<F>, F: PrimeField>(
     // Checking memory-sorted transcript consistency
     // --------------------------------------------------------------------------------------------
 
-    //
     // Entirely separately from the rest of this function, we check the consistency of the given
     // adjacent entries in the mem-sorted memory transcript
     //
