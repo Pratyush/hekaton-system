@@ -75,7 +75,7 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
         // Synthesize the circuit.
         let synthesis_time = start_timer!(|| "Constraint synthesis");
         // We're generating the last stage of constraints.
-        circuit.generate_constraints(circuit.total_num_stages() - 1, cs)?;
+        circuit.generate_constraints(circuit.last_stage(), cs)?;
         debug_assert!(cs.is_satisfied()?);
         end_timer!(synthesis_time);
 

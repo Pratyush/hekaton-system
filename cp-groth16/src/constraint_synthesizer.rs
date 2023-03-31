@@ -106,6 +106,11 @@ pub trait MultiStageConstraintSynthesizer<F: Field> {
     /// The number of stages required to construct the constraint system.
     fn total_num_stages(&self) -> usize;
 
+    /// The number of stages required to construct the constraint system.
+    fn last_stage(&self) -> usize {
+        self.total_num_stages() - 1
+    }
+
     /// Generates constraints for the i-th stage.
     fn generate_constraints(
         &mut self,
