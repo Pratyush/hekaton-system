@@ -61,6 +61,7 @@ where
 
         // Inline/outline the relevant linear combinations.
         self.cs.finalize();
+        debug_assert!(self.cs.is_satisfied().unwrap());
 
         // Get *all* the witness assignments from the underlying constraint system
         let current_witness = self.cs.current_stage_witness_assignment();
@@ -100,7 +101,7 @@ where
         rng: &mut impl Rng,
     ) -> Result<Proof<E>, SynthesisError> {
         let ProofWithoutComms { a, b, c } =
-            Groth16::<E>::prove_last_stage_with_zk(&mut self.cs, &mut self.circuit, &self.pk, rng)?;
+            Groth16::<E>::prove_last_stage_without_zk(&mut self.cs, &mut self.circuit, &self.pk)?;
 
         // Compute Σ [κᵢηᵢ] and subtract it from C
         // We use unchecked here because we don't care about if `deltas_g.len() == comm_rands.len()`

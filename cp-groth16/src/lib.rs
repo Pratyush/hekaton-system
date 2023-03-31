@@ -21,12 +21,12 @@ mod tests {
         ns,
         r1cs::{ConstraintSystemRef, SynthesisError},
     };
-    use ark_std::{test_rng, vec::Vec, UniformRand};
+    use ark_std::{test_rng, vec::Vec, UniformRand, One};
 
     use crate::{
         committer::CommitmentBuilder,
         generator::generate_random_parameters_with_reduction,
-        verifier::{prepare_verifying_key, verify_proof},
+        verifier::{prepare_verifying_key, verify_proof}, MultiStageConstraintSystem, MultiStageConstraintSynthesizer,
     };
 
     /// A multistage circuit
@@ -74,6 +74,7 @@ mod tests {
                 .iter()
                 .map(|c| FpVar::new_witness(ns!(cs, "coeff"), || Ok(c)))
                 .collect::<Result<Vec<_>, _>>()?;
+            polynomial_var.last().unwrap().enforce_equal(&FpVar::one())?;
             self.polynomial_var = Some(polynomial_var);
 
             Ok(())
@@ -91,11 +92,6 @@ mod tests {
 
             // Assert that it's a root
             claimed_eval.enforce_equal(&evaluation)?;
-            println!(
-                "a constraints after poly_eval eq: {:?}",
-                cs.constraint_names(),
-            );
-
             Ok(())
         }
     }
@@ -125,9 +121,10 @@ mod tests {
     fn poly_commit_test() {
         let mut rng = test_rng();
 
-        // Sample a random polynomial of the specified degree.
+        // Sample a random monic polynomial of the specified degree.
         let degree = 10;
-        let polynomial = vec![F::rand(&mut rng); degree + 1];
+        let mut polynomial = vec![F::rand(&mut rng); degree];
+        polynomial.push(F::one());
         // Define the circuit we'll be using
         let circuit = PolyEvalCircuit::new(polynomial.clone());
 
