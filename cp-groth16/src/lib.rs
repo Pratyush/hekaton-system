@@ -164,6 +164,5 @@ mod tests {
         let pvk = prepare_verifying_key(&pk.vk());
         let inputs = [point, cb.circuit.evaluation.unwrap()];
         assert!(verify_proof(&pvk, &proof, &inputs).unwrap());
-
     }
 }

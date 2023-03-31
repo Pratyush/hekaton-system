@@ -22,7 +22,7 @@ where
     pub cs: MultiStageConstraintSystem<E::ScalarField>,
     /// The circuit that generates assignments for the commitment.
     pub circuit: C,
-    /// The cirrent stage
+    /// The current stage.
     cur_stage: usize,
     /// The committer key that will be used to generate commitments at each step.
     pk: &'a ProvingKey<E>,
@@ -77,22 +77,14 @@ where
             .get(self.cur_stage)
             .expect("no more values left in committing key");
 
-        println!(
-            "length of deltas_abc_g == {:?}",
-            self.pk
-                .ck
-                .deltas_abc_g
-                .iter()
-                .map(|v| v.len())
-                .collect::<Vec<usize>>()
-        );
         assert_eq!(current_witness.len(), current_ck.len(),);
 
-        // Compute the commitment. First compute [J(s)/ηᵢ]₁ where i is the allocation stage we're
-        // in
-
         let randomness = E::ScalarField::rand(rng);
-        let commitment = E::G1::msm(current_ck, &current_witness).unwrap()
+        // Compute the commitment.
+        let commitment =
+            // First compute [J(s)/ηᵢ]₁ where i is the current stage.
+            E::G1::msm(current_ck, &current_witness).unwrap()
+            // Then add in the randomizer
             + (self.pk.ck.last_delta_g * randomness);
 
         self.cur_stage += 1;
