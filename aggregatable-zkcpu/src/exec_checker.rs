@@ -370,7 +370,7 @@ fn run_instr<WV: WordVar<F>, F: PrimeField>(
             let err = mem_op.is_padding.not();
 
             Ok((state, err))
-        }
+        },
         Xor => {
             let output_val = reg2_val.xor(&imm_or_reg_val)?;
             let new_regs = arr_set(&regs, reg1, &output_val)?;
@@ -386,7 +386,7 @@ fn run_instr<WV: WordVar<F>, F: PrimeField>(
             let err = mem_op.is_padding.not();
 
             Ok((state, err))
-        }
+        },
         CmpE => {
             // Compare the two input values
             let new_flag = reg2_val.is_eq(&imm_or_reg_val)?;
@@ -403,7 +403,7 @@ fn run_instr<WV: WordVar<F>, F: PrimeField>(
             let err = mem_op.is_padding.not();
 
             Ok((state, err))
-        }
+        },
         Jmp => {
             // Set the new PC to be the imm-or-reg
             let new_pc = imm_or_reg_val.clone();
@@ -418,7 +418,7 @@ fn run_instr<WV: WordVar<F>, F: PrimeField>(
             let err = mem_op.is_padding.not();
 
             Ok((state, err))
-        }
+        },
         CJmp => {
             // Let pc' = imm_or_reg_val if flag is set. Otherwise, let pc' = pc + 1
             let new_pc = PcVar::conditionally_select(&flag, imm_or_reg_val, &incrd_pc)?;
@@ -438,7 +438,7 @@ fn run_instr<WV: WordVar<F>, F: PrimeField>(
             let err = mem_op.is_padding.not();
 
             Ok((state, err))
-        }
+        },
         Answer => {
             let state = CpuStateVar {
                 pc: incrd_pc.clone(),
@@ -453,7 +453,7 @@ fn run_instr<WV: WordVar<F>, F: PrimeField>(
             let err = mem_op.is_padding.not();
 
             Ok((state, err))
-        }
+        },
         LoadW => {
             // Get the correct word from the memory op, and save it in the register
             let (loaded_word, mut err) = mem_op.select_word(&imm_or_reg_val)?;
@@ -470,7 +470,7 @@ fn run_instr<WV: WordVar<F>, F: PrimeField>(
             err = err.or(&mem_op.is_padding)?;
 
             Ok((state, err))
-        }
+        },
         StoreW => {
             // Storing doesn't change anything. We don't have to do anything here
 
@@ -485,7 +485,7 @@ fn run_instr<WV: WordVar<F>, F: PrimeField>(
             let err = mem_op.is_padding.clone();
 
             Ok((state, err))
-        }
+        },
         _ => todo!(),
     }
 }
@@ -523,7 +523,7 @@ pub(crate) fn exec_checker<const NUM_REGS: usize, WV: WordVar<F>, F: PrimeField>
             pc.carrying_add(&WV::constant(
                 WV::NativeWord::from_u64(dword_bytelen).unwrap(),
             ))?
-        }
+        },
     };
 
     // Enumerate all the opcodes we have to eval

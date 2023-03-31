@@ -13,23 +13,20 @@ pub use prover::Groth16;
 /// Impl the prover
 #[cfg(test)]
 mod tests {
+    use ark_bls12_381::{Bls12_381 as E, Fr as F};
     use ark_ff::Field;
+    use ark_groth16::r1cs_to_qap::LibsnarkReduction as QAP;
+    use ark_r1cs_std::{alloc::AllocVar, eq::EqGadget, fields::fp::FpVar, prelude::FieldVar};
+    use ark_relations::ns;
     use ark_relations::r1cs::{ConstraintSystemRef, SynthesisError};
-    use ark_std::vec::Vec;
+    use ark_std::test_rng;
+    use ark_std::{vec::Vec, UniformRand};
 
-    use super::*;
     use crate::{
         committer::CommitmentBuilder,
         generator::generate_random_parameters_with_reduction,
         verifier::{prepare_verifying_key, verify_proof},
     };
-
-    use ark_bls12_381::{Bls12_381 as E, Fr as F};
-    use ark_ff::UniformRand;
-    use ark_groth16::r1cs_to_qap::LibsnarkReduction as QAP;
-    use ark_r1cs_std::{alloc::AllocVar, eq::EqGadget, fields::fp::FpVar, prelude::FieldVar};
-    use ark_relations::ns;
-    use ark_std::test_rng;
 
     /// A multistage circuit
     /// Stage 1. Witness a var and ensure it's 0

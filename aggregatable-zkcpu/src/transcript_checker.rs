@@ -209,7 +209,7 @@ impl<W: Word> ProcessedTranscriptEntry<W> {
                 pad.is_padding = true;
                 pad.timestamp = first.timestamp + 1;
                 pad
-            }
+            },
         };
 
         [first, second]
