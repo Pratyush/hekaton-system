@@ -24,7 +24,7 @@ pub fn prepare_verifying_key<E: Pairing>(vk: &VerifyingKey<E>) -> PreparedVerify
 /// inputs. This should be preferred over [`verify_proof`] if the instance's public inputs are
 /// known in advance.
 pub fn verify_proof_with_prepared_inputs<E: Pairing>(
-    pvk: PreparedVerifyingKey<E>,
+    pvk: &PreparedVerifyingKey<E>,
     proof: &Proof<E>,
     prepared_inputs: &E::G1,
 ) -> Result<bool, SynthesisError> {
@@ -61,4 +61,14 @@ pub fn prepare_inputs<E: Pairing>(
     }
 
     Ok(g_ic)
+}
+
+/// Verify a CP-Groth16 proof `proof` against the prepared verification key `pvk` and public inputs.
+pub fn verify_proof<E: Pairing>(
+    vk: &PreparedVerifyingKey<E>,
+    proof: &Proof<E>,
+    public_inputs: &[E::ScalarField],
+) -> Result<bool, SynthesisError> {
+    let prepared_inputs = prepare_inputs(&vk, public_inputs)?;
+    verify_proof_with_prepared_inputs(vk, proof, &prepared_inputs)
 }

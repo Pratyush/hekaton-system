@@ -14,22 +14,20 @@ pub use prover::Groth16;
 #[cfg(test)]
 mod tests {
     use ark_ff::Field;
-    use ark_relations::r1cs::{ConstraintSystem, ConstraintSystemRef, SynthesisError};
+    use ark_relations::r1cs::{ConstraintSystemRef, SynthesisError};
     use ark_std::vec::Vec;
 
     use super::*;
     use crate::{
         committer::CommitmentBuilder,
         generator::generate_random_parameters_with_reduction,
-        verifier::{prepare_verifying_key, verify_proof_with_prepared_inputs},
+        verifier::{prepare_verifying_key, verify_proof},
     };
-    use ark_ec::AffineRepr;
-    use ark_relations::r1cs::ConstraintSynthesizer;
 
     use ark_bls12_381::{Bls12_381 as E, Fr as F};
-    use ark_ff::{ToConstraintField, UniformRand};
+    use ark_ff::UniformRand;
     use ark_groth16::r1cs_to_qap::LibsnarkReduction as QAP;
-    use ark_r1cs_std::{alloc::AllocVar, eq::EqGadget, fields::fp::FpVar};
+    use ark_r1cs_std::{alloc::AllocVar, eq::EqGadget, fields::fp::FpVar, prelude::FieldVar};
     use ark_relations::ns;
     use ark_std::test_rng;
 
@@ -37,58 +35,64 @@ mod tests {
     /// Stage 1. Witness a var and ensure it's 0
     /// Stage 2. Input a monic polynomial and prove knowledge of a root
     #[derive(Clone)]
-    struct PolynZeroCircuit {
-        // A committed value that must be zero
-        zero: F,
-        // The witnessed var of the above field
-        zero_var: FpVar<F>,
-        // Coefficients of a monic polynomial, from lowest to highest degree
-        polyn: Vec<F>,
-        // An alleged root of the polynomial
-        root: F,
+    struct PolyEvalCircuit {
+        // A polynomial that is committed in stage 0.
+        pub polynomial: Vec<F>,
+
+        // The variable corresponding to `polynomial` that is generated after stage 0.
+        pub polynomial_var: Option<Vec<FpVar<F>>>,
+
+        // The evaluation point for the polynomial.
+        pub point: Option<F>,
+
+        // The evaluation of `self.polynomial` at `self.root`.
+        pub evaluation: Option<F>,
     }
 
-    impl PolynZeroCircuit {
-        fn stage0(&mut self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
-            // Witness the zero var. Make sure it's 0. Then save it
-            let zero_var = FpVar::new_witness(ns!(cs, "z"), || Ok(self.zero))?;
-            zero_var.enforce_equal(&FpVar::Constant(F::ZERO))?;
-            self.zero_var = zero_var;
+    impl PolyEvalCircuit {
+        fn new(polynomial: Vec<F>) -> Self {
+            Self {
+                polynomial,
+                polynomial_var: None,
+                point: None,
+                evaluation: None,
+            }
+        }
+
+        fn add_point(&mut self, point: F) {
+            use ark_std::Zero;
+            self.point = Some(point);
+            self.evaluation = Some(
+                self.polynomial
+                    .iter()
+                    .enumerate()
+                    .fold(F::zero(), |acc, (i, c)| acc + c * &point.pow(&[i as u64])),
+            );
+        }
+
+        fn stage_0(&mut self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
+            let polynomial_var = self
+                .polynomial
+                .iter()
+                .map(|c| FpVar::new_witness(ns!(cs, "coeff"), || Ok(c)))
+                .collect::<Result<Vec<_>, _>>()?;
+            self.polynomial_var = Some(polynomial_var);
 
             Ok(())
         }
 
-        fn stage1(&mut self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
-            // Input the polynomial P. P must be monic, i.e., the leading coefficient is 1.
-            let polyn_var = self
-                .polyn
-                .iter()
-                .map(|c| FpVar::new_input(ns!(cs, "coeff"), || Ok(c)))
-                .collect::<Result<Vec<_>, _>>()?;
-            /*
-            polyn_var
-                .last()
-                .unwrap()
-                .enforce_equal(&FpVar::Constant(F::ONE))?;
-            */
-
-            // Assert the zero var is zero
-            // NOTE: If you comment out this line, the test succeeds
-            self.zero_var.enforce_equal(&FpVar::Constant(F::ZERO))?;
-
-            // The X on which we evaluate P(X)
-            let x_var = FpVar::new_witness(ns!(cs, "root"), || Ok(self.root))?;
-
-            // Evaluate the polynomial
-            let mut poly_eval = FpVar::Constant(F::ZERO);
-            let mut pow_x = FpVar::Constant(F::ONE);
-            for coeff in polyn_var {
-                poly_eval += coeff * &pow_x;
-                pow_x *= &x_var;
+        fn stage_1(&mut self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
+            let point = FpVar::new_input(ns!(cs, "point"), || Ok(self.point.unwrap()))?;
+            let evaluation = FpVar::new_input(ns!(cs, "point"), || Ok(self.evaluation.unwrap()))?;
+            let mut claimed_eval: FpVar<F> = FieldVar::zero();
+            let mut cur_pow = FpVar::one();
+            for coeff in self.polynomial_var.as_ref().unwrap() {
+                claimed_eval += coeff * &cur_pow;
+                cur_pow *= &point;
             }
 
             // Assert that it's a root
-            poly_eval.enforce_equal(&FpVar::Constant(F::ZERO))?;
+            claimed_eval.enforce_equal(&evaluation)?;
             println!(
                 "a constraints after poly_eval eq: {:?}",
                 cs.constraint_names(),
@@ -98,7 +102,7 @@ mod tests {
         }
     }
 
-    impl MultiStageConstraintSynthesizer<F> for PolynZeroCircuit {
+    impl MultiStageConstraintSynthesizer<F> for PolyEvalCircuit {
         fn total_num_stages(&self) -> usize {
             2
         }
@@ -109,8 +113,8 @@ mod tests {
             cs: &mut MultiStageConstraintSystem<F>,
         ) -> Result<(), SynthesisError> {
             let out = match stage {
-                0 => cs.synthesize_with(|c| self.stage0(c)),
-                1 => cs.synthesize_with(|c| self.stage1(c)),
+                0 => cs.synthesize_with(|c| self.stage_0(c)),
+                1 => cs.synthesize_with(|c| self.stage_1(c)),
                 _ => panic!("unexpected stage stage {}", stage),
             };
 
@@ -120,58 +124,26 @@ mod tests {
 
     // Do a Groth16 test that involves no commitment
     #[test]
-    fn nocommit() {
+    fn poly_commit_test() {
         let mut rng = test_rng();
 
-        // Pick a root, then make a degree 10 polyn with that root
-        let deg = 10;
-        let root = F::rand(&mut rng);
-        // Start with P(X) = X - root
-        let mut polyn = vec![-root, F::ONE];
-        // Now iteratively compute P'(X) = P(X) * (X - r) for some random r each time
-        for _ in 0..deg - 1 {
-            let rand_root = F::rand(&mut rng);
-            // Multiply everything by X, i.e., shift all the coeffs down
-            polyn.insert(0, F::ZERO);
-            // Subtract rP(X)
-            for i in 0..polyn.len() - 1 {
-                let tmp = polyn[i + 1];
-                polyn[i] -= rand_root * tmp;
-            }
-        }
-        polyn = vec![F::ZERO; deg + 1];
-
-        //
-        // Sanity check
-        //
-
-        // Check that P(root) == 0
-        let mut poly_eval = F::ZERO;
-        let mut pow_x = F::ONE;
-        for c in polyn.iter() {
-            poly_eval += c * &pow_x;
-            pow_x *= root;
-        }
-        assert_eq!(poly_eval, F::ZERO);
-
+        // Sample a random polynomial of the specified degree.
+        let degree = 10;
+        let polynomial = vec![F::rand(&mut rng); degree + 1];
         // Define the circuit we'll be using
-        let circuit = PolynZeroCircuit {
-            zero: F::ZERO,
-            zero_var: FpVar::Constant(F::ZERO),
-            polyn: polyn.clone(),
-            root,
-        };
-
-        //
-        // Constraints check
-        //
+        let circuit = PolyEvalCircuit::new(polynomial.clone());
 
         // Run the circuit and make sure it succeeds
-        let mut cs = MultiStageConstraintSystem::default();
-        let mut circuit_copy = circuit.clone();
-        circuit_copy.generate_constraints(0, &mut cs).unwrap();
-        circuit_copy.generate_constraints(1, &mut cs).unwrap();
-        assert!(cs.is_satisfied().unwrap());
+        {
+            let mut circuit = circuit.clone();
+            let mut cs = MultiStageConstraintSystem::default();
+            circuit.generate_constraints(0, &mut cs).unwrap();
+            let point = F::rand(&mut rng);
+            circuit.add_point(point);
+            circuit.generate_constraints(1, &mut cs).unwrap();
+            assert!(cs.is_satisfied().unwrap());
+        }
+        println!("Hello!");
 
         //
         // Proof check
@@ -180,33 +152,20 @@ mod tests {
         // Generate the proving key
         let pk = generate_random_parameters_with_reduction::<_, E, QAP>(circuit.clone(), &mut rng)
             .unwrap();
+        println!("Hello done with setup");
 
-        let mut cb = CommitmentBuilder::<_, E, QAP>::new(circuit, pk);
-        let (com, rand) = cb.commit(&mut rng).unwrap();
-        let proof = cb.prove(vec![com], &[rand], &mut rng).unwrap();
-
-        /*
-        // Create the commitment and proof
-        let allocator = F::ZERO;
-        let mut cb = CommitmentBuilder::<_, QAP>::new(pk.ck.clone());
-        let (com, rand, zero_var) = cb.commit(&mut rng, &allocator).unwrap();
-        // Add the committed variable to the circuit context
-        circuit.zero_var = zero_var;
-        // Do the proof. The empty values are because we haven't committed to anything
-        //let proof = prove(&mut rng, circuit, &pk, vec![com], &[rand]).unwrap();
-        let proof = cb
-            .prove(&mut rng, circuit, &pk, vec![com], &[rand])
-            .unwrap();
+        let mut cb = CommitmentBuilder::<_, E, QAP>::new(circuit, &pk);
+        let (comm, rand) = cb.commit(&mut rng).unwrap();
+        let point = F::rand(&mut rng);
+        cb.circuit.add_point(point);
+        let proof = cb.prove(vec![comm], &[rand], &mut rng).unwrap();
 
         // Verify
         let pvk = prepare_verifying_key(&pk.vk());
-        let inputs = polyn.to_field_elements().unwrap();
-        let prepared_inputs =
-            ark_groth16::Groth16::<E, QAP>::prepare_inputs(&pvk.g16_pvk, &inputs).unwrap();
+        let inputs = [point, cb.circuit.evaluation.unwrap()];
         //dbg!(pvk.g16_pvk.vk.gamma_abc_g1[0].into_group() == prepared_inputs);
-        assert!(verify_proof_with_prepared_inputs(pvk, &proof, &prepared_inputs).unwrap());
+        assert!(verify_proof(&pvk, &proof, &inputs).unwrap());
 
         //let polyn = core::iter::repeat_with(|| F::rand(&mut rng) - root).take(
-        */
     }
 }

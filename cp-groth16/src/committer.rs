@@ -13,7 +13,7 @@ use ark_relations::r1cs::{OptimizationGoal, SynthesisError};
 use ark_std::rand::Rng;
 
 /// A struct that sequentially runs [`InputAllocators`] and commits to the variables allocated therein
-pub struct CommitmentBuilder<C, E, QAP>
+pub struct CommitmentBuilder<'a, C, E, QAP>
 where
     C: MultiStageConstraintSynthesizer<E::ScalarField>,
     E: Pairing,
@@ -25,17 +25,17 @@ where
     /// The cirrent stage
     cur_stage: usize,
     /// The committer key that will be used to generate commitments at each step.
-    pk: ProvingKey<E>,
+    pk: &'a ProvingKey<E>,
     _qap: PhantomData<QAP>,
 }
 
-impl<C, E, QAP> CommitmentBuilder<C, E, QAP>
+impl<'a, C, E, QAP> CommitmentBuilder<'a, C, E, QAP>
 where
     C: MultiStageConstraintSynthesizer<E::ScalarField>,
     E: Pairing,
     QAP: R1CSToQAP,
 {
-    pub fn new(circuit: C, pk: ProvingKey<E>) -> Self {
+    pub fn new(circuit: C, pk: &'a ProvingKey<E>) -> Self {
         // Make a new constraint system and set the optimization goal
         let mscs = MultiStageConstraintSystem::default();
         mscs.cs.set_optimization_goal(OptimizationGoal::Constraints);
@@ -111,8 +111,10 @@ where
             Groth16::<E>::prove_last_stage_with_zk(&mut self.cs, &mut self.circuit, &self.pk, rng)?;
 
         // Compute Σ [κᵢηᵢ] and subtract it from C
-        let kappas_etas_g1 = E::G1::msm(&self.pk.deltas_g, comm_rands)
-            .expect("incorrect number of commitment randomness vals");
+        // We use unchecked here because we don't care about if `deltas_g.len() == comm_rands.len()`
+        // It actually will not be equal
+        assert_eq!(self.pk.deltas_g.len(), comm_rands.len() + 1);
+        let kappas_etas_g1 = E::G1::msm_unchecked(&self.pk.deltas_g, comm_rands);
         let c = (c.into_group() - kappas_etas_g1).into_affine();
 
         Ok(Proof {
