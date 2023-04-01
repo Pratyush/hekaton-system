@@ -1,9 +1,6 @@
 use crate::data_structures::{PreparedVerifyingKey, Proof, VerifyingKey};
 
-use core::ops::AddAssign;
-
 use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup};
-use ark_ff::PrimeField;
 use ark_relations::r1cs::SynthesisError;
 
 /// Prepare the verifying key `vk` for use in proof verification.
@@ -30,10 +27,10 @@ pub fn verify_proof_with_prepared_inputs<E: Pairing>(
 ) -> Result<bool, SynthesisError> {
     use core::iter::once;
 
-    let lhs = once(<E::G1Affine as Into<E::G1Prepared>>::into(proof.a))
+    let lhs = once(E::G1Prepared::from(proof.a))
         .chain(once(prepared_inputs.into_affine().into()))
-        .chain(once(proof.c.into()))
-        .chain(proof.ds.iter().map(E::G1Prepared::from));
+        .chain(proof.ds.iter().map(Into::into))
+        .chain(once(proof.c.into()));
     let rhs = once(proof.b.into())
         .chain(once(pvk.neg_gamma_h.clone()))
         .chain(pvk.neg_deltas_h.clone());
@@ -56,8 +53,8 @@ pub fn prepare_inputs<E: Pairing>(
     }
 
     let mut g_ic = pvk.vk.gamma_abc_g[0].into_group();
-    for (i, b) in public_inputs.iter().zip(pvk.vk.gamma_abc_g.iter().skip(1)) {
-        g_ic.add_assign(&b.mul_bigint(i.into_bigint()));
+    for (&input, &base) in public_inputs.iter().zip(pvk.vk.gamma_abc_g.iter().skip(1)) {
+        g_ic += base * input;
     }
 
     Ok(g_ic)

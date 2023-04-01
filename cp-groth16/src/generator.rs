@@ -14,49 +14,9 @@ use ark_std::{cfg_into_iter, cfg_iter, end_timer, rand::Rng, start_timer};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-/// Generates a random common reference string for
-/// a circuit using the provided R1CS-to-QAP reduction.
-#[inline]
-pub fn generate_random_parameters_with_reduction<C, E, QAP>(
-    circuit: C,
-    rng: &mut impl Rng,
-) -> Result<ProvingKey<E>, SynthesisError>
-where
-    C: MultiStageConstraintSynthesizer<E::ScalarField>,
-    E: Pairing,
-    QAP: R1CSToQAP,
-{
-    let alpha = E::ScalarField::rand(rng);
-    let beta = E::ScalarField::rand(rng);
-    let gamma = E::ScalarField::rand(rng);
-    let deltas = (0..circuit.total_num_stages())
-        .map(|_| E::ScalarField::rand(rng))
-        .collect();
-
-    let g1_generator = E::G1::rand(rng);
-    let g2_generator = E::G2::rand(rng);
-
-    generate_parameters_with_qap::<_, _, QAP>(
-        circuit,
-        alpha,
-        beta,
-        gamma,
-        deltas,
-        g1_generator,
-        g2_generator,
-        rng,
-    )
-}
-
 /// Create parameters for a circuit, given some toxic waste, R1CS to QAP calculator and group generators
-pub fn generate_parameters_with_qap<C, E, QAP>(
+pub fn generate_parameters<C, E, QAP>(
     mut circuit: C,
-    alpha: E::ScalarField,
-    beta: E::ScalarField,
-    gamma: E::ScalarField,
-    deltas: Vec<E::ScalarField>,
-    g1_generator: E::G1,
-    g2_generator: E::G2,
     rng: &mut impl Rng,
 ) -> Result<ProvingKey<E>, SynthesisError>
 where
@@ -65,6 +25,17 @@ where
     QAP: R1CSToQAP,
 {
     type D<F> = GeneralEvaluationDomain<F>;
+    let alpha = E::ScalarField::rand(rng);
+    let beta = E::ScalarField::rand(rng);
+    let gamma = E::ScalarField::rand(rng);
+    let deltas = (0..circuit.total_num_stages())
+        .map(|_| E::ScalarField::rand(rng))
+        .collect::<Vec<_>>();
+
+    let g1_generator = E::G1::rand(rng);
+    let g2_generator = E::G2::rand(rng);
+
+
 
     let setup_time = start_timer!(|| "CPGroth16::Generator");
     let mut mscs = MultiStageConstraintSystem::default();
@@ -175,9 +146,9 @@ where
     // Generate the R1CS proving key
     let proving_key_time = start_timer!(|| "Generate the R1CS proving key");
 
-    let alpha_g = g1_generator.mul_bigint(&alpha.into_bigint()).into_affine();
-    let beta_g = g1_generator.mul_bigint(&beta.into_bigint()).into_affine();
-    let beta_h = g2_generator.mul_bigint(&beta.into_bigint()).into_affine();
+    let alpha_g = (g1_generator * alpha).into_affine();
+    let beta_g = (g1_generator * beta).into_affine();
+    let beta_h = (g2_generator * beta).into_affine();
     let deltas_g = {
         let t = FixedBase::msm::<E::G1>(scalar_bits, g1_window, &g1_table, &deltas);
         E::G1::normalize_batch(&t)
@@ -187,7 +158,7 @@ where
         E::G2::normalize_batch(&t)
     };
     drop(g2_table);
-    let gamma_h = g2_generator.mul_bigint(&gamma.into_bigint()).into_affine();
+    let gamma_h = (g2_generator * gamma).into_affine();
     let gamma_abc_g = {
         let t = FixedBase::msm::<E::G1>(scalar_bits, g1_window, &g1_table, &gamma_abc);
         E::G1::normalize_batch(&t)

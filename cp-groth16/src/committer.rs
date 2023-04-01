@@ -77,7 +77,7 @@ where
             .get(self.cur_stage)
             .expect("no more values left in committing key");
 
-        assert_eq!(current_witness.len(), current_ck.len(),);
+        assert_eq!(current_witness.len(), current_ck.len());
 
         let randomness = E::ScalarField::rand(rng);
         // Compute the commitment.
@@ -95,7 +95,7 @@ where
 
     pub fn prove(
         &mut self,
-        comms: Vec<Comm<E>>,
+        comms: &[Comm<E>],
         comm_rands: &[CommRandomness<E>],
         rng: &mut impl Rng,
     ) -> Result<Proof<E>, SynthesisError> {
@@ -109,6 +109,6 @@ where
         let kappas_etas_g1 = E::G1::msm_unchecked(&self.pk.deltas_g, comm_rands);
         let c = (c.into_group() - kappas_etas_g1).into_affine();
 
-        Ok(Proof { a, b, c, ds: comms })
+        Ok(Proof { a, b, c, ds: comms.to_vec() })
     }
 }

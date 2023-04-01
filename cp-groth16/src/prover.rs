@@ -94,6 +94,7 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
         // Compute C
 
         let current_witness = cs.current_stage_witness_assignment();
+        assert_eq!(current_witness.len(), pk.last_ck().len());
         let l_aux_acc = E::G1::msm(&pk.last_ck(), &current_witness).unwrap();
 
         let r_s_delta_g = pk.last_delta_g() * (r * s);
