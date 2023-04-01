@@ -35,8 +35,6 @@ where
     let g1_generator = E::G1::rand(rng);
     let g2_generator = E::G2::rand(rng);
 
-
-
     let setup_time = start_timer!(|| "CPGroth16::Generator");
     let mut mscs = MultiStageConstraintSystem::default();
     mscs.cs.set_optimization_goal(OptimizationGoal::Constraints);

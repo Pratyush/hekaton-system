@@ -88,7 +88,8 @@ mod tests {
 
             fn stage_1(&mut self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
                 let point = FpVar::new_input(ns!(cs, "point"), || Ok(self.point.unwrap()))?;
-                let evaluation = FpVar::new_input(ns!(cs, "point"), || Ok(self.evaluation.unwrap()))?;
+                let evaluation =
+                    FpVar::new_input(ns!(cs, "point"), || Ok(self.evaluation.unwrap()))?;
                 let mut claimed_eval: FpVar<F> = FieldVar::zero();
                 let mut cur_pow = FpVar::one();
                 for coeff in self.polynomial_var.as_ref().unwrap() {
@@ -150,8 +151,7 @@ mod tests {
             //
 
             // Generate the proving key
-            let pk = generate_parameters::<_, E, QAP>(circuit.clone(), &mut rng)
-                .unwrap();
+            let pk = generate_parameters::<_, E, QAP>(circuit.clone(), &mut rng).unwrap();
             println!("Hello done with setup");
 
             let mut rng = test_rng();
@@ -222,7 +222,8 @@ mod tests {
                 self.polynomial_var = Some(polynomial_var);
 
                 let point = FpVar::new_input(ns!(cs, "point"), || Ok(self.point.unwrap()))?;
-                let evaluation = FpVar::new_input(ns!(cs, "point"), || Ok(self.evaluation.unwrap()))?;
+                let evaluation =
+                    FpVar::new_input(ns!(cs, "point"), || Ok(self.evaluation.unwrap()))?;
                 let mut claimed_eval: FpVar<F> = FieldVar::zero();
                 let mut cur_pow = FpVar::one();
                 for coeff in self.polynomial_var.as_ref().unwrap() {
@@ -283,8 +284,7 @@ mod tests {
             //
 
             // Generate the proving key
-            let pk = generate_parameters::<_, E, QAP>(circuit.clone(), &mut rng)
-                .unwrap();
+            let pk = generate_parameters::<_, E, QAP>(circuit.clone(), &mut rng).unwrap();
             println!("Hello done with setup");
 
             let mut rng = test_rng();
@@ -299,5 +299,4 @@ mod tests {
             assert!(verify_proof(&pvk, &proof, &inputs).unwrap());
         }
     }
-    
 }

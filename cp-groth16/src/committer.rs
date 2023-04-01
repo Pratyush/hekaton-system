@@ -109,6 +109,11 @@ where
         let kappas_etas_g1 = E::G1::msm_unchecked(&self.pk.deltas_g, comm_rands);
         let c = (c.into_group() - kappas_etas_g1).into_affine();
 
-        Ok(Proof { a, b, c, ds: comms.to_vec() })
+        Ok(Proof {
+            a,
+            b,
+            c,
+            ds: comms.to_vec(),
+        })
     }
 }
