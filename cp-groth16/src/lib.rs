@@ -21,12 +21,13 @@ mod tests {
         ns,
         r1cs::{ConstraintSystemRef, SynthesisError},
     };
-    use ark_std::{test_rng, vec::Vec, UniformRand, One};
+    use ark_std::{test_rng, vec::Vec, One, UniformRand};
 
     use crate::{
         committer::CommitmentBuilder,
         generator::generate_random_parameters_with_reduction,
-        verifier::{prepare_verifying_key, verify_proof}, MultiStageConstraintSystem, MultiStageConstraintSynthesizer,
+        verifier::{prepare_verifying_key, verify_proof},
+        MultiStageConstraintSynthesizer, MultiStageConstraintSystem,
     };
 
     /// A multistage circuit
@@ -74,7 +75,10 @@ mod tests {
                 .iter()
                 .map(|c| FpVar::new_witness(ns!(cs, "coeff"), || Ok(c)))
                 .collect::<Result<Vec<_>, _>>()?;
-            polynomial_var.last().unwrap().enforce_equal(&FpVar::one())?;
+            polynomial_var
+                .last()
+                .unwrap()
+                .enforce_equal(&FpVar::one())?;
             self.polynomial_var = Some(polynomial_var);
 
             Ok(())

@@ -60,7 +60,6 @@ where
             .generate_constraints(self.cur_stage, &mut self.cs)?;
 
         // Inline/outline the relevant linear combinations.
-        self.cs.finalize();
         debug_assert!(self.cs.is_satisfied().unwrap());
 
         // Get *all* the witness assignments from the underlying constraint system
@@ -101,7 +100,7 @@ where
         rng: &mut impl Rng,
     ) -> Result<Proof<E>, SynthesisError> {
         let ProofWithoutComms { a, b, c } =
-            Groth16::<E>::prove_last_stage_without_zk(&mut self.cs, &mut self.circuit, &self.pk)?;
+            Groth16::<E>::prove_last_stage_with_zk(&mut self.cs, &mut self.circuit, &self.pk, rng)?;
 
         // Compute Σ [κᵢηᵢ] and subtract it from C
         // We use unchecked here because we don't care about if `deltas_g.len() == comm_rands.len()`
@@ -110,11 +109,6 @@ where
         let kappas_etas_g1 = E::G1::msm_unchecked(&self.pk.deltas_g, comm_rands);
         let c = (c.into_group() - kappas_etas_g1).into_affine();
 
-        Ok(Proof {
-            a,
-            b,
-            c,
-            ds: dbg!(comms),
-        })
+        Ok(Proof { a, b, c, ds: comms })
     }
 }

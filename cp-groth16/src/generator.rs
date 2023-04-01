@@ -102,13 +102,9 @@ where
     ///////////////////////////////////////////////////////////////////////////
 
     let reduction_time = start_timer!(|| "R1CS to QAP Instance Map with Evaluation");
-    let num_instance_variables = dbg!(mscs.num_instance_variables());
-    dbg!(mscs.num_constraints());
-    dbg!(mscs.num_witness_variables());
-    let (a, b, c, zt, qap_num_variables, m_raw) = QAP::instance_map_with_evaluation::<
-        E::ScalarField,
-        D<E::ScalarField>,
-    >(mscs.cs.clone(), &t)?;
+    let num_instance_variables = mscs.num_instance_variables();
+    let (a, b, c, zt, qap_num_variables, m_raw) =
+        QAP::instance_map_with_evaluation::<E::ScalarField, D<_>>(mscs.cs.clone(), &t)?;
     end_timer!(reduction_time);
 
     // Compute query densities
@@ -132,7 +128,7 @@ where
             let range =
                 (range.start + num_instance_variables)..(range.end + num_instance_variables);
             let delta_inv = delta.inverse().expect("deltas should be non-zero");
-            cfg_iter!(a[dbg!(range.clone())])
+            cfg_iter!(a[range.clone()])
                 .zip(&b[range.clone()])
                 .zip(&c[range.clone()])
                 .map(|((a, b), c)| (beta * a + alpha * b + c) * &delta_inv)
@@ -216,8 +212,6 @@ where
     let h_time = start_timer!(|| "Calculate H");
     let h = QAP::h_query_scalars::<_, D<E::ScalarField>>(m_raw - 1, t, zt, last_delta_inv)?;
     let h_g = FixedBase::msm::<E::G1>(scalar_bits, g1_window, &g1_table, &h);
-    dbg!(h_g.len());
-    dbg!(h.len());
 
     end_timer!(h_time);
     end_timer!(proving_key_time);

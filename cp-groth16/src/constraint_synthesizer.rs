@@ -44,7 +44,7 @@ impl<F: Field> MultiStageConstraintSystem<F> {
     /// Must be called by the constraint synthesizer before ending constraint synthesis
     /// for the i-th stage.
     pub fn finalize_stage(&mut self) {
-        self.cs.finalize();
+        // self.cs.inline_all_lcs();
         let end = self.cs.num_witness_variables();
         self.variable_range_for_stage.last_mut().unwrap().end = end;
     }

@@ -82,9 +82,6 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
         let lc_time = start_timer!(|| "Inlining LCs");
         cs.finalize();
         end_timer!(lc_time);
-        dbg!(cs.num_instance_variables());
-        dbg!(cs.num_constraints());
-        dbg!(cs.num_witness_variables());
 
         let witness_map_time = start_timer!(|| "R1CS to QAP witness map");
         let h = QAP::witness_map::<E::ScalarField, D<E::ScalarField>>(cs.cs.clone())?;
