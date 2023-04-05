@@ -1,23 +1,17 @@
-use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup, Group, VariableBaseMSM};
+use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup, VariableBaseMSM};
 use ark_ff::{PrimeField, UniformRand, Zero};
 use ark_groth16::{
     r1cs_to_qap::{LibsnarkReduction, R1CSToQAP},
-    Proof as ProofWithoutComs, ProvingKey,
+    Proof as ProofWithoutComms,
 };
 use ark_poly::GeneralEvaluationDomain;
-use ark_relations::r1cs::{
-    ConstraintSynthesizer, ConstraintSystem, ConstraintSystemRef, Result as R1CSResult,
-};
-use ark_std::{
-    cfg_into_iter, cfg_iter, end_timer,
-    ops::{AddAssign, Mul},
-    rand::Rng,
-    start_timer,
-    vec::Vec,
-};
+use ark_relations::r1cs::Result as R1CSResult;
+use ark_std::{cfg_into_iter, end_timer, rand::Rng, start_timer, vec::Vec};
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
+
+use crate::{MultiStageConstraintSynthesizer, MultiStageConstraintSystem, ProvingKey};
 
 type D<F> = GeneralEvaluationDomain<F>;
 
@@ -27,131 +21,62 @@ pub struct Groth16<E: Pairing, QAP: R1CSToQAP = LibsnarkReduction> {
 }
 
 impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
-    #[inline]
-    fn create_proof_with_assignment(
-        pk: &ProvingKey<E>,
-        r: E::ScalarField,
-        s: E::ScalarField,
-        h: &[E::ScalarField],
-        input_assignment: &[E::ScalarField],
-        aux_assignment: &[E::ScalarField],
-    ) -> R1CSResult<ProofWithoutComs<E>> {
-        let c_acc_time = start_timer!(|| "Compute C");
-        let h_assignment = cfg_into_iter!(h)
-            .map(|s| s.into_bigint())
-            .collect::<Vec<_>>();
-        let h_acc = E::G1::msm_bigint(&pk.h_query, &h_assignment);
-        drop(h_assignment);
-
-        // Compute C
-        let aux_assignment = cfg_iter!(aux_assignment)
-            .map(|s| s.into_bigint())
-            .collect::<Vec<_>>();
-
-        let l_aux_acc = E::G1::msm_bigint(&pk.l_query, &aux_assignment);
-
-        let r_s_delta_g1 = pk
-            .delta_g1
-            .into_group()
-            .mul_bigint(&r.into_bigint())
-            .mul_bigint(&s.into_bigint());
-
-        end_timer!(c_acc_time);
-
-        let input_assignment = input_assignment
-            .iter()
-            .map(|s| s.into_bigint())
-            .collect::<Vec<_>>();
-
-        let assignment = [&input_assignment[..], &aux_assignment[..]].concat();
-        drop(aux_assignment);
-
-        // Compute A
-        let a_acc_time = start_timer!(|| "Compute A");
-        let r_g1 = pk.delta_g1.mul(r);
-
-        let g_a = Self::calculate_coeff(r_g1, &pk.a_query, pk.vk.alpha_g1, &assignment);
-
-        let s_g_a = g_a.mul_bigint(&s.into_bigint());
-        end_timer!(a_acc_time);
-
-        // Compute B in G1 if needed
-        let g1_b = if !r.is_zero() {
-            let b_g1_acc_time = start_timer!(|| "Compute B in G1");
-            let s_g1 = pk.delta_g1.mul(s);
-            let g1_b = Self::calculate_coeff(s_g1, &pk.b_g1_query, pk.beta_g1, &assignment);
-
-            end_timer!(b_g1_acc_time);
-
-            g1_b
-        } else {
-            E::G1::zero()
-        };
-
-        // Compute B in G2
-        let b_g2_acc_time = start_timer!(|| "Compute B in G2");
-        let s_g2 = pk.vk.delta_g2.mul(s);
-        let g2_b = Self::calculate_coeff(s_g2, &pk.b_g2_query, pk.vk.beta_g2, &assignment);
-        let r_g1_b = g1_b.mul_bigint(&r.into_bigint());
-        drop(assignment);
-
-        end_timer!(b_g2_acc_time);
-
-        let c_time = start_timer!(|| "Finish C");
-        let mut g_c = s_g_a;
-        g_c += &r_g1_b;
-        g_c -= &r_s_delta_g1;
-        g_c += &l_aux_acc;
-        g_c += &h_acc;
-        end_timer!(c_time);
-
-        Ok(ProofWithoutComs {
-            a: g_a.into_affine(),
-            b: g2_b.into_affine(),
-            c: g_c.into_affine(),
-        })
-    }
-
-    /// Create a Groth16 proof that is zero-knowledge using the provided
-    /// R1CS-to-QAP reduction.
+    /// Create a Groth16 proof that is zero-knowledge.
     /// This method samples randomness for zero knowledges via `rng`.
     #[inline]
-    pub fn create_random_proof_with_reduction<C>(
-        cs: ConstraintSystemRef<E::ScalarField>,
-        circuit: C,
+    pub fn prove_last_stage_with_zk<C>(
+        cs: &mut MultiStageConstraintSystem<E::ScalarField>,
+        circuit: &mut C,
         pk: &ProvingKey<E>,
         rng: &mut impl Rng,
-    ) -> R1CSResult<ProofWithoutComs<E>>
+    ) -> R1CSResult<ProofWithoutComms<E>>
     where
-        C: ConstraintSynthesizer<E::ScalarField>,
+        C: MultiStageConstraintSynthesizer<E::ScalarField>,
     {
         let r = E::ScalarField::rand(rng);
         let s = E::ScalarField::rand(rng);
 
-        Self::create_proof_with_reduction(cs, circuit, pk, r, s)
+        Self::prove_last_stage(cs, circuit, pk, r, s)
+    }
+
+    /// Create a Groth16 proof that is *not* zero-knowledge.
+    #[inline]
+    pub fn prove_last_stage_without_zk<C>(
+        cs: &mut MultiStageConstraintSystem<E::ScalarField>,
+        circuit: &mut C,
+        pk: &ProvingKey<E>,
+    ) -> R1CSResult<ProofWithoutComms<E>>
+    where
+        C: MultiStageConstraintSynthesizer<E::ScalarField>,
+    {
+        let r = E::ScalarField::zero();
+        let s = E::ScalarField::zero();
+
+        Self::prove_last_stage(cs, circuit, pk, r, s)
     }
 
     /// Create a Groth16 proof using randomness `r` and `s` and the provided
     /// R1CS-to-QAP reduction.
     #[inline]
-    pub fn create_proof_with_reduction<C>(
-        cs: ConstraintSystemRef<E::ScalarField>,
-        circuit: C,
+    pub fn prove_last_stage<C>(
+        cs: &mut MultiStageConstraintSystem<E::ScalarField>,
+        circuit: &mut C,
         pk: &ProvingKey<E>,
         r: E::ScalarField,
         s: E::ScalarField,
-    ) -> R1CSResult<ProofWithoutComs<E>>
+    ) -> R1CSResult<ProofWithoutComms<E>>
     where
         E: Pairing,
-        C: ConstraintSynthesizer<E::ScalarField>,
+        C: MultiStageConstraintSynthesizer<E::ScalarField>,
         QAP: R1CSToQAP,
     {
         let prover_time = start_timer!(|| "Groth16::Prover");
 
         // Synthesize the circuit.
         let synthesis_time = start_timer!(|| "Constraint synthesis");
-        circuit.generate_constraints(cs.clone())?;
-        debug_assert!(cs.is_satisfied().unwrap());
+        // We're generating the last stage of constraints.
+        circuit.generate_constraints(circuit.last_stage(), cs)?;
+        debug_assert!(cs.is_satisfied()?);
         end_timer!(synthesis_time);
 
         let lc_time = start_timer!(|| "Inlining LCs");
@@ -159,22 +84,74 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
         end_timer!(lc_time);
 
         let witness_map_time = start_timer!(|| "R1CS to QAP witness map");
-        let h = QAP::witness_map::<E::ScalarField, D<E::ScalarField>>(cs.clone())?;
+        let h = QAP::witness_map::<E::ScalarField, D<E::ScalarField>>(cs.cs.clone())?;
         end_timer!(witness_map_time);
 
-        let prover = cs.borrow().unwrap();
-        let proof = Self::create_proof_with_assignment(
-            pk,
-            r,
-            s,
-            &h,
-            &prover.instance_assignment[1..],
-            &prover.witness_assignment,
-        )?;
+        let c_acc_time = start_timer!(|| "Compute C");
+        assert_eq!(h.len(), pk.h_g.len() + 1);
+        let h_acc = E::G1::msm_unchecked(&pk.h_g, &h);
+
+        // Compute C
+
+        let current_witness = cs.current_stage_witness_assignment();
+        assert_eq!(current_witness.len(), pk.last_ck().len());
+        let l_aux_acc = E::G1::msm(&pk.last_ck(), &current_witness).unwrap();
+
+        let r_s_delta_g = pk.last_delta_g() * (r * s);
+
+        end_timer!(c_acc_time);
+
+        let assignment = cs.full_assignment();
+        let assignment = cfg_into_iter!(assignment)
+            .skip(1) // we're skipping the one-variable
+            .map(|e| e.into_bigint())
+            .collect::<Vec<_>>();
+
+        // Compute A
+        let a_acc_time = start_timer!(|| "Compute A");
+        let r_delta_g = pk.last_delta_g() * r;
+
+        let a_g = Self::calculate_coeff(r_delta_g, &pk.a_g, pk.vk.alpha_g, &assignment);
+
+        let s_a_g = a_g * s;
+        end_timer!(a_acc_time);
+
+        // Compute B in G1 if needed
+        let b_g = if r.is_zero() {
+            E::G1::zero()
+        } else {
+            let b_g1_acc_time = start_timer!(|| "Compute B in G1");
+            let s_g = pk.last_delta_g() * s;
+            let b_g = Self::calculate_coeff(s_g, &pk.b_g, pk.beta_g, &assignment);
+
+            end_timer!(b_g1_acc_time);
+
+            b_g
+        };
+
+        // Compute B in G2
+        let b_g2_acc_time = start_timer!(|| "Compute B in G2");
+        let s_h = pk.last_delta_h() * s;
+        let b_h = Self::calculate_coeff(s_h, &pk.b_h, pk.vk.beta_h, &assignment);
+        let r_b_g = b_g * r;
+        drop(assignment);
+
+        end_timer!(b_g2_acc_time);
+
+        let c_time = start_timer!(|| "Finish C");
+        let mut c_g = s_a_g;
+        c_g += &r_b_g;
+        c_g -= &r_s_delta_g;
+        c_g += &l_aux_acc;
+        c_g += &h_acc;
+        end_timer!(c_time);
 
         end_timer!(prover_time);
-
-        Ok(proof)
+        Ok(ProofWithoutComms {
+            a: a_g.into_affine(),
+            b: b_h.into_affine(),
+            c: c_g.into_affine(),
+        })
     }
 
     fn calculate_coeff<G: AffineRepr>(
@@ -189,11 +166,6 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
         let el = query[0];
         let acc = G::Group::msm_bigint(&query[1..], assignment);
 
-        let mut res = initial;
-        res.add_assign(&el);
-        res += &acc;
-        res.add_assign(&vk_param);
-
-        res
+        initial + el + acc + vk_param
     }
 }

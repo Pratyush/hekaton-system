@@ -22,7 +22,7 @@ pub struct TinyRamParser;
 /// types and real memory offsets.
 struct LoweringCtx<'a> {
     // This is the line number in the file, ignoring whitespace and header
-    //instr_count: usize,
+    // instr_count: usize,
     /// This contains arch information we need in lowering
     header: TinyRamHeader,
     /// A map of all the labels we've seen so far and their corresponding word idx
@@ -89,7 +89,7 @@ fn lower_imm<W: Word>(ctx: &LoweringCtx, pair: Pair<Rule>) -> W {
             W::try_from(label_val)
                 .map_err(|_| format!("label {val_str} is out of bounds"))
                 .unwrap()
-        }
+        },
         Rule::dec_num => {
             let dec_val = u64::from_str(val_str)
                 .map_err(|_| format!("invalid number {val_str}"))
@@ -97,7 +97,7 @@ fn lower_imm<W: Word>(ctx: &LoweringCtx, pair: Pair<Rule>) -> W {
             W::try_from(dec_val)
                 .map_err(|_| format!("decimal {val_str} is out of bounds"))
                 .unwrap()
-        }
+        },
         r => panic!("unexpected rule {:?}", r),
     }
 }
@@ -111,11 +111,11 @@ fn lower_imm_or_reg<W: Word>(ctx: &LoweringCtx, pair: Pair<Rule>) -> ImmOrRegist
         Rule::imm => {
             let word = lower_imm(ctx, val);
             ImmOrRegister::Imm(word)
-        }
+        },
         Rule::reg => {
             let reg_idx = lower_reg(val);
             ImmOrRegister::Register(reg_idx)
-        }
+        },
         r => panic!("unexpected rule {:?}", r),
     }
 }
@@ -310,12 +310,12 @@ fn build_label_table<'a>(header: &TinyRamHeader, lines: Pairs<'a, Rule>) -> BTre
     };
 
     for t in lines.flatten() {
-        //println!("t == {:?}", t);
+        // println!("t == {:?}", t);
         match t.as_rule() {
             Rule::label_def => {
                 let label = t.into_inner().next().unwrap().as_str();
                 table.insert(label, instr_number);
-            }
+            },
             Rule::full_instr => {
                 // Make sure we start counting instructions at 0
                 if saw_first_instr {
@@ -323,7 +323,7 @@ fn build_label_table<'a>(header: &TinyRamHeader, lines: Pairs<'a, Rule>) -> BTre
                 } else {
                     saw_first_instr = true;
                 }
-            }
+            },
             _ => (),
         }
     }

@@ -148,24 +148,24 @@ impl<W: Word> Instr<W> {
                 let in2 = in2.value(&cpu_state.registers);
                 cpu_state.registers[out.0 as usize] = in1 & in2;
                 None
-            }
+            },
             Instr::Or { in1, in2, out } => {
                 let in1 = in1.value(&cpu_state.registers);
                 let in2 = in2.value(&cpu_state.registers);
                 cpu_state.registers[out.0 as usize] = in1 | in2;
                 None
-            }
+            },
             Instr::Xor { in1, in2, out } => {
                 let in1 = in1.value(&cpu_state.registers);
                 let in2 = in2.value(&cpu_state.registers);
                 cpu_state.registers[out.0 as usize] = in1 ^ in2;
                 None
-            }
+            },
             Instr::Not { in1, out } => {
                 let in1 = in1.value(&cpu_state.registers);
                 cpu_state.registers[out.0 as usize] = !in1;
                 None
-            }
+            },
             Instr::Add { in1, in2, out } => {
                 let in1 = in1.value(&cpu_state.registers);
                 let in2 = in2.value(&cpu_state.registers);
@@ -173,7 +173,7 @@ impl<W: Word> Instr<W> {
                 cpu_state.registers[out.0 as usize] = result;
                 cpu_state.condition_flag = overflow;
                 None
-            }
+            },
             Instr::Sub { in1, in2, out } => {
                 let in1 = in1.value(&cpu_state.registers);
                 let in2 = in2.value(&cpu_state.registers);
@@ -181,7 +181,7 @@ impl<W: Word> Instr<W> {
                 cpu_state.registers[out.0 as usize] = result;
                 cpu_state.condition_flag = borrow;
                 None
-            }
+            },
             Instr::MulL { in1, in2, out } => {
                 let in1 = in1.value(&cpu_state.registers);
                 let in2 = in2.value(&cpu_state.registers);
@@ -189,7 +189,7 @@ impl<W: Word> Instr<W> {
                 cpu_state.registers[out.0 as usize] = result;
                 cpu_state.condition_flag = overflow;
                 None
-            }
+            },
             Instr::UMulH { in1, in2, out } => {
                 let in1 = in1.value(&cpu_state.registers);
                 let in2 = in2.value(&cpu_state.registers);
@@ -197,7 +197,7 @@ impl<W: Word> Instr<W> {
                 cpu_state.registers[out.0 as usize] = result;
                 cpu_state.condition_flag = overflow;
                 None
-            }
+            },
             Instr::SMulH { in1, in2, out } => {
                 let in1 = in1.value(&cpu_state.registers);
                 let in2 = in2.value(&cpu_state.registers);
@@ -205,7 +205,7 @@ impl<W: Word> Instr<W> {
                 cpu_state.registers[out.0 as usize] = result;
                 cpu_state.condition_flag = overflow;
                 None
-            }
+            },
             Instr::UDiv { in1, in2, out } => {
                 let in1 = in1.value(&cpu_state.registers);
                 let in2 = in2.value(&cpu_state.registers);
@@ -213,7 +213,7 @@ impl<W: Word> Instr<W> {
                 cpu_state.registers[out.0 as usize] = result;
                 cpu_state.condition_flag = overflow;
                 None
-            }
+            },
             Instr::UMod { in1, in2, out } => {
                 let in1 = in1.value(&cpu_state.registers);
                 let in2 = in2.value(&cpu_state.registers);
@@ -221,7 +221,7 @@ impl<W: Word> Instr<W> {
                 cpu_state.registers[out.0 as usize] = result;
                 cpu_state.condition_flag = overflow;
                 None
-            }
+            },
             Instr::Shl { in1, in2, out } => {
                 let in1 = in1.value(&cpu_state.registers);
                 let in2 = in2.value(&cpu_state.registers);
@@ -229,7 +229,7 @@ impl<W: Word> Instr<W> {
                 cpu_state.registers[out.0 as usize] = result;
                 cpu_state.condition_flag = overflow;
                 None
-            }
+            },
             Instr::Shr { in1, in2, out } => {
                 let in1 = in1.value(&cpu_state.registers);
                 let in2 = in2.value(&cpu_state.registers);
@@ -237,71 +237,71 @@ impl<W: Word> Instr<W> {
                 cpu_state.registers[out.0 as usize] = result;
                 cpu_state.condition_flag = flag;
                 None
-            }
+            },
             // Comparison instructions
             Instr::CmpE { in1, in2 } => {
                 let in1 = in1.value(&cpu_state.registers);
                 let in2 = in2.value(&cpu_state.registers);
                 cpu_state.condition_flag = in1 == in2;
                 None
-            }
+            },
             Instr::CmpA { in1, in2 } => {
                 let in1 = in1.value(&cpu_state.registers);
                 let in2 = in2.value(&cpu_state.registers);
                 cpu_state.condition_flag = in1 > in2;
                 None
-            }
+            },
             Instr::CmpAE { in1, in2 } => {
                 let in1 = in1.value(&cpu_state.registers);
                 let in2 = in2.value(&cpu_state.registers);
                 cpu_state.condition_flag = in1 >= in2;
                 None
-            }
+            },
             Instr::CmpG { in1, in2 } => {
                 let in1 = in1.value(&cpu_state.registers).to_signed();
                 let in2 = in2.value(&cpu_state.registers).to_signed();
                 cpu_state.condition_flag = in1 > in2;
                 None
-            }
+            },
             Instr::CmpGE { in1, in2 } => {
                 let in1 = in1.value(&cpu_state.registers).to_signed();
                 let in2 = in2.value(&cpu_state.registers).to_signed();
                 cpu_state.condition_flag = in1 >= in2;
                 None
-            }
+            },
             // Move instructions
             Instr::Mov { in1, out } => {
                 let in1 = in1.value(&cpu_state.registers);
                 cpu_state.registers[out.0 as usize] = in1;
                 None
-            }
+            },
             Instr::CMov { in1, out } => {
                 let in1 = in1.value(&cpu_state.registers);
                 if cpu_state.condition_flag {
                     cpu_state.registers[out.0 as usize] = in1;
                 }
                 None
-            }
+            },
             // Jump instructions
             Instr::Jmp { in1 } => {
                 let in1 = in1.value(&cpu_state.registers);
                 cpu_state.program_counter = in1;
                 None
-            }
+            },
             Instr::CJmp { in1 } => {
                 if cpu_state.condition_flag {
                     let in1 = in1.value(&cpu_state.registers);
                     cpu_state.program_counter = in1;
                 }
                 None
-            }
+            },
             Instr::CNJmp { in1 } => {
                 if !cpu_state.condition_flag {
                     let in1 = in1.value(&cpu_state.registers);
                     cpu_state.program_counter = in1;
                 }
                 None
-            }
+            },
             Instr::StoreW { in1, out } => {
                 let in1 = in1.value(&cpu_state.registers);
                 let out = out.value(&cpu_state.registers);
@@ -337,7 +337,7 @@ impl<W: Word> Instr<W> {
                 };
 
                 Some(mem_op)
-            }
+            },
             Instr::LoadW { out, in1 } => {
                 let in1 = in1.value(&cpu_state.registers);
 
@@ -363,12 +363,12 @@ impl<W: Word> Instr<W> {
                 // Otherwise use the second word.
                 cpu_state.registers[out.0 as usize] = if is_high { w1 } else { w0 };
                 Some(mem_op)
-            }
+            },
             Instr::Answer { in1 } => {
                 let in1 = in1.value(&cpu_state.registers);
                 cpu_state.answer = Some(in1);
                 None
-            }
+            },
             _ => todo!(),
         };
 
@@ -432,7 +432,7 @@ pub fn run_program<W: Word, const NUM_REGS: usize>(
 
             // Return the memory
             (DataMemory::<W>::default(), ProgramMemory(program.to_vec()))
-        }
+        },
         TinyRamArch::VonNeumann => {
             // For von Neumann we're gonna have to serialize the whole program into data memory
 
@@ -455,7 +455,7 @@ pub fn run_program<W: Word, const NUM_REGS: usize>(
                 DataMemory(serialized_program),
                 ProgramMemory::<W>::default(),
             )
-        }
+        },
     };
 
     // Run the CPU until it outputs an answer
@@ -473,7 +473,7 @@ pub fn run_program<W: Word, const NUM_REGS: usize>(
                     .unwrap_or_else(|| panic!("illegal jump to 0x{:08x}", pc_usize));
 
                 (pc, instr)
-            }
+            },
             TinyRamArch::VonNeumann => {
                 // Collect 2 words of bytes starting at pc. 16 is the upper bound on the number of
                 // bytes
@@ -496,7 +496,7 @@ pub fn run_program<W: Word, const NUM_REGS: usize>(
                 assert!(!overflow, "pc has reached end of memory");
 
                 (new_pc, instr)
-            }
+            },
         };
 
         // Run the CPU

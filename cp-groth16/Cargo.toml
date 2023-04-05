@@ -8,7 +8,7 @@ edition = "2021"
 [dependencies]
 ark-ec = "0.4.1"
 ark-ff = "0.4.1"
-ark-groth16 = "0.4.0"
+ark-groth16 = { git = "https://github.com/arkworks-rs/groth16" }
 ark-poly = "0.4.1"
 ark-r1cs-std = "0.4"
 ark-relations = { version = "0.4.0", features = ["std"] }

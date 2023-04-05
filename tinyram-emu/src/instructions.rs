@@ -1,5 +1,7 @@
-use crate::register::{ImmOrRegister, RegIdx};
-use crate::word::Word;
+use crate::{
+    register::{ImmOrRegister, RegIdx},
+    word::Word,
+};
 
 use bitfield::BitRangeMut;
 use rand::Rng;
@@ -340,7 +342,7 @@ impl<W: Word> Instr<W> {
         cur_bit_idx += regidx_bitlen;
         // Encode is_imm
         instr.set_bit_range(cur_bit_idx + 1 - 1, cur_bit_idx, is_imm as u8);
-        //cur_bit_idx += 1;
+        // cur_bit_idx += 1;
 
         // A u128 is larger than an instruction. Use the bottom bytes as the instruction encoding
         let instr_bytes = instr.to_be_bytes();

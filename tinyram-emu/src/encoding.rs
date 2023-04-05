@@ -17,15 +17,13 @@ pub(crate) fn instr_opcode(instr: u128) -> Opcode {
 }
 
 impl<W: Word> Instr<W> {
-    /*
-     *  The machine code of an assembly command is encoded as follows.
-     *  | unused space | is_immediate | var1 | var2 | var3 | op |
-     *
-     *  Note that if our instruction does not need a variable, then we shift
-     *  over the free space in the program
-     *
-     *  op is 5 bits long, with canonical OpCodes defined above.
-     */
+    //  The machine code of an assembly command is encoded as follows.
+    //  | unused space | is_immediate | var1 | var2 | var3 | op |
+    //
+    //  Note that if our instruction does not need a variable, then we shift
+    //  over the free space in the program
+    //
+    //  op is 5 bits long, with canonical OpCodes defined above.
 
     /// Creates an Op out of machine code. Panics if `bytes.len() != W::INSTR_BYTELEN` or if the
     /// instruction is invalid.

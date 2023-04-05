@@ -1,294 +1,303 @@
-use core::ops::Range;
-
-use ark_ec::pairing::Pairing;
-use ark_ff::Field;
-use ark_relations::r1cs::{ConstraintSystem, ConstraintSystemRef, SynthesisError};
-use ark_std::vec::Vec;
-
 pub mod committer;
+pub mod constraint_synthesizer;
 pub mod data_structures;
 pub mod generator;
 pub mod prover;
 pub mod verifier;
 
 pub use committer::CommitmentBuilder;
-pub use data_structures::{CommittingKey, ProvingKey, VerifyingKey};
+pub use constraint_synthesizer::*;
+pub use data_structures::{CommitterKey, ProvingKey, VerifyingKey};
 pub use prover::Groth16;
 
-/// Represents a constraint system whose variables come from a number of distinct allocation
-/// stages. Each allocation stage happens separately, and adds to the total instance variable
-/// count.
-pub struct MultistageConstraintSystem<F: Field> {
-    pub cs: ConstraintSystemRef<F>,
-    /// Keeps track of the instance variables. The value at element `i` is the set of instance
-    /// variable indices in `self.cs` that correspond to stage `i` of allocation
-    pub instance_var_idx_ranges: Vec<Range<usize>>,
-}
-
-impl<F: Field> Default for MultistageConstraintSystem<F> {
-    fn default() -> Self {
-        MultistageConstraintSystem {
-            cs: ConstraintSystem::new_ref(),
-            instance_var_idx_ranges: Vec::new(),
-        }
-    }
-}
-
-// TODO: refactor this crate to only use AllocVar for input allocation. The reason this doesn't
-// work right now is because
-// 1) if you just give a Box<dyn AllocVar<V, F>> to an allocator, then this isn't sufficient
-//    information for allocating a V=Vec<_>
-// 2) for placeholder allocation, you need a &[Box<dyn PlaceholderAlloc<F>>]. It's important that V
-//    is not part of the type, since otherwise it would be a heterogeneous slice. But how do you
-//    rip V out of the type of AllocVar without doing an associated type (not allowed for Box dyn)
-//    or making V the Self of the trait (what we effectively have now)?
-
-/// Defines a way for a type to allocate all its content as _instances_ or _constants_. It can
-/// allocate witnesses too, but only the instances will be committed to.
-pub trait InputAllocator<F: Field> {
-    /// The ZK allocated vars version of this type
-    type AllocatedSelf;
-
-    fn alloc(&self, cs: ConstraintSystemRef<F>) -> Result<Self::AllocatedSelf, SynthesisError>;
-}
-
-/// An unfortunate helper trait we need in order to make Rust's generics work. This is the same
-/// thing as [`InputAllocator`] but it doesn't return anything when allocating. This is used in
-/// CRS generation
-pub trait PlaceholderInputAllocator<F: Field> {
-    fn alloc(&self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError>;
-}
-
-/// Every [`InputAllocator`] is an [`PlaceholderInputAllocator`]. The `alloc()` method just returns
-/// nothing
-impl<I, F> PlaceholderInputAllocator<F> for I
-where
-    I: InputAllocator<F>,
-    F: Field,
-{
-    fn alloc(&self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
-        InputAllocator::alloc(self, cs).map(|_| ())
-    }
-}
-
-impl<F: Field> MultistageConstraintSystem<F> {
-    /// Runs the given allocator, records its allocations, and returns the output
-    pub fn run_allocator<A: InputAllocator<F>>(
-        &mut self,
-        a: &A,
-    ) -> Result<A::AllocatedSelf, SynthesisError> {
-        // Mark the starting variable index (inclusive)
-        let start_var_idx = self.cs.num_instance_variables();
-        // Run the allocation routine and save the output
-        let out = a.alloc(self.cs.clone())?;
-        // Mark the ending variable index (exclusive)
-        let end_var_idx = self.cs.num_instance_variables();
-
-        // Record the variable range. This may be empty. That's fine.
-        self.instance_var_idx_ranges.push(Range {
-            start: start_var_idx,
-            end: end_var_idx,
-        });
-
-        Ok(out)
-    }
-
-    // TODO: Figure out a way to not repeat the code from above
-    /// Runs the given placeholder allocator and records its allocations
-    pub fn run_placeholder_allocator(
-        &mut self,
-        val: &dyn PlaceholderInputAllocator<F>,
-    ) -> Result<(), SynthesisError> {
-        // Mark the starting variable index (inclusive)
-        let start_var_idx = self.cs.num_instance_variables();
-        // Run the allocation routine
-        val.alloc(self.cs.clone())?;
-        // Mark the ending variable index (exclusive)
-        let end_var_idx = self.cs.num_instance_variables();
-
-        // Record the variable range. This may be empty. That's fine.
-        self.instance_var_idx_ranges.push(Range {
-            start: start_var_idx,
-            end: end_var_idx,
-        });
-
-        Ok(())
-    }
-}
-
 /// Impl the prover
-use crate::data_structures::{InputCom, InputComRandomness, Proof};
-use ark_ec::{AffineRepr, CurveGroup, VariableBaseMSM};
-use ark_groth16::r1cs_to_qap::R1CSToQAP;
-use ark_relations::r1cs::ConstraintSynthesizer;
-use ark_std::rand::Rng;
-
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::{
-        committer::CommitmentBuilder,
-        generator::generate_random_parameters_with_reduction,
-        verifier::{prepare_verifying_key, verify_proof_with_prepared_inputs},
-    };
-
     use ark_bls12_381::{Bls12_381 as E, Fr as F};
-    use ark_ff::{ToConstraintField, UniformRand};
+    use ark_ff::Field;
     use ark_groth16::r1cs_to_qap::LibsnarkReduction as QAP;
-    use ark_r1cs_std::{alloc::AllocVar, eq::EqGadget, fields::fp::FpVar};
+    use ark_r1cs_std::{alloc::AllocVar, eq::EqGadget, fields::fp::FpVar, prelude::FieldVar};
     use ark_relations::{
         ns,
-        r1cs::{ConstraintSystem, ConstraintSystemRef, SynthesisError},
+        r1cs::{ConstraintSystemRef, SynthesisError},
     };
-    use ark_std::test_rng;
+    use ark_std::{test_rng, vec::Vec, One, UniformRand};
 
-    impl InputAllocator<F> for F {
-        type AllocatedSelf = FpVar<F>;
+    use crate::{
+        committer::CommitmentBuilder,
+        generator::generate_parameters,
+        verifier::{prepare_verifying_key, verify_proof},
+        MultiStageConstraintSynthesizer, MultiStageConstraintSystem,
+    };
 
-        fn alloc(&self, cs: ConstraintSystemRef<F>) -> Result<Self::AllocatedSelf, SynthesisError> {
-            FpVar::new_input(ns!(cs, "f"), || Ok(self))
+    mod multi_stage_test {
+        use super::*;
+        /// A multistage circuit
+        /// Stage 1. Witness a var and ensure it's 0
+        /// Stage 2. Input a monic polynomial and prove knowledge of a root
+        #[derive(Clone)]
+        struct PolyEvalCircuit {
+            // A polynomial that is committed in stage 0.
+            pub polynomial: Vec<F>,
+
+            // The variable corresponding to `polynomial` that is generated after stage 0.
+            pub polynomial_var: Option<Vec<FpVar<F>>>,
+
+            // The evaluation point for the polynomial.
+            pub point: Option<F>,
+
+            // The evaluation of `self.polynomial` at `self.root`.
+            pub evaluation: Option<F>,
         }
-    }
 
-    /// A circuit that proves knowledge of a root for a given monic polynomial
-    #[derive(Clone)]
-    struct PolynZeroCircuit {
-        // A committed value that must be zero
-        zero_var: FpVar<F>,
-        // Coefficients of a monic polynomial, from lowest to highest degree
-        polyn: Vec<F>,
-        // An alleged root of the polynomial
-        root: F,
-    }
-
-    impl ConstraintSynthesizer<F> for PolynZeroCircuit {
-        fn generate_constraints(self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
-            // Input the polynomial P. P must be monic, i.e., the leading coefficient is 1.
-            let polyn_var = self
-                .polyn
-                .into_iter()
-                .map(|c| FpVar::new_input(ns!(cs, "coeff"), || Ok(c)))
-                .collect::<Result<Vec<_>, _>>()?;
-            /*
-            polyn_var
-                .last()
-                .unwrap()
-                .enforce_equal(&FpVar::Constant(F::ONE))?;
-            */
-
-            // Assert the zero var is zero
-            // NOTE: If you comment out this line, the test succeeds
-            self.zero_var.enforce_equal(&FpVar::Constant(F::ZERO))?;
-
-            // The X on which we evaluate P(X)
-            let x_var = FpVar::new_witness(ns!(cs, "root"), || Ok(self.root))?;
-
-            // Evaluate the polynomial
-            let mut poly_eval = FpVar::Constant(F::ZERO);
-            let mut pow_x = FpVar::Constant(F::ONE);
-            for coeff in polyn_var {
-                poly_eval += coeff * &pow_x;
-                pow_x *= &x_var;
+        impl PolyEvalCircuit {
+            fn new(polynomial: Vec<F>) -> Self {
+                Self {
+                    polynomial,
+                    polynomial_var: None,
+                    point: None,
+                    evaluation: None,
+                }
             }
 
-            // Assert that it's a root
-            poly_eval.enforce_equal(&FpVar::Constant(F::ZERO))?;
-            println!(
-                "a constraints after poly_eval eq: {:?}",
-                cs.constraint_names(),
-            );
+            fn add_point(&mut self, point: F) {
+                use ark_std::Zero;
+                self.point = Some(point);
+                self.evaluation = Some(
+                    self.polynomial
+                        .iter()
+                        .enumerate()
+                        .fold(F::zero(), |acc, (i, c)| acc + c * &point.pow(&[i as u64])),
+                );
+            }
 
-            Ok(())
+            fn stage_0(&mut self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
+                let polynomial_var = self
+                    .polynomial
+                    .iter()
+                    .map(|c| FpVar::new_witness(ns!(cs, "coeff"), || Ok(c)))
+                    .collect::<Result<Vec<_>, _>>()?;
+                polynomial_var
+                    .last()
+                    .unwrap()
+                    .enforce_equal(&FpVar::one())?;
+                self.polynomial_var = Some(polynomial_var);
+
+                Ok(())
+            }
+
+            fn stage_1(&mut self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
+                let point = FpVar::new_input(ns!(cs, "point"), || Ok(self.point.unwrap()))?;
+                let evaluation =
+                    FpVar::new_input(ns!(cs, "point"), || Ok(self.evaluation.unwrap()))?;
+                let mut claimed_eval: FpVar<F> = FieldVar::zero();
+                let mut cur_pow = FpVar::one();
+                for coeff in self.polynomial_var.as_ref().unwrap() {
+                    claimed_eval += coeff * &cur_pow;
+                    cur_pow *= &point;
+                }
+
+                // Assert that it's a root
+                claimed_eval.enforce_equal(&evaluation)?;
+                Ok(())
+            }
+        }
+
+        impl MultiStageConstraintSynthesizer<F> for PolyEvalCircuit {
+            fn total_num_stages(&self) -> usize {
+                2
+            }
+
+            fn generate_constraints(
+                &mut self,
+                stage: usize,
+                cs: &mut MultiStageConstraintSystem<F>,
+            ) -> Result<(), SynthesisError> {
+                let out = match stage {
+                    0 => cs.synthesize_with(|c| self.stage_0(c)),
+                    1 => cs.synthesize_with(|c| self.stage_1(c)),
+                    _ => panic!("unexpected stage stage {}", stage),
+                };
+
+                out
+            }
+        }
+
+        // Do a Groth16 test that involves no commitment
+        #[test]
+        fn poly_commit_test() {
+            let mut rng = test_rng();
+
+            // Sample a random monic polynomial of the specified degree.
+            let degree = 10;
+            let mut polynomial = (0..degree).map(|_| F::rand(&mut rng)).collect::<Vec<_>>();
+            polynomial.push(F::one());
+            // Define the circuit we'll be using
+            let circuit = PolyEvalCircuit::new(polynomial.clone());
+
+            // Run the circuit and make sure it succeeds
+            {
+                let mut circuit = circuit.clone();
+                let mut cs = MultiStageConstraintSystem::default();
+                circuit.generate_constraints(0, &mut cs).unwrap();
+                let point = F::rand(&mut rng);
+                circuit.add_point(point);
+                circuit.generate_constraints(1, &mut cs).unwrap();
+                assert!(cs.is_satisfied().unwrap());
+            }
+            println!("Hello!");
+
+            // Proof check
+            //
+
+            // Generate the proving key
+            let pk = generate_parameters::<_, E, QAP>(circuit.clone(), &mut rng).unwrap();
+            println!("Hello done with setup");
+
+            let mut rng = test_rng();
+            let mut cb = CommitmentBuilder::<_, E, QAP>::new(circuit, &pk);
+            let (comm, rand) = cb.commit(&mut rng).unwrap();
+            let point = F::rand(&mut rng);
+            cb.circuit.add_point(point);
+            let proof = cb.prove(&[comm], &[rand], &mut rng).unwrap();
+
+            // Verify
+            let pvk = prepare_verifying_key(&pk.vk());
+            let inputs = [point, cb.circuit.evaluation.unwrap()];
+            assert!(verify_proof(&pvk, &proof, &inputs).unwrap());
         }
     }
 
-    // Do a Groth16 test that involves no commitment
-    #[test]
-    fn nocommit() {
-        let mut rng = test_rng();
+    mod single_stage_test {
+        use super::*;
+        /// A multistage circuit
+        /// Stage 1. Witness a var and ensure it's 0
+        /// Stage 2. Input a monic polynomial and prove knowledge of a root
+        #[derive(Clone)]
+        struct PolyEvalCircuit {
+            // A polynomial that is committed in stage 0.
+            pub polynomial: Vec<F>,
 
-        // Pick a root, then make a degree 10 polyn with that root
-        let deg = 10;
-        let root = F::rand(&mut rng);
-        // Start with P(X) = X - root
-        let mut polyn = vec![-root, F::ONE];
-        // Now iteratively compute P'(X) = P(X) * (X - r) for some random r each time
-        for _ in 0..deg - 1 {
-            let rand_root = F::rand(&mut rng);
-            // Multiply everything by X, i.e., shift all the coeffs down
-            polyn.insert(0, F::ZERO);
-            // Subtract rP(X)
-            for i in 0..polyn.len() - 1 {
-                let tmp = polyn[i + 1];
-                polyn[i] -= rand_root * tmp;
+            // The variable corresponding to `polynomial` that is generated after stage 0.
+            pub polynomial_var: Option<Vec<FpVar<F>>>,
+
+            // The evaluation point for the polynomial.
+            pub point: Option<F>,
+
+            // The evaluation of `self.polynomial` at `self.root`.
+            pub evaluation: Option<F>,
+        }
+
+        impl PolyEvalCircuit {
+            fn new(polynomial: Vec<F>) -> Self {
+                Self {
+                    polynomial,
+                    polynomial_var: None,
+                    point: None,
+                    evaluation: None,
+                }
+            }
+
+            fn add_point(&mut self, point: F) {
+                use ark_std::Zero;
+                self.point = Some(point);
+                self.evaluation = Some(
+                    self.polynomial
+                        .iter()
+                        .enumerate()
+                        .fold(F::zero(), |acc, (i, c)| acc + c * &point.pow(&[i as u64])),
+                );
+            }
+
+            fn stage_0(&mut self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
+                let polynomial_var = self
+                    .polynomial
+                    .iter()
+                    .map(|c| FpVar::new_witness(ns!(cs, "coeff"), || Ok(c)))
+                    .collect::<Result<Vec<_>, _>>()?;
+                polynomial_var
+                    .last()
+                    .unwrap()
+                    .enforce_equal(&FpVar::one())?;
+                self.polynomial_var = Some(polynomial_var);
+
+                let point = FpVar::new_input(ns!(cs, "point"), || Ok(self.point.unwrap()))?;
+                let evaluation =
+                    FpVar::new_input(ns!(cs, "point"), || Ok(self.evaluation.unwrap()))?;
+                let mut claimed_eval: FpVar<F> = FieldVar::zero();
+                let mut cur_pow = FpVar::one();
+                for coeff in self.polynomial_var.as_ref().unwrap() {
+                    claimed_eval += coeff * &cur_pow;
+                    cur_pow *= &point;
+                }
+
+                // Assert that it's a root
+                claimed_eval.enforce_equal(&evaluation)?;
+
+                Ok(())
             }
         }
-        polyn = vec![F::ZERO; deg + 1];
 
-        //
-        // Sanity check
-        //
+        impl MultiStageConstraintSynthesizer<F> for PolyEvalCircuit {
+            fn total_num_stages(&self) -> usize {
+                1
+            }
 
-        // Check that P(root) == 0
-        let mut poly_eval = F::ZERO;
-        let mut pow_x = F::ONE;
-        for c in polyn.iter() {
-            poly_eval += c * &pow_x;
-            pow_x *= root;
+            fn generate_constraints(
+                &mut self,
+                stage: usize,
+                cs: &mut MultiStageConstraintSystem<F>,
+            ) -> Result<(), SynthesisError> {
+                let out = match stage {
+                    0 => cs.synthesize_with(|c| self.stage_0(c)),
+                    _ => panic!("unexpected stage stage {}", stage),
+                };
+
+                out
+            }
         }
-        assert_eq!(poly_eval, F::ZERO);
 
-        //
-        // Constraints check
-        //
+        // Do a Groth16 test that involves no commitment
+        #[test]
+        fn poly_commit_test() {
+            let mut rng = test_rng();
 
-        // Now run the circuit and make sure it succeeds
-        let mut circuit = PolynZeroCircuit {
-            zero_var: FpVar::Constant(F::ZERO),
-            polyn: polyn.clone(),
-            root,
-        };
-        let cs = ConstraintSystem::new_ref();
-        circuit.clone().generate_constraints(cs.clone()).unwrap();
-        assert!(cs.is_satisfied().unwrap());
+            // Sample a random monic polynomial of the specified degree.
+            let degree = 10;
+            let mut polynomial = (0..degree).map(|_| F::rand(&mut rng)).collect::<Vec<_>>();
+            polynomial.push(F::one());
+            // Define the circuit we'll be using
+            let circuit = PolyEvalCircuit::new(polynomial.clone());
 
-        //
-        // Proof check
-        //
+            // Run the circuit and make sure it succeeds
+            {
+                let mut circuit = circuit.clone();
+                let mut cs = MultiStageConstraintSystem::default();
+                let point = F::rand(&mut rng);
+                circuit.add_point(point);
+                circuit.generate_constraints(0, &mut cs).unwrap();
+                assert!(cs.is_satisfied().unwrap());
+            }
+            println!("Hello!");
 
-        // Generate the proving key
-        let placeholder_allocator = F::ZERO;
-        let pk = generate_random_parameters_with_reduction::<_, E, QAP>(
-            &mut rng,
-            &[Box::new(placeholder_allocator)],
-            circuit.clone(),
-        )
-        .unwrap();
+            //
+            // Proof check
+            //
 
-        // Create multistage circuit type
-        // should be able to do circuit.alloc_stage::<1>() or something
-        // circuit will save the allocd vars in its own struct for later stages.
+            // Generate the proving key
+            let pk = generate_parameters::<_, E, QAP>(circuit.clone(), &mut rng).unwrap();
+            println!("Hello done with setup");
 
-        // Create the commitment and proof
-        let allocator = F::ZERO;
-        let mut cb = CommitmentBuilder::<_, QAP>::new(pk.ck.clone());
-        let (com, rand, zero_var) = cb.commit(&mut rng, &allocator).unwrap();
-        // Add the committed variable to the circuit context
-        circuit.zero_var = zero_var;
-        // Do the proof. The empty values are because we haven't committed to anything
-        //let proof = prove(&mut rng, circuit, &pk, vec![com], &[rand]).unwrap();
-        let proof = cb
-            .prove(&mut rng, circuit, &pk, vec![com], &[rand])
-            .unwrap();
+            let mut rng = test_rng();
+            let mut cb = CommitmentBuilder::<_, E, QAP>::new(circuit, &pk);
+            let point = F::rand(&mut rng);
+            cb.circuit.add_point(point);
+            let proof = cb.prove(&[], &[], &mut rng).unwrap();
 
-        // Verify
-        let pvk = prepare_verifying_key(&pk.vk());
-        let inputs = polyn.to_field_elements().unwrap();
-        let prepared_inputs =
-            ark_groth16::Groth16::<E, QAP>::prepare_inputs(&pvk.g16_pvk, &inputs).unwrap();
-        dbg!(pvk.g16_pvk.vk.gamma_abc_g1[0].into_group() == prepared_inputs);
-        assert!(verify_proof_with_prepared_inputs(pvk, &proof, &prepared_inputs).unwrap());
-
-        //let polyn = core::iter::repeat_with(|| F::rand(&mut rng) - root).take(
+            // Verify
+            let pvk = prepare_verifying_key(&pk.vk());
+            let inputs = [point, cb.circuit.evaluation.unwrap()];
+            assert!(verify_proof(&pvk, &proof, &inputs).unwrap());
+        }
     }
 }
