@@ -235,6 +235,7 @@ impl<WV: WordVar<F>, F: PrimeField> AllocVar<Option<WV::NativeWord>, F> for CpuA
     }
 }
 
+// TODO: Make this and RegistersVar take NUM_REGS: usize
 #[derive(Clone, Debug)]
 pub struct CpuStateVar<WV, F>
 where
