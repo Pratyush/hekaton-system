@@ -33,6 +33,7 @@ pub trait Word:
     /// The number of bytes an instruction takes up. It's 2 words.
     const INSTR_BYTELEN: usize = 2 * Self::BITLEN / 8;
     const MAX: Self;
+    const ZERO: Self;
 
     /// Convert from `u64`. Fails if the value exceeds `W::MAX`
     fn from_u64(val: u64) -> Result<Self, ()> {
@@ -111,6 +112,7 @@ macro_rules! impl_word {
 
             const BITLEN: usize = $bit_size;
             const MAX: Self = <$word>::MAX;
+            const ZERO: Self = <$word>::MIN;
 
             fn from_be_bytes(bytes: &[u8]) -> Result<Self, ()> {
                 if bytes.len() != Self::BYTELEN {

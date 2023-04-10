@@ -59,16 +59,10 @@ impl<F: PrimeField> RunningEvalVar<F> {
         entry: &FpVar<F>,
         chal: &FpVar<F>,
     ) -> Result<(), SynthesisError> {
-        // This value, when plugged into the expression below, will yield 1, thus not affecting the
-        // current running eval.
-        let dummy_entry = chal - FpVar::one();
-
-        // Select either the real entry or the dummy entry
-        let val_to_absorb = FpVar::conditionally_select(bit, entry, &dummy_entry)?;
-
         // Recall the polynoimal has factors (X - op). So to do an incremental computation, we
-        // calculate `eval *= (chal - op)`.
-        self.0 *= chal - val_to_absorb;
+        // calculate `eval *= (chal - op)`. If `bit` == false, then the RHS is just 1.
+        let coeff = FpVar::conditionally_select(bit, &(chal - entry), &FpVar::one())?;
+        self.0 *= coeff;
 
         Ok(())
     }
@@ -605,9 +599,26 @@ pub fn transcript_checker<const NUM_REGS: usize, WV: WordVar<F>, F: PrimeField>(
 
     // Put the memory operation execution mem. If this is padding, then that's fine, because
     // there's as much padding here as in the memory trace
-    // TODO: When tape reads are implemented, the below to be muxed. mem_op might go to the tape
-    // tr, the time tr, or nowhere (if it's an aux tape read)
-    new_evals.time_tr_exec.update(&mem_op.as_ff(false)?, chal)?;
+
+    // Where the serialized memory op gets absorbed depends on the kind of memory op it is. Make
+    // some mux vars.
+    let is_tape_op = {
+        let is_primary = mem_op
+            .op
+            .is_eq(&FpVar::Constant(F::from(MemOpKind::ReadPrimary as u8)))?;
+        let is_aux = mem_op
+            .op
+            .is_eq(&FpVar::Constant(F::from(MemOpKind::ReadAux as u8)))?;
+        is_primary.or(&is_aux)?
+    };
+    let is_ram_op = is_tape_op.not();
+
+    // Absorb into the RAM transcript if it's a RAM op. Absorb into the primary tape transcript if
+    // it's a primary tape op. If it's an auxiliary tape op, there's no need to absorb at all.
+    new_evals
+        .time_tr_exec
+        .conditionally_update(&is_ram_op, &mem_op.as_ff(false)?, chal)?;
+    // TODO: make primary tape transcript
 
     // --------------------------------------------------------------------------------------------
     // Running the CPU
@@ -625,7 +636,6 @@ pub fn transcript_checker<const NUM_REGS: usize, WV: WordVar<F>, F: PrimeField>(
 
     // Entirely separately from the rest of this function, we check the consistency of the given
     // adjacent entries in the mem-sorted memory transcript
-    //
 
     // Go through the adjacent entries of the mem-sorted trace using a sliding window of size 2
     for pair in mem_tr_adj_seq.windows(2) {
@@ -680,18 +690,10 @@ pub fn transcript_checker<const NUM_REGS: usize, WV: WordVar<F>, F: PrimeField>(
 mod test {
     use super::*;
 
-    use tinyram_emu::{
-        instructions::Instr,
-        interpreter::TranscriptEntry,
-        register::{ImmOrRegister, RegIdx},
-        word::Word,
-    };
-
     use ark_bls12_381::Fr;
     use ark_ff::UniformRand;
     use ark_r1cs_std::{alloc::AllocVar, uint32::UInt32, R1CSVar};
     use ark_relations::{ns, r1cs::ConstraintSystem};
-    use rand::Rng;
 
     const NUM_REGS: usize = 16;
     type F = Fr;

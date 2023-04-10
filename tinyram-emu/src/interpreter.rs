@@ -369,6 +369,18 @@ impl<W: Word> Instr<W> {
                 cpu_state.answer = Some(in1);
                 None
             },
+            Instr::Read { in1, out } => {
+                let in1 = in1.value(&cpu_state.registers);
+                // Read an element from the given tape
+                let val: Option<W> = match in1.into() {
+                    0u64 => cpu_state.primary_input.remove(0),
+                    1u64 => cpu_state.aux_input.remove(0),
+                    _ => None,
+                };
+                cpu_state.registers[out.0 as usize] = val.unwrap_or(W::ZERO);
+                cpu_state.condition_flag = val.is_none();
+                None
+            },
             _ => todo!(),
         };
 
