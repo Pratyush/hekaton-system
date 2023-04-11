@@ -1,6 +1,6 @@
 use ark_ff::PrimeField;
 use ark_r1cs_std::{
-    bits::{uint8::UInt8, ToBitsGadget},
+    bits::{uint32::UInt32, uint8::UInt8, ToBitsGadget},
     boolean::Boolean,
     eq::EqGadget,
     fields::{fp::FpVar, FieldVar},
@@ -8,8 +8,12 @@ use ark_r1cs_std::{
 };
 use ark_relations::r1cs::SynthesisError;
 
-pub(crate) fn uint8_to_fpvar<F: PrimeField>(byte: &UInt8<F>) -> Result<FpVar<F>, SynthesisError> {
-    Boolean::le_bits_to_fp_var(&byte.to_bits_le()?)
+pub(crate) fn uint8_to_fpvar<F: PrimeField>(v: &UInt8<F>) -> Result<FpVar<F>, SynthesisError> {
+    Boolean::le_bits_to_fp_var(&v.to_bits_le()?)
+}
+
+pub(crate) fn uint32_to_fpvar<F: PrimeField>(v: &UInt32<F>) -> Result<FpVar<F>, SynthesisError> {
+    Boolean::le_bits_to_fp_var(&v.to_bits_le())
 }
 
 /// Returns `out` such that `out[i] == vals[i]` for all `i != idx_to_change`, and

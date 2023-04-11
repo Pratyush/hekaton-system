@@ -14,7 +14,7 @@ use ark_relations::{
     r1cs::{ConstraintSystemRef, SynthesisError},
 };
 use cp_groth16::{MultiStageConstraintSynthesizer, MultiStageConstraintSystem};
-use tinyram_emu::{program_state::CpuState, word::Word, TinyRamArch};
+use tinyram_emu::{program_state::CpuState, word::Word, ProgramMetadata};
 
 struct TranscriptCheckerCircuit<const NUM_REGS: usize, W, WV, F>
 where
@@ -22,7 +22,7 @@ where
     WV: WordVar<F, NativeWord = W>,
     F: PrimeField,
 {
-    arch: TinyRamArch,
+    meta: ProgramMetadata,
 
     // Stage 0 values
     instr_load: ProcessedTranscriptEntry<W>,
@@ -112,7 +112,7 @@ where
     /// Do the transcript check
     fn stage5(&mut self, _cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
         let (claimed_out_cpu_state, claimed_out_evals) = transcript_checker::<16, _, _>(
-            self.arch,
+            self.meta,
             &self.in_cpu_state_var,
             &self.chal_var,
             &self.instr_load_var,

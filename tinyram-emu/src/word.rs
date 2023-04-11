@@ -6,6 +6,7 @@ use core::{
 use ark_ff::Field;
 use rand::Rng;
 
+/// A double word. The first element is the low word, the second is the high word.
 pub type DWord<W> = (W, W);
 
 pub trait Word:

@@ -1,7 +1,7 @@
 use crate::{
     instructions::Instr,
     memory::{DataMemory, ProgramMemory},
-    program_state::CpuState,
+    program_state::{CpuState, TapePos},
     word::{DWord, Word},
     TinyRamArch,
 };
@@ -11,20 +11,42 @@ use std::collections::BTreeMap;
 use ark_ff::Field;
 use rand::Rng;
 
+/// A TinyRAM memory operation. This only deals in dwords.
+///
+/// NOTE: A `read` op from an invalid tape index (2 or greater) is converted to an `xor ri ri`,
+/// i.e., it is not considered a memory operation.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum MemOp<W: Word> {
-    Store {
-        /// The dword being stored
-        val: DWord<W>,
-        /// The index the value is being stored to
-        location: W,
-    },
+    /// Load a dword from RAM
     Load {
         /// The dword being loaded
         val: DWord<W>,
         /// The index the value is being loaded from
         location: W,
     },
+    /// Store a dword to RAM
+    Store {
+        /// The dword being stored
+        val: DWord<W>,
+        /// The index the value is being stored to
+        location: W,
+    },
+    /// Read a word from the primary tape
+    ReadPrimary {
+        /// The word being read
+        val: W,
+        /// The position in the tape BEFORE the value is read
+        location: TapePos,
+    },
+    /// Read a word from the auxiliary tape
+    ReadAux {
+        /// The word being read
+        val: W,
+        /// The position in the tape BEFORE the value is read
+        location: TapePos,
+    },
+    /// Read a word from an invalid tape. This always produces 0.
+    ReadInvalid,
 }
 
 impl<W: Word> MemOp<W> {
@@ -41,7 +63,7 @@ impl<W: Word> MemOp<W> {
 }
 
 /// The kind of memory operation
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MemOpKind {
     /// A memory op corresponding to `loadw` or `loadb`
     Load = 0,
@@ -51,36 +73,54 @@ pub enum MemOpKind {
     ReadPrimary,
     /// A memory op corresponding to `read 1`
     ReadAux,
+    /// A memory op corresponding to `read X` for `X > 1`
+    ReadInvalid,
 }
 
 impl<W: Word> From<&MemOp<W>> for MemOpKind {
     fn from(op: &MemOp<W>) -> Self {
         match op {
-            MemOp::Store { .. } => MemOpKind::Store,
             MemOp::Load { .. } => MemOpKind::Load,
+            MemOp::Store { .. } => MemOpKind::Store,
+            MemOp::ReadPrimary { .. } => MemOpKind::ReadPrimary,
+            MemOp::ReadAux { .. } => MemOpKind::ReadAux,
+            MemOp::ReadInvalid => MemOpKind::ReadInvalid,
         }
     }
 }
 
 impl<W: Word> MemOp<W> {
     pub fn kind(&self) -> MemOpKind {
-        match self {
-            MemOp::Store { .. } => MemOpKind::Store,
-            MemOp::Load { .. } => MemOpKind::Load,
-        }
+        MemOpKind::from(self)
     }
 
+    /// Gets the dword being loaded or stored. If it's a valid tape op, then returns the word
+    /// being read in the low position, and 0 in the high position. If it's an invalid tape op,
+    /// then returns (0, 0)
     pub fn val(&self) -> DWord<W> {
         match self {
-            MemOp::Store { val, .. } => val.clone(),
             MemOp::Load { val, .. } => val.clone(),
+            MemOp::Store { val, .. } => val.clone(),
+            MemOp::ReadPrimary { val, .. } => (val.clone(), W::ZERO),
+            MemOp::ReadAux { val, .. } => (val.clone(), W::ZERO),
+            MemOp::ReadInvalid => (W::ZERO, W::ZERO),
         }
     }
 
-    pub fn location(&self) -> W {
-        match self {
-            MemOp::Store { location, .. } => *location,
-            MemOp::Load { location, .. } => *location,
+    pub fn is_ram_op(&self) -> bool {
+        let kind = self.kind();
+        kind == MemOpKind::Load || kind == MemOpKind::Store
+    }
+
+    /// Returns the location of this memory op if it's a RAM op, and the tape head position if it's
+    /// a tape op. If it's an invalid tape op, i.e., `ReadInvalid`, returns 0.
+    pub fn location(&self) -> u64 {
+        match *self {
+            MemOp::Store { location, .. } => location.into(),
+            MemOp::Load { location, .. } => location.into(),
+            MemOp::ReadPrimary { location, .. } => location as u64,
+            MemOp::ReadAux { location, .. } => location as u64,
+            MemOp::ReadInvalid => 0u64,
         }
     }
 
@@ -91,7 +131,7 @@ impl<W: Word> MemOp<W> {
             G::from(2u8).pow([n as u64])
         }
 
-        // We pack this as 0000...000 val || location || kind
+        // We pack this as 0000...000 val || location || kind, where location is padded to u64
         // The format doesn't really matter so long as we're consistent
         let kind = self.kind();
         let val = self.val();
@@ -105,9 +145,9 @@ impl<W: Word> MemOp<W> {
         out += pow_two::<F>(bitlen) * F::from(kind as u8);
         bitlen += 2;
 
-        // Pack loc into the next word-bitlen bits
-        out += pow_two::<F>(bitlen) * F::from(loc.into());
-        bitlen += W::BITLEN;
+        // Pack loc as a u64
+        out += pow_two::<F>(bitlen) * F::from(loc);
+        bitlen += 64;
 
         // val is a dword, so pack each of its words separately
         out += pow_two::<F>(bitlen) * F::from(val.0.into());
@@ -149,23 +189,27 @@ impl<W: Word> Instr<W> {
                 cpu_state.registers[out.0 as usize] = in1 & in2;
                 None
             },
+
             Instr::Or { in1, in2, out } => {
                 let in1 = in1.value(&cpu_state.registers);
                 let in2 = in2.value(&cpu_state.registers);
                 cpu_state.registers[out.0 as usize] = in1 | in2;
                 None
             },
+
             Instr::Xor { in1, in2, out } => {
                 let in1 = in1.value(&cpu_state.registers);
                 let in2 = in2.value(&cpu_state.registers);
                 cpu_state.registers[out.0 as usize] = in1 ^ in2;
                 None
             },
+
             Instr::Not { in1, out } => {
                 let in1 = in1.value(&cpu_state.registers);
                 cpu_state.registers[out.0 as usize] = !in1;
                 None
             },
+
             Instr::Add { in1, in2, out } => {
                 let in1 = in1.value(&cpu_state.registers);
                 let in2 = in2.value(&cpu_state.registers);
@@ -174,6 +218,7 @@ impl<W: Word> Instr<W> {
                 cpu_state.condition_flag = overflow;
                 None
             },
+
             Instr::Sub { in1, in2, out } => {
                 let in1 = in1.value(&cpu_state.registers);
                 let in2 = in2.value(&cpu_state.registers);
@@ -182,6 +227,7 @@ impl<W: Word> Instr<W> {
                 cpu_state.condition_flag = borrow;
                 None
             },
+
             Instr::MulL { in1, in2, out } => {
                 let in1 = in1.value(&cpu_state.registers);
                 let in2 = in2.value(&cpu_state.registers);
@@ -190,6 +236,7 @@ impl<W: Word> Instr<W> {
                 cpu_state.condition_flag = overflow;
                 None
             },
+
             Instr::UMulH { in1, in2, out } => {
                 let in1 = in1.value(&cpu_state.registers);
                 let in2 = in2.value(&cpu_state.registers);
@@ -198,6 +245,7 @@ impl<W: Word> Instr<W> {
                 cpu_state.condition_flag = overflow;
                 None
             },
+
             Instr::SMulH { in1, in2, out } => {
                 let in1 = in1.value(&cpu_state.registers);
                 let in2 = in2.value(&cpu_state.registers);
@@ -206,6 +254,7 @@ impl<W: Word> Instr<W> {
                 cpu_state.condition_flag = overflow;
                 None
             },
+
             Instr::UDiv { in1, in2, out } => {
                 let in1 = in1.value(&cpu_state.registers);
                 let in2 = in2.value(&cpu_state.registers);
@@ -214,6 +263,7 @@ impl<W: Word> Instr<W> {
                 cpu_state.condition_flag = overflow;
                 None
             },
+
             Instr::UMod { in1, in2, out } => {
                 let in1 = in1.value(&cpu_state.registers);
                 let in2 = in2.value(&cpu_state.registers);
@@ -222,6 +272,7 @@ impl<W: Word> Instr<W> {
                 cpu_state.condition_flag = overflow;
                 None
             },
+
             Instr::Shl { in1, in2, out } => {
                 let in1 = in1.value(&cpu_state.registers);
                 let in2 = in2.value(&cpu_state.registers);
@@ -230,6 +281,7 @@ impl<W: Word> Instr<W> {
                 cpu_state.condition_flag = overflow;
                 None
             },
+
             Instr::Shr { in1, in2, out } => {
                 let in1 = in1.value(&cpu_state.registers);
                 let in2 = in2.value(&cpu_state.registers);
@@ -238,6 +290,7 @@ impl<W: Word> Instr<W> {
                 cpu_state.condition_flag = flag;
                 None
             },
+
             // Comparison instructions
             Instr::CmpE { in1, in2 } => {
                 let in1 = in1.value(&cpu_state.registers);
@@ -245,36 +298,42 @@ impl<W: Word> Instr<W> {
                 cpu_state.condition_flag = in1 == in2;
                 None
             },
+
             Instr::CmpA { in1, in2 } => {
                 let in1 = in1.value(&cpu_state.registers);
                 let in2 = in2.value(&cpu_state.registers);
                 cpu_state.condition_flag = in1 > in2;
                 None
             },
+
             Instr::CmpAE { in1, in2 } => {
                 let in1 = in1.value(&cpu_state.registers);
                 let in2 = in2.value(&cpu_state.registers);
                 cpu_state.condition_flag = in1 >= in2;
                 None
             },
+
             Instr::CmpG { in1, in2 } => {
                 let in1 = in1.value(&cpu_state.registers).to_signed();
                 let in2 = in2.value(&cpu_state.registers).to_signed();
                 cpu_state.condition_flag = in1 > in2;
                 None
             },
+
             Instr::CmpGE { in1, in2 } => {
                 let in1 = in1.value(&cpu_state.registers).to_signed();
                 let in2 = in2.value(&cpu_state.registers).to_signed();
                 cpu_state.condition_flag = in1 >= in2;
                 None
             },
+
             // Move instructions
             Instr::Mov { in1, out } => {
                 let in1 = in1.value(&cpu_state.registers);
                 cpu_state.registers[out.0 as usize] = in1;
                 None
             },
+
             Instr::CMov { in1, out } => {
                 let in1 = in1.value(&cpu_state.registers);
                 if cpu_state.condition_flag {
@@ -282,12 +341,14 @@ impl<W: Word> Instr<W> {
                 }
                 None
             },
+
             // Jump instructions
             Instr::Jmp { in1 } => {
                 let in1 = in1.value(&cpu_state.registers);
                 cpu_state.program_counter = in1;
                 None
             },
+
             Instr::CJmp { in1 } => {
                 if cpu_state.condition_flag {
                     let in1 = in1.value(&cpu_state.registers);
@@ -295,6 +356,7 @@ impl<W: Word> Instr<W> {
                 }
                 None
             },
+
             Instr::CNJmp { in1 } => {
                 if !cpu_state.condition_flag {
                     let in1 = in1.value(&cpu_state.registers);
@@ -302,6 +364,7 @@ impl<W: Word> Instr<W> {
                 }
                 None
             },
+
             Instr::StoreW { in1, out } => {
                 let in1 = in1.value(&cpu_state.registers);
                 let out = out.value(&cpu_state.registers);
@@ -338,6 +401,7 @@ impl<W: Word> Instr<W> {
 
                 Some(mem_op)
             },
+
             Instr::LoadW { out, in1 } => {
                 let in1 = in1.value(&cpu_state.registers);
 
@@ -364,23 +428,39 @@ impl<W: Word> Instr<W> {
                 cpu_state.registers[out.0 as usize] = if is_high { w1 } else { w0 };
                 Some(mem_op)
             },
+
+            Instr::Read { in1, out } => {
+                let in1 = in1.value(&cpu_state.registers);
+                // Read an element from the given tape and increment the head. out_of_bounds is set
+                // if the tape head has already exceeded the length of the tape, or if the tape
+                // doesn't exist (i.e., the tape index is > 1).
+                let (location, out_of_bounds, val) = match in1.into() {
+                    0u64 => cpu_state.primary_input.pop(),
+                    1u64 => cpu_state.aux_input.pop(),
+                    _ => (0, true, W::ZERO),
+                };
+
+                // Set the register to the value. Set the condition flag to the out_of_bounds
+                // condition described above.
+                cpu_state.registers[out.0 as usize] = val;
+                cpu_state.condition_flag = out_of_bounds;
+
+                // We don't count reading from an invalid tape as a memory operation
+                let mem_op = match in1.into() {
+                    0u64 => Some(MemOp::ReadPrimary { val, location }),
+                    1u64 => Some(MemOp::ReadAux { val, location }),
+                    _ => None,
+                };
+
+                mem_op
+            },
+
             Instr::Answer { in1 } => {
                 let in1 = in1.value(&cpu_state.registers);
                 cpu_state.answer = Some(in1);
                 None
             },
-            Instr::Read { in1, out } => {
-                let in1 = in1.value(&cpu_state.registers);
-                // Read an element from the given tape
-                let val: Option<W> = match in1.into() {
-                    0u64 => cpu_state.primary_input.remove(0),
-                    1u64 => cpu_state.aux_input.remove(0),
-                    _ => None,
-                };
-                cpu_state.registers[out.0 as usize] = val.unwrap_or(W::ZERO);
-                cpu_state.condition_flag = val.is_none();
-                None
-            },
+
             _ => todo!(),
         };
 
@@ -540,17 +620,14 @@ pub fn run_program<W: Word, const NUM_REGS: usize>(
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::{
-        instructions::Instr,
-        parser::assemble,
-        register::{ImmOrRegister, RegIdx},
-    };
+    use crate::parser::assemble;
 
     type W = u32;
     const NUM_REGS: usize = 8;
 
     // Test program that sums every multiple of 3 from 1 to 100. The output should be 1683.
     #[test]
+    #[allow(unused_variables)]
     fn sum_skip3() {
         // A simple Rust program we will translate to TinyRAM assembly
         //        i is our index that ranges from 0 to 100

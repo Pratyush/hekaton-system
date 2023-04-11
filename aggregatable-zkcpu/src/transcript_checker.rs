@@ -1,8 +1,7 @@
 use crate::{
-    common::*,
-    exec_checker::{exec_checker, CpuStateVar, ExecTickMemData},
+    exec_checker::{exec_checker, CpuStateVar},
     util::log2,
-    word::{DWord, DWordVar, WordVar},
+    word::{DWordVar, WordVar},
 };
 
 use core::{borrow::Borrow, cmp::Ordering};
@@ -10,18 +9,17 @@ use core::{borrow::Borrow, cmp::Ordering};
 use tinyram_emu::{
     interpreter::{MemOp, MemOpKind, TranscriptEntry},
     word::Word,
-    TinyRamArch,
+    ProgramMetadata,
 };
 
-use ark_ff::{Field, PrimeField};
+use ark_ff::PrimeField;
 use ark_r1cs_std::{
     alloc::{AllocVar, AllocationMode},
     boolean::Boolean,
     eq::EqGadget,
     fields::{fp::FpVar, FieldVar},
     select::CondSelectGadget,
-    uint32::UInt32,
-    uint8::UInt8,
+    uint64::UInt64,
     R1CSVar,
 };
 use ark_relations::{
@@ -111,7 +109,7 @@ impl<W: Word> ProcessedTranscriptEntry<W> {
         }
 
         // The field element is of the form
-        // 00...0 || memop_val || memop_ram_idx || memop_kind || is_init || is_padding || timestamp
+        // 00...0 || memop_val || memop_location || memop_kind || is_init || is_padding || timestamp
         // The shape doesn't really matter as long as it's consistent.
 
         let mut shift = 0;
@@ -133,9 +131,9 @@ impl<W: Word> ProcessedTranscriptEntry<W> {
         acc += F::from(self.mem_op.kind() as u8) * pow_two::<F>(shift);
         shift += 2;
 
-        // Encode `ram_idx`
-        acc += F::from(self.mem_op.location().into()) * pow_two::<F>(shift);
-        shift += W::BITLEN;
+        // Encode `location` as a u64
+        acc += F::from(self.mem_op.location()) * pow_two::<F>(shift);
+        shift += 64;
 
         // val is a dword, so pack each of its words separately
         let val = self.mem_op.val();
@@ -155,7 +153,7 @@ impl<W: Word> ProcessedTranscriptEntry<W> {
     /// of the initial memory or not.
     pub(crate) fn as_ff<F: PrimeField>(&self, is_init: bool) -> F {
         // The field element is of the form
-        // 00...0 || memop_val || memop_ram_idx || memop_kind || is_init || is_padding || timestamp
+        // 00...0 || memop_val || memop_location || memop_kind || is_init || is_padding || timestamp
 
         // Get the as_ff with timestamp 0
         let mut acc = self.as_ff_notime(is_init);
@@ -223,8 +221,11 @@ impl<W: Word> ProcessedTranscriptEntry<W> {
     }
 }
 
-impl<WV: WordVar<F>, F: PrimeField> AllocVar<ProcessedTranscriptEntry<WV::NativeWord>, F>
-    for ProcessedTranscriptEntryVar<WV, F>
+impl<W, WV, F> AllocVar<ProcessedTranscriptEntry<W>, F> for ProcessedTranscriptEntryVar<WV, F>
+where
+    W: Word,
+    WV: WordVar<F, NativeWord = W>,
+    F: PrimeField,
 {
     fn new_variable<T: Borrow<ProcessedTranscriptEntry<WV::NativeWord>>>(
         cs: impl Into<Namespace<F>>,
@@ -252,13 +253,13 @@ impl<WV: WordVar<F>, F: PrimeField> AllocVar<ProcessedTranscriptEntry<WV::Native
             || entry.map(|e| F::from(e.mem_op.kind() as u8)),
             mode,
         )?;
-        // Witness the mem op RAM idx
-        let ram_idx = WV::new_variable(
+        // Witness the mem op RAM idx (or 0 if it's a tape op)
+        let location = UInt64::new_variable(
             ns!(cs, "ram idx"),
             || entry.map(|e| e.mem_op.location()),
             mode,
         )?;
-        let ram_idx_fp = ram_idx.as_fpvar()?;
+        let location_fp = location.as_fpvar()?;
         // Witness the mem op loaded/stored dword
         let val = DWordVar::new_variable(ns!(cs, "val"), || entry.map(|e| e.mem_op.val()), mode)?;
         let val_fp = val.as_fpvar()?;
@@ -267,8 +268,8 @@ impl<WV: WordVar<F>, F: PrimeField> AllocVar<ProcessedTranscriptEntry<WV::Native
             is_padding: is_padding_var,
             timestamp: timestamp_var,
             op,
-            ram_idx,
-            ram_idx_fp,
+            location,
+            location_fp,
             val,
             val_fp,
         })
@@ -285,25 +286,30 @@ pub struct ProcessedTranscriptEntryVar<WV: WordVar<F>, F: PrimeField> {
     // TODO: Make sure this is 64 bits on construction
     timestamp: TimestampVar<F>,
     /// The type of memory op this is. This is determined by the discriminant of [`MemOpKind`]
-    op: MemOpKindVar<F>,
-    /// Either the index being loaded from or stored to
-    ram_idx: WV,
-    /// `ram_idx` as a field element
-    ram_idx_fp: FpVar<F>,
+    pub(crate) op: MemOpKindVar<F>,
+    /// The RAM index being loaded from or stored to, or tape index being read
+    location: UInt64<F>,
+    /// `location` as a field element
+    pub(crate) location_fp: FpVar<F>,
     /// The value being loaded or stored
     val: DWordVar<WV, F>,
     /// `val` as a field element
     val_fp: FpVar<F>,
 }
 
-impl<WV: WordVar<F>, F: PrimeField> R1CSVar<F> for ProcessedTranscriptEntryVar<WV, F> {
-    type Value = ProcessedTranscriptEntry<WV::NativeWord>;
+impl<W, WV, F> R1CSVar<F> for ProcessedTranscriptEntryVar<WV, F>
+where
+    W: Word,
+    WV: WordVar<F, NativeWord = W>,
+    F: PrimeField,
+{
+    type Value = ProcessedTranscriptEntry<W>;
 
     fn cs(&self) -> ConstraintSystemRef<F> {
         self.timestamp
             .cs()
             .or(self.op.cs())
-            .or(self.ram_idx.cs())
+            .or(self.location.cs())
             .or(self.val.w0.cs())
             .or(self.val.w1.cs())
     }
@@ -333,12 +339,20 @@ impl<WV: WordVar<F>, F: PrimeField> R1CSVar<F> for ProcessedTranscriptEntryVar<W
             limbs[0] as u8
         };
         let val = self.val.value()?;
-        let location = self.ram_idx.value()?;
+        let loc = self.location.value()?;
 
+        // Make the mem op from the flattened values. The unwraps below are fine because if the
+        // op_disc doesn't match the location type, this is a malformed value.
         let mem_op = if op_disc == MemOpKind::Load as u8 {
-            MemOp::Load { val, location }
+            MemOp::Load {
+                val,
+                location: W::from_u64(loc).unwrap(),
+            }
         } else if op_disc == MemOpKind::Store as u8 {
-            MemOp::Store { val, location }
+            MemOp::Store {
+                val,
+                location: W::from_u64(loc).unwrap(),
+            }
         } else {
             panic!("unexpected memop kind {op_disc}");
         };
@@ -357,8 +371,8 @@ impl<WV: WordVar<F>, F: PrimeField> Default for ProcessedTranscriptEntryVar<WV, 
             is_padding: Boolean::TRUE,
             timestamp: TimestampVar::zero(),
             op: MemOpKindVar::zero(),
-            ram_idx: WV::zero(),
-            ram_idx_fp: FpVar::zero(),
+            location: UInt64::zero(),
+            location_fp: FpVar::zero(),
             val: DWordVar::zero(),
             val_fp: FpVar::zero(),
         }
@@ -388,7 +402,7 @@ impl<WV: WordVar<F>, F: PrimeField> ProcessedTranscriptEntryVar<WV, F> {
     /// `timestamp` to 0). `is_init` says whether this entry is part of the initial memory or not.
     fn as_ff_notime(&self, is_init: bool) -> Result<FpVar<F>, SynthesisError> {
         // The field element is of the form
-        // 00...0 || memop_val || memop_ram_idx || memop_kind || is_init || is_padding || timestamp
+        // 00...0 || memop_val || memop_location || memop_kind || is_init || is_padding || timestamp
         // We set timestamp to 0
         let mut acc = FpVar::<F>::zero();
         let mut shift = 0;
@@ -409,9 +423,9 @@ impl<WV: WordVar<F>, F: PrimeField> ProcessedTranscriptEntryVar<WV, F> {
         acc += FpVar::from(self.op.clone()) * Self::pow_two(shift);
         shift += 2;
 
-        // Encode `ram_idx` as aword
-        acc += &self.ram_idx_fp * Self::pow_two(shift);
-        shift += WV::NativeWord::BITLEN;
+        // Encode `location` as a u64
+        acc += &self.location_fp * Self::pow_two(shift);
+        shift += 64;
 
         // Encode `val` as a dword
         acc += &self.val_fp * Self::pow_two(shift);
@@ -424,7 +438,7 @@ impl<WV: WordVar<F>, F: PrimeField> ProcessedTranscriptEntryVar<WV, F> {
     /// of the initial memory or not.
     fn as_ff(&self, is_init: bool) -> Result<FpVar<F>, SynthesisError> {
         // The field element is of the form
-        // 00...0 || memop_val || memop_ram_idx || memop_kind || is_init || is_padding || timestamp
+        // 00...0 || memop_val || memop_location || memop_kind || is_init || is_padding || timestamp
         let mut acc = self.as_ff_notime(is_init)?;
 
         // Add timestamp in the low 64 bits
@@ -441,7 +455,7 @@ impl<WV: WordVar<F>, F: PrimeField> ProcessedTranscriptEntryVar<WV, F> {
         let mut err = self.is_padding.clone();
 
         // Do the index check. Mask out the bottom bits of idx. We just need to make sure that this
-        // load is the correct dword, i.e., all but the bottom bitmask bits of idx and self.ram_idx
+        // load is the correct dword, i.e., all but the bottom bitmask bits of idx and self.location
         // match.
         let bytes_per_word = WV::BITLEN / 8;
         let word_bitmask_len = log2(bytes_per_word);
@@ -453,7 +467,7 @@ impl<WV: WordVar<F>, F: PrimeField> ProcessedTranscriptEntryVar<WV, F> {
 
         // Check that the dword-aligned indices match
         for (b1, b2) in dword_aligned_idx_bits.iter().zip(
-            self.ram_idx
+            self.location
                 .as_le_bits()
                 .into_iter()
                 .skip(dword_bitmask_len),
@@ -466,6 +480,11 @@ impl<WV: WordVar<F>, F: PrimeField> ProcessedTranscriptEntryVar<WV, F> {
         let out = WV::conditionally_select(word_selector, &self.val.w1, &self.val.w0)?;
 
         Ok((out, err))
+    }
+
+    /// Returns the lower word of this dword
+    pub(crate) fn val_low_word(&self) -> WV {
+        self.val.w0.clone()
     }
 }
 
@@ -551,7 +570,7 @@ impl<F: PrimeField> AllocVar<TranscriptCheckerEvals<F>, F> for TranscriptChecker
 ///
 /// `mem_tr_adj_seq` MUST have length 3;
 pub fn transcript_checker<const NUM_REGS: usize, WV: WordVar<F>, F: PrimeField>(
-    arch: TinyRamArch,
+    meta: ProgramMetadata,
     cpu_state: &CpuStateVar<WV, F>,
     chal: &FpVar<F>,
     instr_load: &ProcessedTranscriptEntryVar<WV, F>,
@@ -566,7 +585,7 @@ pub fn transcript_checker<const NUM_REGS: usize, WV: WordVar<F>, F: PrimeField>(
     // mem_op, if defined, occurs at time t
     let t_plus_one = t + FpVar::one();
 
-    // TODO: MUST check that mem_op.ram_idx is dword-aligned (in Harvard: check bottom bit is 0, in
+    // TODO: MUST check that mem_op.location is dword-aligned (in Harvard: check bottom bit is 0, in
     // Von Neumann: check that bottom log₂(dword_bytelen) bits are 0)
 
     // --------------------------------------------------------------------------------------------
@@ -628,7 +647,7 @@ pub fn transcript_checker<const NUM_REGS: usize, WV: WordVar<F>, F: PrimeField>(
     let instr = &instr_load.val;
 
     // Run the CPU for one tick
-    let new_cpu_state = exec_checker::<NUM_REGS, _, _>(arch, &mem_op, cpu_state, instr)?;
+    let new_cpu_state = exec_checker::<NUM_REGS, _, _>(meta, &mem_op, cpu_state, instr)?;
 
     // --------------------------------------------------------------------------------------------
     // Checking memory-sorted transcript consistency
@@ -642,30 +661,33 @@ pub fn transcript_checker<const NUM_REGS: usize, WV: WordVar<F>, F: PrimeField>(
         let prev = &pair[0];
         let cur = &pair[1];
 
+        // TODO: Check that prev and cur are RAM ops. Primary tape is in another transcript, and
+        // aux and invalid tapes are not recorded at all.
+
         // These asserts are taken from Figure 5 in Constant-Overhead Zero-Knowledge for RAM
         // Programs: https://eprint.iacr.org/2021/979.pdf
 
         // Check that this is sorted by memory idx then time. That is, check
-        //       prev.ram_idx < cur.ram_idx
-        //     ∨ (prev.ram_idx == cur.ram_idx ∧ prev.timestamp < cur.timestamp);
-        let ram_idx_has_incrd = prev
-            .ram_idx_fp
-            .is_cmp(&cur.ram_idx_fp, Ordering::Less, false)?;
-        let ram_idx_is_eq = prev.ram_idx.is_eq(&cur.ram_idx)?;
+        //       prev.location < cur.location
+        //     ∨ (prev.location == cur.location ∧ prev.timestamp < cur.timestamp);
+        let loc_has_incrd = prev
+            .location_fp
+            .is_cmp(&cur.location_fp, Ordering::Less, false)?;
+        let loc_is_eq = prev.location.is_eq(&cur.location)?;
         let t_has_incrd = prev
             .timestamp
             .is_cmp(&cur.timestamp, Ordering::Less, false)?;
-        let cond = ram_idx_has_incrd.or(&ram_idx_is_eq.and(&t_has_incrd)?)?;
+        let cond = loc_has_incrd.or(&loc_is_eq.and(&t_has_incrd)?)?;
         cond.enforce_equal(&Boolean::TRUE)?;
 
         // Check that two adjacent LOADs on the same idx produced the same value. That is, check
-        //       prev.ram_idx != cur.ram_idx
+        //       prev.location != cur.location
         //     ∨ prev.val == cur.val
         //     ∨ cur.op == STORE;
-        let ram_idx_is_neq = prev.ram_idx.is_neq(&cur.ram_idx)?;
+        let loc_is_neq = prev.location.is_neq(&cur.location)?;
         let val_is_eq = prev.val_fp.is_eq(&cur.val_fp)?;
         let op_is_store = cur.is_store()?;
-        let cond = ram_idx_is_neq.or(&val_is_eq)?.or(&op_is_store)?;
+        let cond = loc_is_neq.or(&val_is_eq)?.or(&op_is_store)?;
         cond.enforce_equal(&Boolean::TRUE)?;
 
         // On every tick, absorb all but the first entry in to the mem-sorted execution trace
@@ -673,11 +695,11 @@ pub fn transcript_checker<const NUM_REGS: usize, WV: WordVar<F>, F: PrimeField>(
 
         // If it's an initial load, also put it into the mem trace of initial memory that's read in
         // our execution. That is, if
-        //       prev.ram_idx < cur_ram_idx
+        //       prev.location < cur_location
         //     ∧ cur.op == LOAD
         // then absorb cur into tr_init_accessed
         let cur_as_initmem = cur.as_ff(true)?;
-        let is_new_load = ram_idx_is_neq.and(&cur.is_load()?)?;
+        let is_new_load = loc_is_neq.and(&cur.is_load()?)?;
         new_evals
             .tr_init_accessed
             .conditionally_update(&is_new_load, &cur_as_initmem, chal)?;
@@ -689,6 +711,8 @@ pub fn transcript_checker<const NUM_REGS: usize, WV: WordVar<F>, F: PrimeField>(
 #[cfg(test)]
 mod test {
     use super::*;
+
+    use tinyram_emu::{ProgramMetadata, TinyRamArch};
 
     use ark_bls12_381::Fr;
     use ark_ff::UniformRand;
@@ -706,7 +730,13 @@ mod test {
         let cs = ConstraintSystem::new_ref();
 
         let assembly = tinyram_emu::parser::assemble(code);
-        let arch = TinyRamArch::VonNeumann;
+
+        // VonNeumann architecture, and no `read` operations.
+        let meta = ProgramMetadata {
+            arch: TinyRamArch::VonNeumann,
+            primary_input_len: 0,
+            aux_input_len: 0,
+        };
 
         let (output, transcript) = tinyram_emu::interpreter::run_program::<W, NUM_REGS>(
             TinyRamArch::VonNeumann,
@@ -763,7 +793,7 @@ mod test {
             let mem_op_var = &time_sorted_transcript_pair[1];
 
             (cpu_state, _) = transcript_checker::<NUM_REGS, _, _>(
-                arch,
+                meta,
                 &cpu_state,
                 &chal,
                 instr_load_var,

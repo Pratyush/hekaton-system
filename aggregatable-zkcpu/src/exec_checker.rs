@@ -1,28 +1,28 @@
 use crate::{
     common::*,
     transcript_checker::ProcessedTranscriptEntryVar,
-    util::{arr_set, log2, uint8_to_fpvar},
+    util::{arr_set, log2, uint32_to_fpvar},
     word::{DWordVar, WordVar},
 };
-use tinyram_emu::{instructions::Opcode, program_state::CpuState, word::Word, TinyRamArch};
+use tinyram_emu::{
+    instructions::Opcode, interpreter::MemOpKind, program_state::CpuState, word::Word,
+    ProgramMetadata, TinyRamArch,
+};
 
 use core::{borrow::Borrow, cmp::Ordering};
-use std::cmp::min;
 
 use ark_ff::PrimeField;
 use ark_r1cs_std::{
     alloc::{AllocVar, AllocationMode},
-    bits::ToBitsGadget,
     boolean::Boolean,
     eq::EqGadget,
     fields::{fp::FpVar, FieldVar},
     select::CondSelectGadget,
-    uint8::UInt8,
-    R1CSVar,
+    uint32::UInt32,
 };
 use ark_relations::{
     ns,
-    r1cs::{ConstraintSystemRef, Namespace, SynthesisError},
+    r1cs::{Namespace, SynthesisError},
 };
 
 /// An `ExecTickMemData` can be a LOAD (=0), a STORE (=1), or no-mem (=2)
@@ -246,6 +246,8 @@ where
     pub(crate) flag: Boolean<F>,
     pub(crate) regs: RegistersVar<WV>,
     pub(crate) answer: CpuAnswerVar<WV, F>,
+    pub(crate) primary_tape_pos: UInt32<F>,
+    pub(crate) aux_tape_pos: UInt32<F>,
 }
 
 impl<WV: WordVar<F>, F: PrimeField> CpuStateVar<WV, F> {
@@ -255,6 +257,8 @@ impl<WV: WordVar<F>, F: PrimeField> CpuStateVar<WV, F> {
             flag: Boolean::FALSE,
             regs: vec![WV::zero(); NUM_REGS],
             answer: CpuAnswerVar::default(),
+            primary_tape_pos: UInt32::zero(),
+            aux_tape_pos: UInt32::zero(),
         }
     }
 }
@@ -288,12 +292,24 @@ impl<WV: WordVar<F>, F: PrimeField> CondSelectGadget<F> for CpuStateVar<WV, F> {
             .map(|(t, f)| PcVar::conditionally_select(cond, t, f))
             .collect::<Result<RegistersVar<_>, _>>()?;
         let answer = PcVar::conditionally_select(cond, &true_value.answer, &false_value.answer)?;
+        let primary_tape_pos = UInt32::conditionally_select(
+            cond,
+            &true_value.primary_tape_pos,
+            &false_value.primary_tape_pos,
+        )?;
+        let aux_tape_pos = UInt32::conditionally_select(
+            cond,
+            &true_value.aux_tape_pos,
+            &false_value.aux_tape_pos,
+        )?;
 
         Ok(CpuStateVar {
             pc,
             flag,
             regs,
             answer,
+            primary_tape_pos,
+            aux_tape_pos,
         })
     }
 }
@@ -324,12 +340,21 @@ where
             RegistersVar::new_variable(ns!(cs, "regs"), || state.map(|s| s.registers), mode)?;
         let answer =
             CpuAnswerVar::new_variable(ns!(cs, "answer"), || state.map(|s| s.answer), mode)?;
+        let primary_tape_pos = UInt32::new_variable(
+            ns!(cs, "primary head"),
+            || state.map(|s| s.primary_input.pos),
+            mode,
+        )?;
+        let aux_tape_pos =
+            UInt32::new_variable(ns!(cs, "aux head"), || state.map(|s| s.aux_input.pos), mode)?;
 
         Ok(CpuStateVar {
             pc,
             flag,
             regs,
             answer,
+            primary_tape_pos,
+            aux_tape_pos,
         })
     }
 }
@@ -338,6 +363,7 @@ where
 /// returns `(new_state, err)`. `err` is set if the contents of `mem_op` do not match the
 /// instruction.
 fn run_instr<WV: WordVar<F>, F: PrimeField>(
+    meta: ProgramMetadata,
     op: Opcode,
     cpu_state: &CpuStateVar<WV, F>,
     mem_op: &ProcessedTranscriptEntryVar<WV, F>,
@@ -352,6 +378,8 @@ fn run_instr<WV: WordVar<F>, F: PrimeField>(
         flag,
         regs,
         answer,
+        primary_tape_pos,
+        aux_tape_pos,
     } = cpu_state;
 
     use Opcode::*;
@@ -361,14 +389,17 @@ fn run_instr<WV: WordVar<F>, F: PrimeField>(
             let new_regs = arr_set(&regs, reg1, &output_val)?;
 
             // The PC is incremented (need to check overflow), and the flag and registers are new.
+            let mut err = pc_overflow.clone();
             let state = CpuStateVar {
                 pc: incrd_pc.clone(),
                 flag: new_flag,
                 regs: new_regs,
                 answer: answer.clone(),
+                primary_tape_pos: primary_tape_pos.clone(),
+                aux_tape_pos: aux_tape_pos.clone(),
             };
             // add is not a memory operation. This MUST be padding.
-            let err = mem_op.is_padding.not();
+            err = err.or(&mem_op.is_padding.not())?;
 
             Ok((state, err))
         },
@@ -377,14 +408,17 @@ fn run_instr<WV: WordVar<F>, F: PrimeField>(
             let new_regs = arr_set(&regs, reg1, &output_val)?;
 
             // The PC is incremented (need to check overflow), and the registers are new.
+            let mut err = pc_overflow.clone();
             let state = CpuStateVar {
                 pc: incrd_pc.clone(),
                 flag: flag.clone(),
                 regs: new_regs,
                 answer: answer.clone(),
+                primary_tape_pos: primary_tape_pos.clone(),
+                aux_tape_pos: aux_tape_pos.clone(),
             };
             // xor is not a memory operation. This MUST be padding.
-            let err = mem_op.is_padding.not();
+            err = err.or(&mem_op.is_padding.not())?;
 
             Ok((state, err))
         },
@@ -393,15 +427,17 @@ fn run_instr<WV: WordVar<F>, F: PrimeField>(
             let new_flag = reg2_val.is_eq(&imm_or_reg_val)?;
 
             //  The PC is incremented (need to check overflow), and the flag is new
-            pc_overflow.enforce_equal(&Boolean::FALSE)?;
+            let mut err = pc_overflow.clone();
             let state = CpuStateVar {
                 pc: incrd_pc.clone(),
                 flag: new_flag,
                 regs: regs.clone(),
                 answer: answer.clone(),
+                primary_tape_pos: primary_tape_pos.clone(),
+                aux_tape_pos: aux_tape_pos.clone(),
             };
             // cmpe is not a memory operation. This MUST be padding.
-            let err = mem_op.is_padding.not();
+            err = err.or(&mem_op.is_padding.not())?;
 
             Ok((state, err))
         },
@@ -414,6 +450,8 @@ fn run_instr<WV: WordVar<F>, F: PrimeField>(
                 flag: flag.clone(),
                 regs: regs.clone(),
                 answer: answer.clone(),
+                primary_tape_pos: primary_tape_pos.clone(),
+                aux_tape_pos: aux_tape_pos.clone(),
             };
             // cmpe is not a memory operation. This MUST be padding.
             let err = mem_op.is_padding.not();
@@ -427,16 +465,18 @@ fn run_instr<WV: WordVar<F>, F: PrimeField>(
             // Check that incrd pc, if used, didn't overflow
             let used_incrd_pc = flag.not();
             let relevant_pc_overflow = pc_overflow.and(&used_incrd_pc)?;
-            relevant_pc_overflow.enforce_equal(&Boolean::FALSE)?;
+            let mut err = relevant_pc_overflow.clone();
 
             let state = CpuStateVar {
                 pc: new_pc,
                 flag: flag.clone(),
                 regs: regs.clone(),
                 answer: answer.clone(),
+                primary_tape_pos: primary_tape_pos.clone(),
+                aux_tape_pos: aux_tape_pos.clone(),
             };
             // cjmp is not a memory operation. This MUST be padding.
-            let err = mem_op.is_padding.not();
+            err = err.or(&mem_op.is_padding.not())?;
 
             Ok((state, err))
         },
@@ -449,6 +489,8 @@ fn run_instr<WV: WordVar<F>, F: PrimeField>(
                     is_set: Boolean::TRUE,
                     val: imm_or_reg_val.clone(),
                 },
+                primary_tape_pos: primary_tape_pos.clone(),
+                aux_tape_pos: aux_tape_pos.clone(),
             };
             // answer is not a memory operation. This MUST be padding.
             let err = mem_op.is_padding.not();
@@ -461,11 +503,14 @@ fn run_instr<WV: WordVar<F>, F: PrimeField>(
             let new_regs = arr_set(&regs, reg1, &loaded_word)?;
 
             // The PC is incremented (need to check overflow), and the registers are new.
+            err = err.or(pc_overflow)?;
             let state = CpuStateVar {
                 pc: incrd_pc.clone(),
                 flag: flag.clone(),
                 regs: new_regs,
                 answer: answer.clone(),
+                primary_tape_pos: primary_tape_pos.clone(),
+                aux_tape_pos: aux_tape_pos.clone(),
             };
             // load.w is a memory operation. This MUST NOT be padding.
             err = err.or(&mem_op.is_padding)?;
@@ -476,14 +521,79 @@ fn run_instr<WV: WordVar<F>, F: PrimeField>(
             // Storing doesn't change anything. We don't have to do anything here
 
             // The PC is incremented (need to check overflow)
+            let mut err = pc_overflow.clone();
             let state = CpuStateVar {
                 pc: incrd_pc.clone(),
                 flag: flag.clone(),
                 regs: regs.clone(),
                 answer: answer.clone(),
+                primary_tape_pos: primary_tape_pos.clone(),
+                aux_tape_pos: aux_tape_pos.clone(),
             };
             // store.w is a memory operation. This MUST NOT be padding.
-            let err = mem_op.is_padding.clone();
+            err = err.or(&mem_op.is_padding)?;
+
+            Ok((state, err))
+        },
+        Read => {
+            // Get the correct word from the memory op, and save it in the register
+            let read_word = mem_op.val_low_word();
+            let new_regs = arr_set(&regs, reg1, &read_word)?;
+
+            // Learn which tape is being read
+            let is_primary = mem_op
+                .op
+                .is_eq(&FpVar::Constant(F::from(MemOpKind::ReadPrimary as u8)))?;
+            let is_aux = mem_op
+                .op
+                .is_eq(&FpVar::Constant(F::from(MemOpKind::ReadAux as u8)))?;
+            let is_invalid_tape = { is_primary.not().and(&is_aux.not())? };
+
+            // Find out the current tape position and the maximum tape position. This is nonsense
+            // if is_invalid_tape == true, but that's fine because in either case, the value set
+            // will be 0 and the condition flag will be true.
+            let cur_tape_pos =
+                UInt32::conditionally_select(&is_primary, primary_tape_pos, aux_tape_pos)?;
+            let cur_tape_pos_fp = { uint32_to_fpvar(&cur_tape_pos)? };
+            let tape_len = {
+                let primary_len = FpVar::constant(F::from(meta.primary_input_len));
+                let aux_len = FpVar::constant(F::from(meta.aux_input_len));
+                FpVar::conditionally_select(&is_primary, &primary_len, &aux_len)?
+            };
+            let is_out_of_bounds =
+                cur_tape_pos_fp.is_cmp(&tape_len, core::cmp::Ordering::Greater, true)?;
+
+            // Check that the read head is at the expected position
+            let mut err = cur_tape_pos_fp.is_neq(&mem_op.location_fp)?;
+
+            // Increment the tape position
+            let new_tape_pos = UInt32::addmany(&[cur_tape_pos, UInt32::one()])?;
+            let new_primary_tape_pos =
+                UInt32::conditionally_select(&is_primary, &new_tape_pos, primary_tape_pos)?;
+            let new_aux_tape_pos =
+                UInt32::conditionally_select(&is_aux, &new_tape_pos, aux_tape_pos)?;
+
+            // Now determine if the read triggers the condition flag. It triggers the condition
+            // flag iff either the tape index is > 1 or the tape head has reached the end of the
+            // tape.
+            let new_flag = is_invalid_tape.or(&is_out_of_bounds)?;
+
+            // Make sure that the val is 0 when the flag is set
+            err = err.or(&new_flag.and(&read_word.is_neq(&WV::zero())?)?)?;
+
+            // The PC is incremented (need to check overflow), the registers are new, and so is one
+            // of the tape heads.
+            err = err.or(pc_overflow)?;
+            let state = CpuStateVar {
+                pc: incrd_pc.clone(),
+                flag: new_flag,
+                regs: new_regs,
+                answer: answer.clone(),
+                primary_tape_pos: new_primary_tape_pos,
+                aux_tape_pos: new_aux_tape_pos,
+            };
+            // read is a memory operation. This MUST NOT be padding.
+            err = err.or(&mem_op.is_padding)?;
 
             Ok((state, err))
         },
@@ -494,7 +604,7 @@ fn run_instr<WV: WordVar<F>, F: PrimeField>(
 /// Runs a single CPU tick with the given program counter, instruction, registers, and (optional)
 /// associated memory operation. Returns the updated CPU state.
 pub(crate) fn exec_checker<const NUM_REGS: usize, WV: WordVar<F>, F: PrimeField>(
-    arch: TinyRamArch,
+    meta: ProgramMetadata,
     mem_op: &ProcessedTranscriptEntryVar<WV, F>,
     cpu_state: &CpuStateVar<WV, F>,
     instr: &DWordVar<WV, F>,
@@ -506,17 +616,17 @@ pub(crate) fn exec_checker<const NUM_REGS: usize, WV: WordVar<F>, F: PrimeField>
     // TODO: Figure out whether invalid instructions are necessarily errors
     let mut all_errors = vec![Boolean::TRUE; 32];
 
-    // Unpack the state and decode the instruction
+    // Unpack the CPu state and make sure it hasn't already halted
     let CpuStateVar {
-        pc,
-        flag: _,
-        regs,
-        answer: _,
+        pc, regs, answer, ..
     } = cpu_state;
+    answer.is_set.enforce_equal(&Boolean::FALSE)?;
+
+    // Decode the instruction
     let (opcode, reg1, reg2, imm_or_reg) = decode_instr::<NUM_REGS, _, _>(instr)?;
 
     // Create the default next program counter, which is the one that's incremented
-    let (incrd_pc, pc_overflow) = match arch {
+    let (incrd_pc, pc_overflow) = match meta.arch {
         TinyRamArch::Harvard => pc.checked_increment()?,
         TinyRamArch::VonNeumann => {
             // Increment PC by 1 dword
@@ -529,7 +639,7 @@ pub(crate) fn exec_checker<const NUM_REGS: usize, WV: WordVar<F>, F: PrimeField>
 
     // Enumerate all the opcodes we have to eval
     use tinyram_emu::instructions::Opcode::*;
-    let supported_opcodes = [Add, Xor, CmpE, Jmp, CJmp, Answer, LoadW, StoreW];
+    let supported_opcodes = [Add, Xor, CmpE, Jmp, CJmp, Answer, LoadW, StoreW, Read];
     // let supported_opcodes = [
     //    And, Or, Xor, Not, Add, Sub, MulL, UMulH, SMulH, UDiv, UMod, Shl, Shr, CmpE, CmpA, CmpAe,
     //    CmpG, CmpGe, Mov, CMov, Jmp, CJmp, CnJmp, StoreB, LoadB, StoreW, LoadW, Read, Answer,
@@ -555,6 +665,7 @@ pub(crate) fn exec_checker<const NUM_REGS: usize, WV: WordVar<F>, F: PrimeField>
     // all_mem_ops
     for opcode in supported_opcodes {
         let (new_state, err) = run_instr(
+            meta,
             opcode,
             cpu_state,
             mem_op,
@@ -588,12 +699,7 @@ pub(crate) fn exec_checker<const NUM_REGS: usize, WV: WordVar<F>, F: PrimeField>
 mod test {
     use super::*;
 
-    use tinyram_emu::{
-        instructions::Instr,
-        interpreter::TranscriptEntry,
-        register::{ImmOrRegister, RegIdx},
-        word::Word,
-    };
+    use tinyram_emu::{instructions::Instr, interpreter::TranscriptEntry};
 
     use ark_bls12_381::Fr;
     use ark_r1cs_std::{alloc::AllocVar, uint32::UInt32, R1CSVar};
@@ -661,7 +767,13 @@ mod test {
         let cs = ConstraintSystem::new_ref();
 
         let assembly = tinyram_emu::parser::assemble(SKIP3_CODE);
-        let arch = TinyRamArch::VonNeumann;
+
+        // VonNeumann architecture, and no `read` operations.
+        let meta = ProgramMetadata {
+            arch: TinyRamArch::VonNeumann,
+            primary_input_len: 0,
+            aux_input_len: 0,
+        };
 
         let (output, transcript) = tinyram_emu::interpreter::run_program::<W, NUM_REGS>(
             TinyRamArch::VonNeumann,
@@ -682,7 +794,7 @@ mod test {
 
             println!("iteration {i}. Instr == {:?}", instr);
             cpu_state =
-                exec_checker::<NUM_REGS, _, _>(arch, &non_mem_op, &cpu_state, &encoded_instr_var)
+                exec_checker::<NUM_REGS, _, _>(meta, &non_mem_op, &cpu_state, &encoded_instr_var)
                     .unwrap();
         }
 
