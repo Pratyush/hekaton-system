@@ -23,8 +23,9 @@ impl<W: Word> Tape<W> {
     pub fn pop(&mut self) -> (TapePos, bool, W) {
         let out_of_bounds = self.pos as usize >= self.vals.len();
         let val = *self.vals.get(self.pos as usize).unwrap_or(&W::ZERO);
+        let old_pos = self.pos;
         self.pos += 1;
-        (self.pos, out_of_bounds, val)
+        (old_pos, out_of_bounds, val)
     }
 }
 

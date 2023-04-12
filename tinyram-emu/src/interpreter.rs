@@ -159,7 +159,7 @@ impl<W: Word> MemOp<W> {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct TranscriptEntry<W: Word> {
     /// The timestamp of this entry. This MUST be greater than 0
     pub timestamp: u64,
@@ -575,25 +575,20 @@ pub fn run_program<W: Word, const NUM_REGS: usize>(
             TinyRamArch::VonNeumann => {
                 // Collect 2 words of bytes starting at pc. 16 is the upper bound on the number of
                 // bytes
-                let pc = cpu_state.program_counter.into();
-                let encoded_instr: Vec<u8> = (pc..pc + W::INSTR_BYTELEN as u64)
+                let pc = cpu_state.program_counter;
+                let pc_u64 = pc.into();
+                let encoded_instr: Vec<u8> = (pc_u64..pc_u64 + W::INSTR_BYTELEN as u64)
                     .map(|i| {
                         // TODO: Check that `i` didn't overflow W::MAX
                         *data_memory
                             .0
                             .get(&W::from_u64(i).unwrap())
-                            .unwrap_or_else(|| panic!("illegal jump to 0x{:08x}", pc))
+                            .unwrap_or_else(|| panic!("illegal jump to 0x{:08x}", pc_u64))
                     })
                     .collect();
 
                 let instr = Instr::<W>::from_bytes::<NUM_REGS>(&encoded_instr);
-                let (new_pc, overflow) = W::carrying_add(
-                    cpu_state.program_counter,
-                    W::from_u64(W::INSTR_BYTELEN as u64).unwrap(),
-                );
-                assert!(!overflow, "pc has reached end of memory");
-
-                (new_pc, instr)
+                (pc, instr)
             },
         };
 
