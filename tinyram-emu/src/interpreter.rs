@@ -1,7 +1,7 @@
 use crate::{
     instructions::Instr,
     memory::{DataMemory, ProgramMemory},
-    program_state::{CpuState, TapePos},
+    program_state::{CpuState, Tape, TapePos},
     word::{DWord, Word},
     TinyRamArch,
 };
@@ -510,9 +510,15 @@ impl<W: Word> Instr<W> {
 pub fn run_program<W: Word, const NUM_REGS: usize>(
     arch: TinyRamArch,
     program: &[Instr<W>],
+    primary_input: &[W],
+    aux_input: &[W],
 ) -> (W, Vec<TranscriptEntry<W>>) {
     let mut transcript = Vec::new();
     let mut cpu_state = CpuState::<NUM_REGS, W>::default();
+
+    // Set the tapes
+    cpu_state.primary_input = Tape::new(primary_input);
+    cpu_state.aux_input = Tape::new(aux_input);
 
     // Initialize the program or data memory, depending on the arch
     let (mut data_memory, mut program_memory) = match arch {
@@ -625,9 +631,39 @@ mod test {
     type W = u32;
     const NUM_REGS: usize = 8;
 
+    // Helper function for running TinyRAM code to completion
+    fn run_code(code: &str, primary_input: &[W], aux_input: &[W]) -> W {
+        // Headers for the two architectures. We're gonna run the code twice, once in Harvard arch
+        // and once in Von Neumann. The outputs should agree. This is fine because we don't test
+        // arch-dependent code yet.
+        let hv_header = "; TinyRAM V=2.000 M=hv W=32 K=8\n";
+        let vn_header = "; TinyRAM V=2.000 M=vn W=32 K=8\n";
+
+        let mut hv_output = W::ZERO;
+        let mut vn_output = W::ZERO;
+
+        // Assemble the program under both architectures
+        for (arch, header, out) in [
+            (TinyRamArch::Harvard, hv_header, &mut hv_output),
+            (TinyRamArch::VonNeumann, vn_header, &mut vn_output),
+        ] {
+            let program = [header, code].concat();
+            let assembly = assemble(&program);
+            let (prog_out, _trace) =
+                run_program::<W, NUM_REGS>(arch, &assembly, primary_input, aux_input);
+
+            // Save the output
+            *out = prog_out
+        }
+
+        // Outputs should be the same across both arches
+        assert_eq!(hv_output, vn_output);
+
+        hv_output
+    }
+
     // Test program that sums every multiple of 3 from 1 to 100. The output should be 1683.
     #[test]
-    #[allow(unused_variables)]
     fn sum_skip3() {
         // A simple Rust program we will translate to TinyRAM assembly
         //        i is our index that ranges from 0 to 100
@@ -646,6 +682,7 @@ mod test {
                 mul3_ctr = 0;
             }
         }
+        let true_answer = acc;
 
         // Here's the assembly code of the above program
         //     reg0 -> i
@@ -674,21 +711,40 @@ mod test {
          _end: answer r1          ; Return acc
         ";
 
-        // Headers for the two architectures
-        let hv_header = "; TinyRAM V=2.000 M=hv W=32 K=8\n";
-        let vn_header = "; TinyRAM V=2.000 M=vn W=32 K=8\n";
+        // Run with no tapes
+        let output = run_code(skip3_code, &[], &[]);
+        assert_eq!(output, true_answer as u32);
+    }
 
-        // Assemble the program under both architectures
-        for (arch, header) in [
-            (TinyRamArch::Harvard, hv_header),
-            (TinyRamArch::VonNeumann, vn_header),
-        ] {
-            let program = [header, skip3_code].concat();
-            let assembly = assemble(&program);
-            let (output, trace) = run_program::<W, NUM_REGS>(arch, &assembly);
+    // Sums values from primary and auxiliary tape
+    #[test]
+    fn sum_tape() {
+        // Sum [1, n] from primary tape, and sum 100*[1, n] from auxiliary tape. Then output the
+        // sum of those sums.
 
-            // Check that the program outputted the correct value
-            assert_eq!(output, 1683);
-        }
+        let n = 10;
+        let primary_tape = (1..=n)
+            .map(W::from_u64)
+            .collect::<Result<Vec<W>, _>>()
+            .unwrap();
+        let aux_tape = (1..=n)
+            .map(|x| W::from_u64(100 * x))
+            .collect::<Result<Vec<W>, _>>()
+            .unwrap();
+
+        let code = "\
+        _loop: read r0, 0     ; r0 <- primary tape
+               read r1, 1     ; r1 <- aux tape
+               cjmp _end      ; if read failed, jump to end
+               add r2, r2, r0 ; else, r2 += r0 and r3 += r1
+               add r3, r3, r1
+               jmp _loop      ; goto beginning
+         _end: add r4, r2, r3 ; at the end: return r2 + r3
+               answer r4
+        ";
+
+        let output = run_code(code, &primary_tape, &aux_tape);
+        let primary_sum = n * (n + 1) / 2;
+        assert_eq!(output, (primary_sum + 100 * primary_sum) as u32);
     }
 }

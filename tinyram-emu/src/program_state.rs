@@ -9,10 +9,18 @@ pub struct Tape<W: Word> {
 }
 
 impl<W: Word> Tape<W> {
+    /// Creates a new tape with the given values
+    pub fn new(vals: &[W]) -> Self {
+        Tape {
+            vals: vals.to_vec(),
+            pos: 0,
+        }
+    }
+
     /// Returns the current head index, whether the head index exceeds the length of the tape, and
     /// the tape value at that index (or 0 if out of bounds). Increments head index after
     /// calculating all this.
-    pub(crate) fn pop(&mut self) -> (TapePos, bool, W) {
+    pub fn pop(&mut self) -> (TapePos, bool, W) {
         let out_of_bounds = self.pos as usize >= self.vals.len();
         let val = *self.vals.get(self.pos as usize).unwrap_or(&W::ZERO);
         self.pos += 1;

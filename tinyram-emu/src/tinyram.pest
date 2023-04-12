@@ -29,7 +29,7 @@ rri_instr_begin = @{ rri_instr_mnemonic ~ WHITE_SPACE }
 rri_instr = { rri_instr_begin ~ rri_instr_inputs }
 
 // Parse reg, imm-or-reg instructions. Similar to above
-ri_instr_mnemonic = { "not" | "cmpe" | "load.w" }
+ri_instr_mnemonic = { "not" | "cmpe" | "load.w" | "read" }
 ri_instr_inputs = { reg ~ COMMA ~ imm_or_reg }
 ri_instr_begin = @{ ri_instr_mnemonic ~ WHITE_SPACE }
 ri_instr = { ri_instr_begin ~ ri_instr_inputs }

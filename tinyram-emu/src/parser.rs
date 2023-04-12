@@ -189,6 +189,10 @@ fn lower_ri_instr<W: Word>(ctx: &LoweringCtx, pair: Pair<Rule>) -> Instr<W> {
             out: reg1,
             in1: imm_or_reg,
         },
+        Opcode::Read => Instr::Read {
+            out: reg1,
+            in1: imm_or_reg,
+        },
         _ => panic!("Unexpected op {:?}", op),
     }
 }

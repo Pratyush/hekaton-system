@@ -741,6 +741,8 @@ mod test {
         let (output, transcript) = tinyram_emu::interpreter::run_program::<W, NUM_REGS>(
             TinyRamArch::VonNeumann,
             &assembly,
+            &[],
+            &[],
         );
 
         // Create the time-sorted transcript, complete with padding memory ops. This has length 2T,
