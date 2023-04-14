@@ -540,7 +540,7 @@ unsound. Thus, we are forced to remove the tape `read` operations from the memor
 do consistency checks elsewhere.[^1]
 
 So the length of the memory-sorted transcript can be anywhere from 2T elements (1 instruction load
-+ 1 possibly padding memory op for each instruction) down to T elements (1 instruction load and 1
+plus 1 possibly padding memory op for each instruction) down to T elements (1 instruction load and 1
 `read` op which gets deleted), where T is the number of total ticks.
 Since the mem-sorted transcript is checked in sliding windows of size 3 with step 2, the mem-sorted
 transcript needs 2T + 1 elements. This means that we will need to pad the end of the transcript with
