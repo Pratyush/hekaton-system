@@ -531,6 +531,33 @@ them unique so we can establish a total ordering on them (both time-major and me
 notice that we add 1 to every timestamp no matter what. This is because the 0 timestamp is reserved
 for the initial padding of the mem-ordered trace, which we describe now.
 
+### Memory segments
+
+The von Neumann has 1 random-access memory segment. But our execution transcript handles tape
+accesses as well, in the form of `read` instructions. Mixing segments in the memory-sorted
+transcript is clearly unsound, for the same reason that excluding consistency checks for padding is
+unsound. Thus, we are forced to remove the tape `read` operations from the memory-sorted trace and
+do consistency checks elsewhere.[^1]
+
+So the length of the memory-sorted transcript can be anywhere from 2T elements (1 instruction load
++ 1 possibly padding memory op for each instruction) down to T elements (1 instruction load and 1
+`read` op which gets deleted), where T is the number of total ticks.
+Since the mem-sorted transcript is checked in sliding windows of size 3 with step 2, the mem-sorted
+transcript needs 2T + 1 elements. This means that we will need to pad the end of the transcript with
+a bunch of operations that _don't_ get absorbed into the running evals, since they do not appear in
+the time-sorted transcript.
+
+This requires a small change in design: we can happily absorb padding from the time-ordered
+transcript (since it'd appear in the mem-sorted transcript), but we _cannot_ absorb padding that's
+explicitly made for the mem-sorted transcript (since it doesn't appear in the time-sorted
+transcript). We have two options then, 1) create two notions of padding, choosing to absorb one kind
+and not the other in the memory consistency check, or 2) just do not absorb any padding in any part
+of the circuit. We choose (2) for simplicity.
+
+[^1]: As a side note, these external checks happen to be minimal, since 1) the tapes are read-only
+    and read in sequence, 2) the primary tape is public knowledge, and 3) the contents of the
+    witness tape can be anything the prover wants, so long as it's the right length.
+
 ### Initial element of the mem-sorted transcript
 
 We have to make an initial padding element for the mem-sorted transcript. This is for two reasons:
@@ -538,15 +565,30 @@ We have to make an initial padding element for the mem-sorted transcript. This i
 1. It is mathematically necessary. The mem-sorted transcript is checked in sliding windows of size 3
    with step 2, so we need 2T + 1 elements in the mem-sorted transcript where T is the number of
    total ticks
-2. Because we don't want to double count the first element in the sliding window, the consistency
-   checker will only absorb the tail of the list it's given. So we need to give it a throwaway
-   element that won't be absorbed
+2. Since we don't want to double count the first element in the sliding window, the consistency
+   checker will only absorb the tail of the list it's given. So the first element of the mem-sorted
+   trace needs to be a _consistent_ and _inconsequential_ throwaway value that does not get
+   absorbed.
 
 We are further constrained by the fact that we don't want the placeholder element to change whether
 the next element is considered a first-access or not. Thus, we reserve RAM index 0 and timestamp 0
-for the placeholder value, and make the initial placeholder a `Load` of 0 from index 0 at time 0.
+for the placeholder value, and make the initial placeholder a `load` of 0 from index 0 at time 0.
 Because nothing else uses index 0, this is essentially a no-op. Alternatively, we can use RAM index
 -1 if it makes dev ergonomics easier.
+
+### Final elements of the mem-sorted transcript
+
+If the mem-sorted transcript is has length `L < 2T`, it will need more padding. Since the padding
+does not occur in the time-sorted transcript, it cannot be absorbed. Still, it must be consistent
+with the rest of the transcript. We define the padding as follows. Let `op` represent the final
+element in the memory-sorted transcript prior to padding, and let `t` denote its timestamp. We note
+that `op` exists (since there's at least the initial padding step above), and `op` is a RAM
+operation (not a `read`, since those are explicitly deleted from the mem-sorted transcript). For
+each `i = 0..2T+1-L`, we define the `i`-th padding element, appended to the end of the mem-sorted
+transcript, to be `op_i = op[timestamp=(t+i), kind=load, is_padding=true]`.
+
+One can see that this satisfies all the consistency criteria and is also not absorbed into the
+running evals.
 
 ## Harvard arch
 

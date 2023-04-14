@@ -287,8 +287,8 @@ pub struct ProcessedTranscriptEntryVar<WV: WordVar<F>, F: PrimeField> {
     timestamp: TimestampVar<F>,
     /// The type of memory op this is. This is determined by the discriminant of [`MemOpKind`]
     pub(crate) op: MemOpKindVar<F>,
-    /// The RAM index being loaded from or stored to, or tape index being read
-    location: UInt64<F>,
+    /// The RAM index being loaded from or stored to, or the location of the tape head
+    pub(crate) location: UInt64<F>,
     /// `location` as a field element
     pub(crate) location_fp: FpVar<F>,
     /// The value being loaded or stored
@@ -380,16 +380,32 @@ impl<WV: WordVar<F>, F: PrimeField> Default for ProcessedTranscriptEntryVar<WV, 
 }
 
 impl<WV: WordVar<F>, F: PrimeField> ProcessedTranscriptEntryVar<WV, F> {
-    /// Returns whether this memory operation is a load
+    /// Returns whether this memory operation is a `load`
     fn is_load(&self) -> Result<Boolean<F>, SynthesisError> {
         self.op
             .is_eq(&MemOpKindVar::Constant(F::from(MemOpKind::Load as u8)))
     }
 
-    /// Returns whether this memory operation is a store
+    /// Returns whether this memory operation is a `store`
     fn is_store(&self) -> Result<Boolean<F>, SynthesisError> {
         self.op
             .is_eq(&MemOpKindVar::Constant(F::from(MemOpKind::Store as u8)))
+    }
+
+    /// Returns whether this memory operation is a `read`
+    fn is_tape_op(&self) -> Result<Boolean<F>, SynthesisError> {
+        let is_primary = self
+            .op
+            .is_eq(&FpVar::Constant(F::from(MemOpKind::ReadPrimary as u8)))?;
+        let is_aux = self
+            .op
+            .is_eq(&FpVar::Constant(F::from(MemOpKind::ReadAux as u8)))?;
+        is_primary.or(&is_aux)
+    }
+
+    /// Returns whether this memory operation is a `load` or `store`
+    fn is_ram_op(&self) -> Result<Boolean<F>, SynthesisError> {
+        Ok(self.is_tape_op()?.not())
     }
 }
 
@@ -585,6 +601,8 @@ pub fn transcript_checker<const NUM_REGS: usize, WV: WordVar<F>, F: PrimeField>(
     // mem_op, if defined, occurs at time t
     let t_plus_one = t + FpVar::one();
 
+    let is_padding = &mem_op.is_padding;
+
     // TODO: MUST check that mem_op.location is dword-aligned (in Harvard: check bottom bit is 0, in
     // Von Neumann: check that bottom log₂(dword_bytelen) bits are 0)
 
@@ -597,8 +615,7 @@ pub fn transcript_checker<const NUM_REGS: usize, WV: WordVar<F>, F: PrimeField>(
     // transcript. Concretely, we check
     //       ¬mem_op.is_padding
     //     ∨ mem_op.is_load()
-    mem_op
-        .is_padding
+    is_padding
         .not()
         .or(&mem_op.is_load()?)?
         .enforce_equal(&Boolean::TRUE)?;
@@ -616,27 +633,21 @@ pub fn transcript_checker<const NUM_REGS: usize, WV: WordVar<F>, F: PrimeField>(
         .time_tr_exec
         .update(&instr_load.as_ff(false)?, chal)?;
 
-    // Put the memory operation execution mem. If this is padding, then that's fine, because
-    // there's as much padding here as in the memory trace
+    // Put the memory operation in the correct transcript. If it's padding, don't absorb it.
 
     // Where the serialized memory op gets absorbed depends on the kind of memory op it is. Make
     // some mux vars.
-    let is_tape_op = {
-        let is_primary = mem_op
-            .op
-            .is_eq(&FpVar::Constant(F::from(MemOpKind::ReadPrimary as u8)))?;
-        let is_aux = mem_op
-            .op
-            .is_eq(&FpVar::Constant(F::from(MemOpKind::ReadAux as u8)))?;
-        is_primary.or(&is_aux)?
-    };
+    let is_tape_op = mem_op.is_tape_op()?;
     let is_ram_op = is_tape_op.not();
 
-    // Absorb into the RAM transcript if it's a RAM op. Absorb into the primary tape transcript if
-    // it's a primary tape op. If it's an auxiliary tape op, there's no need to absorb at all.
-    new_evals
-        .time_tr_exec
-        .conditionally_update(&is_ram_op, &mem_op.as_ff(false)?, chal)?;
+    // Absorb into the RAM transcript if it's a RAM op and not padding. Absorb into the primary
+    // tape transcript if it's a primary tape op and not padding. If it's an auxiliary tape op,
+    // there's no need to absorb at all.
+    new_evals.time_tr_exec.conditionally_update(
+        &is_ram_op.and(&is_padding.not())?,
+        &mem_op.as_ff(false)?,
+        chal,
+    )?;
     // TODO: make primary tape transcript
 
     // --------------------------------------------------------------------------------------------
@@ -661,8 +672,19 @@ pub fn transcript_checker<const NUM_REGS: usize, WV: WordVar<F>, F: PrimeField>(
         let prev = &pair[0];
         let cur = &pair[1];
 
-        // TODO: Check that prev and cur are RAM ops. Primary tape is in another transcript, and
-        // aux and invalid tapes are not recorded at all.
+        // Ensure that these are RAM and not tape operations. Tape consistency is not handled here.
+        prev.is_ram_op()?.enforce_equal(&Boolean::TRUE)?;
+        cur.is_ram_op()?.enforce_equal(&Boolean::TRUE)?;
+        // For the same reasons as earlier in this function, ensure that, if these ops are padding,
+        // they are `load` ops
+        prev.is_padding
+            .not()
+            .or(&prev.is_load()?)?
+            .enforce_equal(&Boolean::TRUE)?;
+        cur.is_padding
+            .not()
+            .or(&prev.is_load()?)?
+            .enforce_equal(&Boolean::TRUE)?;
 
         // These asserts are taken from Figure 5 in Constant-Overhead Zero-Knowledge for RAM
         // Programs: https://eprint.iacr.org/2021/979.pdf
@@ -690,14 +712,21 @@ pub fn transcript_checker<const NUM_REGS: usize, WV: WordVar<F>, F: PrimeField>(
         let cond = loc_is_neq.or(&val_is_eq)?.or(&op_is_store)?;
         cond.enforce_equal(&Boolean::TRUE)?;
 
-        // On every tick, absorb all but the first entry in to the mem-sorted execution trace
-        new_evals.mem_tr_exec.update(&cur.as_ff(false)?, chal)?;
+        // On every tick, absorb all but the first entry in to the mem-sorted execution trace,
+        // unless it is padding.
+        new_evals.mem_tr_exec.conditionally_update(
+            &cur.is_padding.not(),
+            &cur.as_ff(false)?,
+            chal,
+        )?;
 
         // If it's an initial load, also put it into the mem trace of initial memory that's read in
         // our execution. That is, if
         //       prev.location < cur_location
         //     ∧ cur.op == LOAD
-        // then absorb cur into tr_init_accessed
+        // then absorb cur into tr_init_accessed.
+        // We don't have to worry about whether this is padding, padding is never an initial load.
+        // padding is always a repetition of the last mem op (converted to a load, if need be).
         let cur_as_initmem = cur.as_ff(true)?;
         let is_new_load = loc_is_neq.and(&cur.is_load()?)?;
         new_evals
@@ -725,7 +754,7 @@ mod test {
     type W = <WV as WordVar<F>>::NativeWord;
 
     // Helper function that runs the given TinyRAM code through the symbolic transcript checker
-    fn transcript_tester(code: &str) {
+    fn transcript_tester(code: &str, primary_input: &[W], aux_input: &[W]) {
         let mut rng = rand::thread_rng();
         let cs = ConstraintSystem::new_ref();
 
@@ -734,16 +763,18 @@ mod test {
         // VonNeumann architecture, and no `read` operations.
         let meta = ProgramMetadata {
             arch: TinyRamArch::VonNeumann,
-            primary_input_len: 0,
-            aux_input_len: 0,
+            primary_input_len: primary_input.len() as u32,
+            aux_input_len: aux_input.len() as u32,
         };
 
         let (output, transcript) = tinyram_emu::interpreter::run_program::<W, NUM_REGS>(
             TinyRamArch::VonNeumann,
             &assembly,
-            &[],
-            &[],
+            primary_input,
+            aux_input,
         );
+
+        // TODO: Put primary reads into a different transcript
 
         // Create the time-sorted transcript, complete with padding memory ops. This has length 2T,
         // where T is the number of CPU ticks.
@@ -751,9 +782,14 @@ mod test {
             .iter()
             .flat_map(ProcessedTranscriptEntry::new_pair)
             .collect::<Vec<_>>();
-        // Make the mem-sorted trace. This has length 2T + 1. The +1 is the initial padding
-        let mem_sorted_transcript = {
-            let mut buf = time_sorted_transcript.clone();
+        // Make the mem-sorted trace with `read` ops removed. We have to pad the result out to be
+        // sufficiently long. The required length is 2T + 1. The +1 is the initial padding.
+        let mem_sorted_transcript: Vec<ProcessedTranscriptEntry<W>> = {
+            let mut buf: Vec<ProcessedTranscriptEntry<W>> = time_sorted_transcript
+                .iter()
+                .filter(|item| item.mem_op.is_ram_op())
+                .cloned()
+                .collect();
             // Sort by RAM index, followed by timestamp
             buf.sort_by_key(|o| (o.mem_op.location(), o.timestamp));
             // Now pad the mem-sorted transcript with an initial placeholder op. This will just
@@ -762,7 +798,27 @@ mod test {
             let mut initial_entry = buf.get(0).unwrap().clone();
             initial_entry.timestamp = 0;
             buf.insert(0, initial_entry);
-            buf
+
+            // Now pad the buffer out to 2T + 1. The padding is derived from the last element of
+            // the mem-sorted trace. We take the element, convert it to a load, and increment the
+            // timestamp appropriately.
+            let base_pad_op = {
+                let mut last_elem = buf.get(buf.len() - 1).unwrap().clone();
+                // Get the RAM index of the load/store. This must be a load/store because we
+                // filtered out the reads above.
+                let location = W::from_u64(last_elem.mem_op.location()).unwrap();
+                let val = last_elem.mem_op.val();
+                last_elem.mem_op = MemOp::Load { location, val };
+                last_elem
+            };
+            // Fill out whatever portion of the 2T + 1 remains
+            let padding = (0..2 * time_sorted_transcript.len() + 1 - buf.len()).map(|i| {
+                let mut p = base_pad_op.clone();
+                p.timestamp += i as u64 + 1;
+                p
+            });
+
+            buf.into_iter().chain(padding).collect()
         };
 
         // Now witness the time- and memory-sorted transcripts
@@ -805,8 +861,11 @@ mod test {
             )
             .unwrap();
         }
+
         // Make sure nothing errored
-        assert!(cs.is_satisfied().unwrap());
+        if !cs.is_satisfied().unwrap() {
+            panic!("unsatisfied constraint: {:?}", cs.which_is_unsatisfied());
+        }
 
         // Check the output is set and correct
         assert!(cpu_state.answer.is_set.value().unwrap());
@@ -824,6 +883,8 @@ mod test {
         load.w r7, 999     ; Dummy load:  r7 <- RAM[999]
         answer r7
         ",
+            &[],
+            &[],
         );
     }
 
@@ -847,6 +908,8 @@ mod test {
 
          _end: answer r1          ; Return acc
         ",
+            &[],
+            &[],
         );
     }
 
@@ -876,6 +939,53 @@ mod test {
 
          _end: answer r1          ; Return acc
         ",
+            &[],
+            &[],
+        );
+    }
+
+    // Tests a basic `read` workload
+    #[test]
+    fn sum_tape() {
+        use ark_relations::r1cs::{ConstraintLayer, ConstraintTrace, TracingMode};
+        use tracing_subscriber::layer::SubscriberExt;
+
+        // First, some boilerplate that helps with debugging
+        //let mut layer = ConstraintLayer::default();
+        //layer.mode = TracingMode::OnlyConstraints;
+        //let subscriber = tracing_subscriber::FmtSubscriber::default().with(layer);
+        //let _guard = tracing::subscriber::set_default(subscriber);
+
+        //let subscriber = tracing_subscriber::Registry::default().with(layer);
+        //tracing::subscriber::set_global_default(subscriber).unwrap();
+
+        // Sum [1, n] from primary tape, and sum 100*[1, n] from auxiliary tape. Then output the
+        // sum of those sums.
+
+        let n = 1;
+        let primary_tape = (1..=n)
+            .map(W::from_u64)
+            .collect::<Result<Vec<W>, _>>()
+            .unwrap();
+        let aux_tape = (1..=n)
+            .map(|x| W::from_u64(100 * x))
+            .collect::<Result<Vec<W>, _>>()
+            .unwrap();
+
+        transcript_tester(
+            "\
+        ; TinyRAM V=2.000 M=vn W=32 K=8
+        _loop: read r0, 0     ; r0 <- primary tape
+               read r1, 1     ; r1 <- aux tape
+               cjmp _end      ; if read failed, jump to end
+               add r2, r2, r0 ; else, r2 += r0 and r3 += r1
+               add r3, r3, r1
+               jmp _loop      ; goto beginning
+         _end: add r4, r2, r3 ; at the end: return r2 + r3
+               answer r4
+        ",
+            &primary_tape,
+            &aux_tape,
         );
     }
 
