@@ -572,9 +572,9 @@ We have to make an initial padding element for the mem-sorted transcript. This i
 
 We are further constrained by the fact that we don't want the placeholder element to change whether
 the next element is considered a first-access or not. Thus, we reserve RAM index 0 and timestamp 0
-for the placeholder value, and make the initial placeholder a `load` of 0 from index 0 at time 0.
-Because nothing else uses index 0, this is essentially a no-op. Alternatively, we can use RAM index
--1 if it makes dev ergonomics easier.
+for the placeholder value, and make the initial placeholder a `load` of 0 from index 0 at time 0,
+and set `padding=true`. Because nothing else uses index 0, this is essentially a no-op.
+Alternatively, we can use RAM index -1 if it makes dev ergonomics easier.
 
 ### Final elements of the mem-sorted transcript
 

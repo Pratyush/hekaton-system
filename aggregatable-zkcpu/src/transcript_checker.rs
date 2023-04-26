@@ -219,6 +219,19 @@ impl<W: Word> ProcessedTranscriptEntry<W> {
             mem_op,
         }
     }
+
+    /// Returns whether this memory operation is a `read`
+    fn is_tape_op(&self) -> bool {
+        match self.mem_op.kind() {
+            MemOpKind::ReadPrimary | MemOpKind::ReadAux => true,
+            _ => false,
+        }
+    }
+
+    /// Returns whether this memory operation is a `load` or `store`
+    fn is_ram_op(&self) -> bool {
+        !self.is_tape_op()
+    }
 }
 
 impl<W, WV, F> AllocVar<ProcessedTranscriptEntry<W>, F> for ProcessedTranscriptEntryVar<WV, F>
@@ -744,7 +757,7 @@ mod test {
     use tinyram_emu::{ProgramMetadata, TinyRamArch};
 
     use ark_bls12_381::Fr;
-    use ark_ff::UniformRand;
+    use ark_ff::{Field, UniformRand};
     use ark_r1cs_std::{alloc::AllocVar, uint32::UInt32, R1CSVar};
     use ark_relations::{ns, r1cs::ConstraintSystem};
 
@@ -797,6 +810,7 @@ mod test {
             // reserved it: every witnessed transcript entry has timestamp greater than 0.
             let mut initial_entry = buf.get(0).unwrap().clone();
             initial_entry.timestamp = 0;
+            initial_entry.is_padding = true;
             buf.insert(0, initial_entry);
 
             // Now pad the buffer out to 2T + 1. The padding is derived from the last element of
@@ -814,6 +828,7 @@ mod test {
             // Fill out whatever portion of the 2T + 1 remains
             let padding = (0..2 * time_sorted_transcript.len() + 1 - buf.len()).map(|i| {
                 let mut p = base_pad_op.clone();
+                p.is_padding = true;
                 p.timestamp += i as u64 + 1;
                 p
             });
@@ -834,9 +849,10 @@ mod test {
             .collect::<Vec<_>>();
 
         // Doesn't matter what the challenge value is just yet
-        let chal = FpVar::constant(F::rand(&mut rng));
+        let chal = F::rand(&mut rng);
+        let chal_var = FpVar::constant(chal);
         // Let the evals be empty
-        let evals = TranscriptCheckerEvalsVar::default();
+        let mut evals = TranscriptCheckerEvalsVar::default();
 
         // Run the CPU. Every tick takes in 2 time-sorted transcript entries, with no overlaps.
         // Also every tick takes in 3 mem-sorted transcript entries, with 1 overlap between ticks.
@@ -850,10 +866,10 @@ mod test {
             let instr_load_var = &time_sorted_transcript_pair[0];
             let mem_op_var = &time_sorted_transcript_pair[1];
 
-            (cpu_state, _) = transcript_checker::<NUM_REGS, _, _>(
+            (cpu_state, evals) = transcript_checker::<NUM_REGS, _, _>(
                 meta,
                 &cpu_state,
-                &chal,
+                &chal_var,
                 instr_load_var,
                 mem_op_var,
                 &mem_sorted_transcript_triple,
@@ -870,6 +886,32 @@ mod test {
         // Check the output is set and correct
         assert!(cpu_state.answer.is_set.value().unwrap());
         assert_eq!(output, cpu_state.answer.val.value().unwrap());
+
+        // Check that the time- and mem-sorted transcript evals are equal
+        assert_eq!(evals.time_tr_exec.0.value(), evals.mem_tr_exec.0.value());
+        // Also check that the native eval agrees with the ZK eval
+        let t_eval: F = time_sorted_transcript
+            .into_iter()
+            .map(|v| {
+                if v.is_padding || v.is_tape_op() {
+                    F::ONE
+                } else {
+                    chal - v.as_ff::<F>(false)
+                }
+            })
+            .product();
+        let m_eval: F = mem_sorted_transcript
+            .into_iter()
+            .map(|v| {
+                if v.is_padding || v.is_tape_op() {
+                    F::ONE
+                } else {
+                    chal - v.as_ff::<F>(false)
+                }
+            })
+            .product();
+        assert_eq!(m_eval, t_eval);
+        assert_eq!(t_eval, evals.time_tr_exec.0.value().unwrap());
     }
 
     // Tests that a simple store and load passes the transcript checker
