@@ -180,7 +180,7 @@ pub struct ProcessedTranscriptEntry<W: Word> {
 impl<W: Word> ProcessedTranscriptEntry<W> {
     /// Converts the given transcript entry (consisting of instruction load + optional mem op) into
     /// two processed entries. If there is no mem op, then a padding entry is created.
-    fn new_pair(t: &TranscriptEntry<W>) -> [ProcessedTranscriptEntry<W>; 2] {
+    pub(crate) fn new_pair(t: &TranscriptEntry<W>) -> [ProcessedTranscriptEntry<W>; 2] {
         // Get the instruction load. We stretch the timestamps to make every timestamp unique
         let first = ProcessedTranscriptEntry {
             is_padding: false,
@@ -229,7 +229,7 @@ impl<W: Word> ProcessedTranscriptEntry<W> {
     }
 
     /// Returns whether this memory operation is a `load` or `store`
-    fn is_ram_op(&self) -> bool {
+    pub(crate) fn is_ram_op(&self) -> bool {
         !self.is_tape_op()
     }
 }
@@ -753,6 +753,7 @@ pub fn transcript_checker<const NUM_REGS: usize, WV: WordVar<F>, F: PrimeField>(
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::transcript_utils;
 
     use tinyram_emu::{ProgramMetadata, TinyRamArch};
 
@@ -789,52 +790,8 @@ mod test {
 
         // TODO: Put primary reads into a different transcript
 
-        // Create the time-sorted transcript, complete with padding memory ops. This has length 2T,
-        // where T is the number of CPU ticks.
-        let time_sorted_transcript = transcript
-            .iter()
-            .flat_map(ProcessedTranscriptEntry::new_pair)
-            .collect::<Vec<_>>();
-        // Make the mem-sorted trace with `read` ops removed. We have to pad the result out to be
-        // sufficiently long. The required length is 2T + 1. The +1 is the initial padding.
-        let mem_sorted_transcript: Vec<ProcessedTranscriptEntry<W>> = {
-            let mut buf: Vec<ProcessedTranscriptEntry<W>> = time_sorted_transcript
-                .iter()
-                .filter(|item| item.mem_op.is_ram_op())
-                .cloned()
-                .collect();
-            // Sort by RAM index, followed by timestamp
-            buf.sort_by_key(|o| (o.mem_op.location(), o.timestamp));
-            // Now pad the mem-sorted transcript with an initial placeholder op. This will just
-            // store the value of the true first op. We can use the timestamp 0 because we've
-            // reserved it: every witnessed transcript entry has timestamp greater than 0.
-            let mut initial_entry = buf.get(0).unwrap().clone();
-            initial_entry.timestamp = 0;
-            initial_entry.is_padding = true;
-            buf.insert(0, initial_entry);
-
-            // Now pad the buffer out to 2T + 1. The padding is derived from the last element of
-            // the mem-sorted trace. We take the element, convert it to a load, and increment the
-            // timestamp appropriately.
-            let base_pad_op = {
-                let mut last_elem = buf.get(buf.len() - 1).unwrap().clone();
-                // Get the RAM index of the load/store. This must be a load/store because we
-                // filtered out the reads above.
-                let location = W::from_u64(last_elem.mem_op.location()).unwrap();
-                let val = last_elem.mem_op.val();
-                last_elem.mem_op = MemOp::Load { location, val };
-                last_elem
-            };
-            // Fill out whatever portion of the 2T + 1 remains
-            let padding = (0..2 * time_sorted_transcript.len() + 1 - buf.len()).map(|i| {
-                let mut p = base_pad_op.clone();
-                p.is_padding = true;
-                p.timestamp += i as u64 + 1;
-                p
-            });
-
-            buf.into_iter().chain(padding).collect()
-        };
+        let (time_sorted_transcript, mem_sorted_transcript) =
+            transcript_utils::sort_and_pad(&transcript);
 
         // Now witness the time- and memory-sorted transcripts
         let time_sorted_transcript_vars = time_sorted_transcript

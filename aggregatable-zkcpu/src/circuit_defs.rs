@@ -16,6 +16,10 @@ use ark_relations::{
 use cp_groth16::{MultiStageConstraintSynthesizer, MultiStageConstraintSystem};
 use tinyram_emu::{program_state::CpuState, word::Word, ProgramMetadata};
 
+// TODO: mem_tr_adj_seq[2] in one tick should be equal to mem_tr_adj_seq[0] in the next tick. Thus,
+// the former should be part of stage 3 and the latter should be part of stage 2. And
+// mem_tr_adj_seq[1] can be anywhere else
+
 struct TranscriptCheckerCircuit<const NUM_REGS: usize, W, WV, F>
 where
     W: Word,
