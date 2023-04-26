@@ -50,24 +50,61 @@ impl<F: PrimeField> Default for RunningEvalVar<F> {
 }
 
 impl<F: PrimeField> RunningEvalVar<F> {
-    /// Updates the running eval with the given entry and challenge point, iff `bit` == true.
-    fn conditionally_update(
+    /// Updates the running eval with the given memory operation and challenge point if `bit ==
+    /// true`. This is a no-op if `bit == false`. If the memory operation is a tape op or is
+    /// padding, then it is encoded as a 0.
+    fn conditionally_update_with_ram_op<WV: WordVar<F>>(
         &mut self,
         bit: &Boolean<F>,
-        entry: &FpVar<F>,
+        mem_op: &ProcessedTranscriptEntryVar<WV, F>,
         chal: &FpVar<F>,
     ) -> Result<(), SynthesisError> {
+        // The field repr of mem_op is 0 iff it's a tape op or padding
+        let field_repr = {
+            let ff = mem_op.as_ff(false)?;
+            let cond = mem_op.is_tape_op()?.or(&mem_op.is_padding)?;
+            FpVar::conditionally_select(&cond, &FpVar::zero(), &ff)?
+        };
+
         // Recall the polynoimal has factors (X - op). So to do an incremental computation, we
         // calculate `eval *= (chal - op)`. If `bit` == false, then the RHS is just 1.
-        let coeff = FpVar::conditionally_select(bit, &(chal - entry), &FpVar::one())?;
-        self.0 *= coeff;
+        let rhs = FpVar::conditionally_select(bit, &(chal - field_repr), &FpVar::one())?;
+        self.0 *= rhs;
 
         Ok(())
     }
 
     /// Updates the running eval with the given entry and challenge point
-    fn update(&mut self, entry: &FpVar<F>, chal: &FpVar<F>) -> Result<(), SynthesisError> {
-        self.conditionally_update(&Boolean::TRUE, entry, chal)
+    fn update_with_ram_op<WV: WordVar<F>>(
+        &mut self,
+        mem_op: &ProcessedTranscriptEntryVar<WV, F>,
+        chal: &FpVar<F>,
+    ) -> Result<(), SynthesisError> {
+        self.conditionally_update_with_ram_op(&Boolean::TRUE, mem_op, chal)
+    }
+
+    /// Updates the running eval with the given memory operation (excluding timestamp) and
+    /// challenge point if `bit == true`. This is a no-op if `bit == false`. If the memory
+    /// operation is a tape op or is padding, then it is encoded as a 0.
+    fn conditionally_update_with_ram_op_notime<WV: WordVar<F>>(
+        &mut self,
+        bit: &Boolean<F>,
+        mem_op: &ProcessedTranscriptEntryVar<WV, F>,
+        chal: &FpVar<F>,
+    ) -> Result<(), SynthesisError> {
+        // The field repr of mem_op is 0 iff it's a tape op or padding
+        let field_repr = {
+            let ff = mem_op.as_ff_notime(false)?;
+            let cond = mem_op.is_tape_op()?.or(&mem_op.is_padding)?;
+            FpVar::conditionally_select(&cond, &FpVar::zero(), &ff)?
+        };
+
+        // Recall the polynoimal has factors (X - op). So to do an incremental computation, we
+        // calculate `eval *= (chal - op)`. If `bit` == false, then the RHS is just 1.
+        let rhs = FpVar::conditionally_select(bit, &(chal - field_repr), &FpVar::one())?;
+        self.0 *= rhs;
+
+        Ok(())
     }
 }
 
@@ -221,7 +258,7 @@ impl<W: Word> ProcessedTranscriptEntry<W> {
     }
 
     /// Returns whether this memory operation is a `read`
-    fn is_tape_op(&self) -> bool {
+    pub fn is_tape_op(&self) -> bool {
         match self.mem_op.kind() {
             MemOpKind::ReadPrimary | MemOpKind::ReadAux => true,
             _ => false,
@@ -468,12 +505,12 @@ impl<WV: WordVar<F>, F: PrimeField> ProcessedTranscriptEntryVar<WV, F> {
     fn as_ff(&self, is_init: bool) -> Result<FpVar<F>, SynthesisError> {
         // The field element is of the form
         // 00...0 || memop_val || memop_location || memop_kind || is_init || is_padding || timestamp
-        let mut acc = self.as_ff_notime(is_init)?;
+        let mut field_repr = self.as_ff_notime(is_init)?;
 
         // Add timestamp in the low 64 bits
-        acc += &self.timestamp;
+        field_repr += &self.timestamp;
 
-        Ok(acc)
+        Ok(field_repr)
     }
 
     // Extracts the word at the given RAM index, returning it and an error flag. `err = true` iff
@@ -644,23 +681,12 @@ pub fn transcript_checker<const NUM_REGS: usize, WV: WordVar<F>, F: PrimeField>(
     // Put the instruction load in the time-sorted execution mem
     new_evals
         .time_tr_exec
-        .update(&instr_load.as_ff(false)?, chal)?;
+        .update_with_ram_op(&instr_load, chal)?;
 
     // Put the memory operation in the correct transcript. If it's padding, don't absorb it.
 
-    // Where the serialized memory op gets absorbed depends on the kind of memory op it is. Make
-    // some mux vars.
-    let is_tape_op = mem_op.is_tape_op()?;
-    let is_ram_op = is_tape_op.not();
-
-    // Absorb into the RAM transcript if it's a RAM op and not padding. Absorb into the primary
-    // tape transcript if it's a primary tape op and not padding. If it's an auxiliary tape op,
-    // there's no need to absorb at all.
-    new_evals.time_tr_exec.conditionally_update(
-        &is_ram_op.and(&is_padding.not())?,
-        &mem_op.as_ff(false)?,
-        chal,
-    )?;
+    // Absorb into the RAM transcript. as_ff() is 0 if mem_op is padding or a tape operation.
+    new_evals.time_tr_exec.update_with_ram_op(&mem_op, chal)?;
     // TODO: make primary tape transcript
 
     // --------------------------------------------------------------------------------------------
@@ -725,26 +751,23 @@ pub fn transcript_checker<const NUM_REGS: usize, WV: WordVar<F>, F: PrimeField>(
         let cond = loc_is_neq.or(&val_is_eq)?.or(&op_is_store)?;
         cond.enforce_equal(&Boolean::TRUE)?;
 
-        // On every tick, absorb all but the first entry in to the mem-sorted execution trace,
-        // unless it is padding.
-        new_evals.mem_tr_exec.conditionally_update(
-            &cur.is_padding.not(),
-            &cur.as_ff(false)?,
-            chal,
-        )?;
+        // On every tick, absorb all but the first entry in to the mem-sorted execution trace. This
+        // is absorbed as a 0 if cur is a tape op or padding.
+        new_evals.mem_tr_exec.update_with_ram_op(&cur, chal)?;
 
         // If it's an initial load, also put it into the mem trace of initial memory that's read in
         // our execution. That is, if
         //       prev.location < cur_location
         //     ∧ cur.op == LOAD
         // then absorb cur into tr_init_accessed.
-        // We don't have to worry about whether this is padding, padding is never an initial load.
-        // padding is always a repetition of the last mem op (converted to a load, if need be).
-        let cur_as_initmem = cur.as_ff(true)?;
+        // We don't have to worry about whether this is padding (which makes the field repr equal
+        // 0), since padding is never an initial load. padding is always a repetition of the last
+        // mem op (converted to a load, if need be). We also don't have to check that cur is a tape
+        // op (which also makes the field repr equal 0), since that's enforced to be false above.
         let is_new_load = loc_is_neq.and(&cur.is_load()?)?;
         new_evals
             .tr_init_accessed
-            .conditionally_update(&is_new_load, &cur_as_initmem, chal)?;
+            .conditionally_update_with_ram_op_notime(&is_new_load, &cur, chal)?;
     }
 
     Ok((new_cpu_state, new_evals))
@@ -759,6 +782,7 @@ mod test {
 
     use ark_bls12_381::Fr;
     use ark_ff::{Field, UniformRand};
+    use ark_poly::Polynomial;
     use ark_r1cs_std::{alloc::AllocVar, uint32::UInt32, R1CSVar};
     use ark_relations::{ns, r1cs::ConstraintSystem};
 
@@ -846,29 +870,18 @@ mod test {
 
         // Check that the time- and mem-sorted transcript evals are equal
         assert_eq!(evals.time_tr_exec.0.value(), evals.mem_tr_exec.0.value());
-        // Also check that the native eval agrees with the ZK eval
-        let t_eval: F = time_sorted_transcript
-            .into_iter()
-            .map(|v| {
-                if v.is_padding || v.is_tape_op() {
-                    F::ONE
-                } else {
-                    chal - v.as_ff::<F>(false)
-                }
-            })
-            .product();
-        let m_eval: F = mem_sorted_transcript
-            .into_iter()
-            .map(|v| {
-                if v.is_padding || v.is_tape_op() {
-                    F::ONE
-                } else {
-                    chal - v.as_ff::<F>(false)
-                }
-            })
-            .product();
+
+        // Natively convert the transcripts to polynomials and check that the evals match each
+        // other and the ones from the circuit.
+        let max_deg = mem_sorted_transcript.len() - 1;
+        let t_polyn = transcript_utils::ram_transcript_to_polyn(&time_sorted_transcript, max_deg);
+        let m_polyn = transcript_utils::ram_transcript_to_polyn(&mem_sorted_transcript, max_deg);
+        let t_eval = t_polyn.evaluate(&chal);
+        let m_eval = m_polyn.evaluate(&chal);
         assert_eq!(m_eval, t_eval);
-        assert_eq!(t_eval, evals.time_tr_exec.0.value().unwrap());
+        // Check the native eval equals X * zk_eval. The extra X is because the ZK circuit ignores
+        // the initial padding entry
+        assert_eq!(t_eval, chal * evals.time_tr_exec.0.value().unwrap());
     }
 
     // Tests that a simple store and load passes the transcript checker
