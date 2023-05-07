@@ -15,7 +15,7 @@ use rand::Rng;
 ///
 /// NOTE: A `read` op from an invalid tape index (2 or greater) is converted to an `xor ri ri`,
 /// i.e., it is not considered a memory operation.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Default)]
 pub enum MemOp<W: Word> {
     /// Load a dword from RAM
     Load {
@@ -46,6 +46,7 @@ pub enum MemOp<W: Word> {
         location: TapePos,
     },
     /// Read a word from an invalid tape. This always produces 0.
+    #[default]
     ReadInvalid,
 }
 
@@ -171,6 +172,15 @@ pub struct TranscriptEntry<W: Word> {
     pub mem_op: Option<MemOp<W>>,
 }
 
+/// Contains the RAM, ROM, and tapes necessary to run a program
+#[derive(Default)]
+pub struct MemoryUnit<W: Word> {
+    data_ram: DataMemory<W>,
+    program_rom: ProgramMemory<W>,
+    primary_tape: Tape<W>,
+    aux_tape: Tape<W>,
+}
+
 impl<W: Word> Instr<W> {
     /// Executes the given instruction. without necessarily updating the program counter.
     /// This method only updates the program counter if `self` is one of `Inst::Jmp`, `Inst::CJmp`,
@@ -178,8 +188,7 @@ impl<W: Word> Instr<W> {
     fn execute<const NUM_REGS: usize>(
         &self,
         mut cpu_state: CpuState<NUM_REGS, W>,
-        data_memory: &mut DataMemory<W>,
-        program_memory: &mut ProgramMemory<W>,
+        mem: &mut MemoryUnit<W>,
     ) -> (CpuState<NUM_REGS, W>, Option<MemOp<W>>) {
         let mem_op = match self {
             // Arithmetic instructions
@@ -377,7 +386,7 @@ impl<W: Word> Instr<W> {
 
                 // Fetch a dword's worth of bytes from memory, using 0 where undefined
                 let mut bytes: Vec<u8> = (dword_addr..dword_addr + 2 * W::BYTELEN as u64)
-                    .map(|i| *data_memory.0.get(&W::from_u64(i).unwrap()).unwrap_or(&0))
+                    .map(|i| *mem.data_ram.0.get(&W::from_u64(i).unwrap()).unwrap_or(&0))
                     .collect();
                 // Overwrite whatever is being stored. Overwrite the first word if `is_high = false`.
                 // Otherwise overwrite the second.
@@ -390,7 +399,7 @@ impl<W: Word> Instr<W> {
 
                 // Update the memory
                 for (i, b) in (dword_addr..dword_addr + 2 * W::BYTELEN as u64).zip(bytes.iter()) {
-                    data_memory.0.insert(W::from_u64(i).unwrap(), *b);
+                    mem.data_ram.0.insert(W::from_u64(i).unwrap(), *b);
                 }
 
                 // Construct the memory operation
@@ -413,7 +422,7 @@ impl<W: Word> Instr<W> {
 
                 // Fetch a dword's worth of bytes from memory, using 0 where undefined
                 let bytes: Vec<u8> = (dword_addr..dword_addr + 2 * W::BYTELEN as u64)
-                    .map(|i| *data_memory.0.get(&W::from_u64(i).unwrap()).unwrap_or(&0))
+                    .map(|i| *mem.data_ram.0.get(&W::from_u64(i).unwrap()).unwrap_or(&0))
                     .collect();
                 // Convert the little-endian encoded bytes into words
                 let w0 = W::from_le_bytes(&bytes[..W::BYTELEN]).unwrap();
@@ -435,8 +444,8 @@ impl<W: Word> Instr<W> {
                 // if the tape head has already exceeded the length of the tape, or if the tape
                 // doesn't exist (i.e., the tape index is > 1).
                 let (location, out_of_bounds, val) = match in1.into() {
-                    0u64 => cpu_state.primary_input.pop(),
-                    1u64 => cpu_state.aux_input.pop(),
+                    0u64 => mem.primary_tape.pop(),
+                    1u64 => mem.aux_tape.pop(),
                     _ => (0, true, W::ZERO),
                 };
 
@@ -474,11 +483,10 @@ impl<W: Word> Instr<W> {
         &self,
         arch: TinyRamArch,
         cpu_state: CpuState<NUM_REGS, W>,
-        data_memory: &mut DataMemory<W>,
-        program_memory: &mut ProgramMemory<W>,
+        mem: &mut MemoryUnit<W>,
     ) -> (CpuState<NUM_REGS, W>, Option<MemOp<W>>) {
         let old_pc = cpu_state.program_counter;
-        let (mut new_state, mem_op) = self.execute(cpu_state, data_memory, program_memory);
+        let (mut new_state, mem_op) = self.execute(cpu_state, mem);
         if new_state.program_counter == old_pc {
             // The amount we increment the program counter depends on the architecture. In Harvard,
             // it's 1 (since program memory holds dwords). In VonNeumann it's 2 * the
@@ -516,12 +524,8 @@ pub fn run_program<W: Word, const NUM_REGS: usize>(
     let mut transcript = Vec::new();
     let mut cpu_state = CpuState::<NUM_REGS, W>::default();
 
-    // Set the tapes
-    cpu_state.primary_input = Tape::new(primary_input);
-    cpu_state.aux_input = Tape::new(aux_input);
-
     // Initialize the program or data memory, depending on the arch
-    let (mut data_memory, mut program_memory) = match arch {
+    let (data_ram, program_rom) = match arch {
         TinyRamArch::Harvard => {
             // For Harvard we just wrap the given instructions and that's it
 
@@ -555,6 +559,13 @@ pub fn run_program<W: Word, const NUM_REGS: usize>(
             )
         },
     };
+    // Set RAM, ROM, and tapes
+    let mut mem = MemoryUnit {
+        data_ram,
+        program_rom,
+        primary_tape: Tape::new(primary_input),
+        aux_tape: Tape::new(aux_input),
+    };
 
     // Run the CPU until it outputs an answer
     let mut timestamp = 0;
@@ -565,7 +576,8 @@ pub fn run_program<W: Word, const NUM_REGS: usize>(
                 let pc = cpu_state.program_counter;
                 let pc_usize =
                     usize::try_from(pc.into()).expect("program counter exceeds usize::MAX");
-                let instr = *program_memory
+                let instr = *mem
+                    .program_rom
                     .0
                     .get(pc_usize)
                     .unwrap_or_else(|| panic!("illegal jump to 0x{:08x}", pc_usize));
@@ -580,7 +592,7 @@ pub fn run_program<W: Word, const NUM_REGS: usize>(
                 let encoded_instr: Vec<u8> = (pc_u64..pc_u64 + W::INSTR_BYTELEN as u64)
                     .map(|i| {
                         // TODO: Check that `i` didn't overflow W::MAX
-                        *data_memory
+                        *mem.data_ram
                             .0
                             .get(&W::from_u64(i).unwrap())
                             .unwrap_or_else(|| panic!("illegal jump to 0x{:08x}", pc_u64))
@@ -593,8 +605,7 @@ pub fn run_program<W: Word, const NUM_REGS: usize>(
         };
 
         // Run the CPU
-        let (new_cpu_state, mem_op) =
-            instr.execute_and_update_pc(arch, cpu_state, &mut data_memory, &mut program_memory);
+        let (new_cpu_state, mem_op) = instr.execute_and_update_pc(arch, cpu_state, &mut mem);
 
         // Register the instruction load. For transcript purposes, make sure the load is
         // word-aligned.

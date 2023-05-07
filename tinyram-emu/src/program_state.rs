@@ -2,7 +2,7 @@ use crate::word::Word;
 
 pub(crate) type TapePos = u32;
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct Tape<W: Word> {
     pub vals: Vec<W>,
     pub pos: TapePos,
@@ -29,6 +29,7 @@ impl<W: Word> Tape<W> {
     }
 }
 
+#[derive(Clone)]
 pub struct CpuState<const NUM_REGS: usize, W: Word> {
     /// Condition flag that is set as a result of instruction exection.
     pub condition_flag: bool,
@@ -36,8 +37,6 @@ pub struct CpuState<const NUM_REGS: usize, W: Word> {
     pub program_counter: W,
     /// Register file.
     pub registers: [W; NUM_REGS],
-    pub primary_input: Tape<W>,
-    pub aux_input: Tape<W>,
     pub answer: Option<W>,
 }
 
@@ -47,8 +46,6 @@ impl<const NUM_REGS: usize, W: Word> Default for CpuState<NUM_REGS, W> {
             condition_flag: false,
             program_counter: W::ZERO,
             registers: [W::ZERO; NUM_REGS],
-            primary_input: Tape::default(),
-            aux_input: Tape::default(),
             answer: None,
         }
     }
