@@ -273,7 +273,9 @@ where
             .is_eq(&other.pc)?
             .and(&self.flag.is_eq(&other.flag)?)?
             .and(&self.regs.is_eq(&other.regs)?)?
-            .and(&self.answer.is_eq(&other.answer)?)
+            .and(&self.answer.is_eq(&other.answer)?)?
+            .and(&self.primary_tape_pos.is_eq(&other.primary_tape_pos)?)?
+            .and(&self.aux_tape_pos.is_eq(&other.aux_tape_pos)?)
     }
 }
 
@@ -342,11 +344,11 @@ where
             CpuAnswerVar::new_variable(ns!(cs, "answer"), || state.map(|s| s.answer), mode)?;
         let primary_tape_pos = UInt32::new_variable(
             ns!(cs, "primary head"),
-            || state.map(|s| s.primary_input.pos),
+            || state.map(|s| s.primary_tape_pos),
             mode,
         )?;
         let aux_tape_pos =
-            UInt32::new_variable(ns!(cs, "aux head"), || state.map(|s| s.aux_input.pos), mode)?;
+            UInt32::new_variable(ns!(cs, "aux head"), || state.map(|s| s.aux_tape_pos), mode)?;
 
         Ok(CpuStateVar {
             pc,
@@ -778,8 +780,8 @@ mod test {
         let (output, transcript) = tinyram_emu::interpreter::run_program::<W, NUM_REGS>(
             TinyRamArch::VonNeumann,
             &assembly,
-            &[],
-            &[],
+            vec![],
+            vec![],
         );
         println!("Transcript len == {}", transcript.len());
 

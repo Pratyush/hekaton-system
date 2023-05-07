@@ -8,6 +8,7 @@ use core::{borrow::Borrow, cmp::Ordering};
 
 use tinyram_emu::{
     interpreter::{MemOp, MemOpKind, TranscriptEntry},
+    program_state::CpuState,
     word::Word,
     ProgramMetadata,
 };
@@ -127,15 +128,6 @@ impl<F: PrimeField> AllocVar<F, F> for RunningEvalVar<F> {
 /// The kind of memory operation: load, store, read primary tape or read aux tape, in ZK land
 pub type MemOpKindVar<F> = FpVar<F>;
 
-/// This is the placeholder transcript entry that MUST begin the memory-ordered transcript. This is
-/// never interpreted by the program, and its encoded values do not represent memory state.
-fn transcript_starting_entry<W: Word>(
-    real_transcript: &[TranscriptEntry<W>],
-) -> TranscriptEntry<W> {
-    // If you repeat the first item of the real transcript, it is always consistent
-    real_transcript[0].clone()
-}
-
 impl<W: Word> ProcessedTranscriptEntry<W> {
     /// Encodes this transcript entry in the low bits of a field element for the purpose of
     /// representation as a coefficient in a polynomial. Does not include timestamp, i.e., sets
@@ -204,7 +196,7 @@ impl<W: Word> ProcessedTranscriptEntry<W> {
 
 /// This is a transcript entry with just 1 associated memory operation, and a padding flag. This is
 /// easier to directly use than a [`TranscriptEntry`]
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Default)]
 pub struct ProcessedTranscriptEntry<W: Word> {
     /// Tells whether or not this entry is padding
     pub is_padding: bool,
@@ -215,9 +207,11 @@ pub struct ProcessedTranscriptEntry<W: Word> {
 }
 
 impl<W: Word> ProcessedTranscriptEntry<W> {
-    /// Converts the given transcript entry (consisting of instruction load + optional mem op) into
-    /// two processed entries. If there is no mem op, then a padding entry is created.
-    pub(crate) fn new_pair(t: &TranscriptEntry<W>) -> [ProcessedTranscriptEntry<W>; 2] {
+    /// Converts the given transcript entry into two processed entries. If there is no mem op, then
+    /// a padding entry is created.
+    pub(crate) fn new_pair<const NUM_REGS: usize>(
+        t: &TranscriptEntry<NUM_REGS, W>,
+    ) -> [ProcessedTranscriptEntry<W>; 2] {
         // Get the instruction load. We stretch the timestamps to make every timestamp unique
         let first = ProcessedTranscriptEntry {
             is_padding: false,
@@ -792,7 +786,7 @@ mod test {
     type W = <WV as WordVar<F>>::NativeWord;
 
     // Helper function that runs the given TinyRAM code through the symbolic transcript checker
-    fn transcript_tester(code: &str, primary_input: &[W], aux_input: &[W]) {
+    fn transcript_tester(code: &str, primary_input: Vec<W>, aux_input: Vec<W>) {
         let mut rng = rand::thread_rng();
         let cs = ConstraintSystem::new_ref();
 
@@ -895,8 +889,8 @@ mod test {
         load.w r7, 999     ; Dummy load:  r7 <- RAM[999]
         answer r7
         ",
-            &[],
-            &[],
+            vec![],
+            vec![],
         );
     }
 
@@ -920,8 +914,8 @@ mod test {
 
          _end: answer r1          ; Return acc
         ",
-            &[],
-            &[],
+            vec![],
+            vec![],
         );
     }
 
@@ -951,8 +945,8 @@ mod test {
 
          _end: answer r1          ; Return acc
         ",
-            &[],
-            &[],
+            vec![],
+            vec![],
         );
     }
 
@@ -996,8 +990,8 @@ mod test {
          _end: add r4, r2, r3 ; at the end: return r2 + r3
                answer r4
         ",
-            &primary_tape,
-            &aux_tape,
+            primary_tape,
+            aux_tape,
         );
     }
 

@@ -10,8 +10,8 @@ use tinyram_emu::{
 
 /// Given a TinyRAM transcript, constructs the corresponding time- and memory-sorted processed
 /// transcripts, in that order, padded such that `time_tx.len() = 2 * mem_tx.len() + 1`.
-pub fn sort_and_pad<W: Word>(
-    transcript: &[TranscriptEntry<W>],
+pub fn sort_and_pad<const NUM_REGS: usize, W: Word>(
+    transcript: &[TranscriptEntry<NUM_REGS, W>],
 ) -> (
     Vec<ProcessedTranscriptEntry<W>>,
     Vec<ProcessedTranscriptEntry<W>>,

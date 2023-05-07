@@ -5,6 +5,7 @@ pub mod generator;
 pub mod prover;
 pub mod verifier;
 
+pub use ark_groth16::r1cs_to_qap;
 pub use committer::CommitmentBuilder;
 pub use constraint_synthesizer::*;
 pub use data_structures::{CommitterKey, ProvingKey, VerifyingKey};
