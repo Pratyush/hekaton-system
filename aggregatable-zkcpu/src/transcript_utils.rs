@@ -1,10 +1,10 @@
 //! This module contains utilities for building, committing to, and splitting execution transcripts
 
-use crate::transcript_checker::ProcessedTranscriptEntry;
+use crate::transcript_checker::{ProcessedTranscriptEntry, TranscriptCheckerEvals};
 use ark_ff::{FftField, PrimeField};
 use ark_poly::polynomial::univariate::DensePolynomial;
 use tinyram_emu::{
-    interpreter::{MemOp, TranscriptEntry},
+    interpreter::{MemOp, MemOpKind, TranscriptEntry},
     word::Word,
 };
 
@@ -108,4 +108,70 @@ pub fn ram_transcript_to_polyn<W: Word, F: FftField + PrimeField>(
         .chain(extra_zeros)
         .collect();
     helper(&encoded_transcript)
+}
+
+impl<F: PrimeField> TranscriptCheckerEvals<F> {
+    /// Updates the running evals with the given entries and challenge point
+    pub(crate) fn update<W: Word>(
+        &mut self,
+        chal: F,
+        instr_load: &ProcessedTranscriptEntry<W>,
+        mem_op: &ProcessedTranscriptEntry<W>,
+        mem_tr_adj_seq: &[ProcessedTranscriptEntry<W>; 3],
+    ) {
+        let process_ram_op = |m: &ProcessedTranscriptEntry<W>| {
+            if m.is_tape_op() || m.is_padding {
+                F::zero()
+            } else {
+                m.as_ff(false)
+            }
+        };
+        let process_ram_op_notime = |m: &ProcessedTranscriptEntry<W>| {
+            if m.is_tape_op() || m.is_padding {
+                F::zero()
+            } else {
+                m.as_ff_notime(false)
+            }
+        };
+
+        // Update the time-sorted trace. Recall the polynoimal has factors (X - op). So to do an
+        // incremental computation, we calculate `eval *= (chal - op)`
+        let instr_ff = process_ram_op(instr_load);
+        let mem_op_ff = process_ram_op(mem_op);
+        self.time_tr_exec *= chal - instr_ff;
+        self.time_tr_exec *= chal - mem_op_ff;
+
+        // Update the mem-sorted and init-accessed traces
+        for pair in mem_tr_adj_seq.windows(2) {
+            let prev = &pair[0];
+            let cur = &pair[1];
+
+            // Some sanity checks
+            // The memory-sorted trace should never have a tape op in it
+            assert!(prev.is_ram_op());
+            assert!(cur.is_ram_op());
+            // Do the rest of the checks from transcript_checker():
+            let prev_is_load = prev.mem_op.kind() == MemOpKind::Load;
+            let cur_is_load = cur.mem_op.kind() == MemOpKind::Load;
+            assert!(!prev.is_padding || prev_is_load);
+            assert!(!cur.is_padding || cur_is_load);
+            let loc_is_eq = prev.mem_op.location() == cur.mem_op.location();
+            assert!(!cur.is_padding || loc_is_eq);
+            let loc_has_incrd = prev.mem_op.location() < cur.mem_op.location();
+            let t_has_incrd = prev.timestamp < cur.timestamp;
+            assert!(loc_has_incrd || (loc_is_eq && t_has_incrd));
+            let val_is_eq = prev.mem_op.val() == cur.mem_op.val();
+            let op_is_store = cur.mem_op.kind() == MemOpKind::Store;
+            assert!(!loc_is_eq || val_is_eq || op_is_store);
+
+            // The memory-sorted trace always processes the current memory op since it's a RAM op.
+            self.mem_tr_exec *= chal - process_ram_op(cur);
+
+            // The init-accesses trace only gets updated if this is a load from a new location
+            let is_new_load = loc_has_incrd && cur_is_load;
+            if is_new_load {
+                self.tr_init_accessed *= chal - process_ram_op_notime(cur);
+            }
+        }
+    }
 }

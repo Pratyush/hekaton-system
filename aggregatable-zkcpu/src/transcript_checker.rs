@@ -719,6 +719,12 @@ pub fn transcript_checker<const NUM_REGS: usize, WV: WordVar<F>, F: PrimeField>(
             .or(&prev.is_load()?)?
             .enforce_equal(&Boolean::TRUE)?;
 
+        // Check that padding never changes the memory location from the previous location. That
+        // is, padding → locations are equal
+        let loc_is_eq = prev.location.is_eq(&cur.location)?;
+        let cond = cur.is_padding.not().or(&loc_is_eq)?;
+        cond.enforce_equal(&Boolean::TRUE)?;
+
         // These asserts are taken from Figure 5 in Constant-Overhead Zero-Knowledge for RAM
         // Programs: https://eprint.iacr.org/2021/979.pdf
 
@@ -728,7 +734,6 @@ pub fn transcript_checker<const NUM_REGS: usize, WV: WordVar<F>, F: PrimeField>(
         let loc_has_incrd = prev
             .location_fp
             .is_cmp(&cur.location_fp, Ordering::Less, false)?;
-        let loc_is_eq = prev.location.is_eq(&cur.location)?;
         let t_has_incrd = prev
             .timestamp
             .is_cmp(&cur.timestamp, Ordering::Less, false)?;
