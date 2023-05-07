@@ -161,7 +161,7 @@ impl<W: Word> MemOp<W> {
 }
 
 #[derive(Clone, Debug)]
-pub struct TranscriptEntry<W: Word> {
+pub struct TranscriptEntry<const NUM_REGS: usize, W: Word> {
     /// The timestamp of this entry. This MUST be greater than 0
     pub timestamp: u64,
     /// The instruction being executed
@@ -170,6 +170,8 @@ pub struct TranscriptEntry<W: Word> {
     pub instr_load: MemOp<W>,
     /// The optional memory operation corresponding to this instruction's execution
     pub mem_op: Option<MemOp<W>>,
+    /// The state of the CPU after this instruction was computed
+    pub cpu_after: CpuState<NUM_REGS, W>,
 }
 
 /// Contains the RAM, ROM, and tapes necessary to run a program
@@ -520,7 +522,7 @@ pub fn run_program<W: Word, const NUM_REGS: usize>(
     program: &[Instr<W>],
     primary_input: &[W],
     aux_input: &[W],
-) -> (W, Vec<TranscriptEntry<W>>) {
+) -> (W, Vec<TranscriptEntry<NUM_REGS, W>>) {
     let mut transcript = Vec::new();
     let mut cpu_state = CpuState::<NUM_REGS, W>::default();
 
@@ -615,12 +617,13 @@ pub fn run_program<W: Word, const NUM_REGS: usize>(
         };
 
         // Update the CPU state and save the transcript entry
-        cpu_state = new_cpu_state;
+        cpu_state = new_cpu_state.clone();
         transcript.push(TranscriptEntry {
             timestamp,
             instr,
             instr_load: pc_load,
             mem_op,
+            cpu_after: new_cpu_state,
         });
 
         timestamp += 1;

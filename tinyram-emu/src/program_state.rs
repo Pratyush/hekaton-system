@@ -29,7 +29,7 @@ impl<W: Word> Tape<W> {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct CpuState<const NUM_REGS: usize, W: Word> {
     /// Condition flag that is set as a result of instruction exection.
     pub condition_flag: bool,
