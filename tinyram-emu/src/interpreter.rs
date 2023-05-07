@@ -1,7 +1,7 @@
 use crate::{
     instructions::Instr,
     memory::{DataMemory, ProgramMemory},
-    program_state::{CpuState, Tape, TapePos},
+    program_state::{CpuState, TapePos},
     word::{DWord, Word},
     TinyRamArch,
 };
@@ -179,8 +179,8 @@ pub struct TranscriptEntry<const NUM_REGS: usize, W: Word> {
 pub struct MemoryUnit<W: Word> {
     data_ram: DataMemory<W>,
     program_rom: ProgramMemory<W>,
-    primary_tape: Tape<W>,
-    aux_tape: Tape<W>,
+    primary_tape: Vec<W>,
+    aux_tape: Vec<W>,
 }
 
 impl<W: Word> Instr<W> {
@@ -442,20 +442,36 @@ impl<W: Word> Instr<W> {
 
             Instr::Read { in1, out } => {
                 let in1 = in1.value(&cpu_state.registers);
-                // Read an element from the given tape and increment the head. out_of_bounds is set
-                // if the tape head has already exceeded the length of the tape, or if the tape
-                // doesn't exist (i.e., the tape index is > 1).
-                let (location, out_of_bounds, val) = match in1.into() {
-                    0u64 => mem.primary_tape.pop(),
-                    1u64 => mem.aux_tape.pop(),
-                    _ => (0, true, W::ZERO),
+                // Read an element from the given tape and increment the head. The value is None if
+                // the tape head is out of bounds or if the tape doesn't exist (ie if the tape
+                // index is > 1)
+                let (location, val_opt) = match in1.into() {
+                    0u64 => {
+                        let loc = cpu_state.primary_tape_pos;
+                        let val = mem.primary_tape.get(loc as usize).cloned();
+                        cpu_state.primary_tape_pos += 1;
+
+                        (loc, val)
+                    },
+                    1u64 => {
+                        let loc = cpu_state.aux_tape_pos;
+                        let val = mem.aux_tape.get(loc as usize).cloned();
+                        cpu_state.aux_tape_pos += 1;
+
+                        (loc, val)
+                    },
+
+                    _ => (0, None),
                 };
 
-                // Set the register to the value. Set the condition flag to the out_of_bounds
-                // condition described above.
+                // Set the register to the value. If it is None, set it to 0 and set the condition
+                // flag to true
+                let val = val_opt.unwrap_or(W::ZERO);
                 cpu_state.registers[out.0 as usize] = val;
-                cpu_state.condition_flag = out_of_bounds;
+                cpu_state.condition_flag = val_opt.is_none();
 
+                // TODO: The tape index could be a variable. We need to treat every read op as a
+                // potential memory operation for consistency in ZK.
                 // We don't count reading from an invalid tape as a memory operation
                 let mem_op = match in1.into() {
                     0u64 => Some(MemOp::ReadPrimary { val, location }),
@@ -520,8 +536,8 @@ impl<W: Word> Instr<W> {
 pub fn run_program<W: Word, const NUM_REGS: usize>(
     arch: TinyRamArch,
     program: &[Instr<W>],
-    primary_input: &[W],
-    aux_input: &[W],
+    primary_input: Vec<W>,
+    aux_input: Vec<W>,
 ) -> (W, Vec<TranscriptEntry<NUM_REGS, W>>) {
     let mut transcript = Vec::new();
     let mut cpu_state = CpuState::<NUM_REGS, W>::default();
@@ -565,8 +581,8 @@ pub fn run_program<W: Word, const NUM_REGS: usize>(
     let mut mem = MemoryUnit {
         data_ram,
         program_rom,
-        primary_tape: Tape::new(primary_input),
-        aux_tape: Tape::new(aux_input),
+        primary_tape: primary_input.to_vec(),
+        aux_tape: aux_input.to_vec(),
     };
 
     // Run the CPU until it outputs an answer
@@ -658,8 +674,12 @@ mod test {
         ] {
             let program = [header, code].concat();
             let assembly = assemble(&program);
-            let (prog_out, _trace) =
-                run_program::<W, NUM_REGS>(arch, &assembly, primary_input, aux_input);
+            let (prog_out, _trace) = run_program::<W, NUM_REGS>(
+                arch,
+                &assembly,
+                primary_input.to_vec(),
+                aux_input.to_vec(),
+            );
 
             // Save the output
             *out = prog_out
