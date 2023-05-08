@@ -397,8 +397,23 @@ where
                 val,
                 location: W::from_u64(loc).unwrap(),
             }
+        } else if op_disc == MemOpKind::ReadPrimary as u8 {
+            // The single-word value of a Read is located in the first word of val. And the
+            // location is guaranteed to be a u32
+            MemOp::ReadPrimary {
+                val: val.0,
+                location: loc as u32,
+            }
+        } else if op_disc == MemOpKind::ReadAux as u8 {
+            // Same as above
+            MemOp::ReadAux {
+                val: val.0,
+                location: loc as u32,
+            }
+        } else if op_disc == MemOpKind::ReadInvalid as u8 {
+            MemOp::ReadInvalid
         } else {
-            panic!("unexpected memop kind {op_disc}");
+            panic!("unexpected memop kind {op_disc}")
         };
 
         Ok(ProcessedTranscriptEntry {

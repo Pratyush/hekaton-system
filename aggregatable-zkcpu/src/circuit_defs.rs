@@ -290,24 +290,24 @@ mod test {
         let (time_sorted_transcript, mem_sorted_transcript) =
             transcript_utils::sort_and_pad(&exec_trace);
 
-        let mut circuit = TranscriptCheckerCircuit::<NUM_REGS, _, WV, _>::new(meta);
+        let circuit = TranscriptCheckerCircuit::<NUM_REGS, _, WV, _>::new(meta);
         let pk = generate_parameters::<_, E, QAP>(circuit.clone(), &mut rng).unwrap();
-        let mut cb = CommitmentBuilder::<_, E, QAP>::new(circuit.clone(), &pk);
+        let mut cb = CommitmentBuilder::<_, E, QAP>::new(circuit, &pk);
 
         // Set stage 0 values for tick 0 and commit
-        circuit.in_cpu_state = CpuState::default();
-        circuit.mem_tr_adj_0 = mem_sorted_transcript[0].clone();
+        cb.circuit.in_cpu_state = CpuState::default();
+        cb.circuit.mem_tr_adj_0 = mem_sorted_transcript[0].clone();
         let (com0, rand0) = cb.commit(&mut rng).unwrap();
 
         // Set stage 1 values for tick 0 and commit
-        circuit.out_cpu_state = exec_trace[0].cpu_after.clone();
-        circuit.mem_tr_adj_2 = mem_sorted_transcript[2].clone();
+        cb.circuit.out_cpu_state = exec_trace[0].cpu_after.clone();
+        cb.circuit.mem_tr_adj_2 = mem_sorted_transcript[2].clone();
         let (com1, rand1) = cb.commit(&mut rng).unwrap();
 
         // Set stage 2 values for tick 0 and commit
-        circuit.instr_load = time_sorted_transcript[0].clone();
-        circuit.mem_op = time_sorted_transcript[1].clone();
-        circuit.mem_tr_adj_1 = mem_sorted_transcript[1].clone();
+        cb.circuit.instr_load = time_sorted_transcript[0].clone();
+        cb.circuit.mem_op = time_sorted_transcript[1].clone();
+        cb.circuit.mem_tr_adj_1 = mem_sorted_transcript[1].clone();
         let (com2, rand2) = cb.commit(&mut rng).unwrap();
 
         // Imagine we sent up all our commitments so far. The next step is to hash those
@@ -322,28 +322,28 @@ mod test {
         };
 
         // Set stage 3 values for tick 0 and commit
-        circuit.in_evals = TranscriptCheckerEvals::default(); // first tick
+        cb.circuit.in_evals = TranscriptCheckerEvals::default(); // first tick
         let (com3, rand3) = cb.commit(&mut rng).unwrap();
 
         // Now compute the next evals
-        let mut out_evals = circuit.in_evals.clone();
+        let mut out_evals = cb.circuit.in_evals.clone();
         out_evals.update(
             chal,
-            &circuit.instr_load,
-            &circuit.mem_op,
+            &cb.circuit.instr_load,
+            &cb.circuit.mem_op,
             &[
-                circuit.mem_tr_adj_0,
-                circuit.mem_tr_adj_1,
-                circuit.mem_tr_adj_2,
+                cb.circuit.mem_tr_adj_0.clone(),
+                cb.circuit.mem_tr_adj_1.clone(),
+                cb.circuit.mem_tr_adj_2.clone(),
             ],
         );
 
         // Set stage 4 values for tick 0 and commit
-        circuit.out_evals = out_evals;
+        cb.circuit.out_evals = out_evals;
         let (com4, rand4) = cb.commit(&mut rng).unwrap();
 
         // Set stage 5 values for tick 0 and commit
-        circuit.chal = chal;
+        cb.circuit.chal = chal;
         let (com5, rand5) = cb.commit(&mut rng).unwrap();
 
         // Do the proof
