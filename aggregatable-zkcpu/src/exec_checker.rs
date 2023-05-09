@@ -22,7 +22,7 @@ use ark_r1cs_std::{
 };
 use ark_relations::{
     ns,
-    r1cs::{Namespace, SynthesisError},
+    r1cs::{ConstraintSystemRef, Namespace, SynthesisError},
 };
 
 /// An `ExecTickMemData` can be a LOAD (=0), a STORE (=1), or no-mem (=2)
@@ -185,6 +185,29 @@ impl<WV: WordVar<F>, F: PrimeField> Default for CpuAnswerVar<WV, F> {
     }
 }
 
+impl<W, WV, F> R1CSVar<F> for CpuAnswerVar<WV, F>
+where
+    W: Word,
+    WV: WordVar<F, NativeWord = W>,
+    F: PrimeField,
+{
+    type Value = Option<W>;
+
+    fn value(&self) -> Result<Self::Value, SynthesisError> {
+        let is_set = self.is_set.value()?;
+        let val = self.val.value()?;
+        if is_set {
+            Ok(Some(val))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn cs(&self) -> ConstraintSystemRef<F> {
+        self.is_set.cs().or(self.val.cs())
+    }
+}
+
 impl<WV, F> EqGadget<F> for CpuAnswerVar<WV, F>
 where
     WV: WordVar<F>,
@@ -260,6 +283,50 @@ impl<WV: WordVar<F>, F: PrimeField> CpuStateVar<WV, F> {
             primary_tape_pos: UInt32::zero(),
             aux_tape_pos: UInt32::zero(),
         }
+    }
+}
+
+use ark_r1cs_std::R1CSVar;
+impl<W, WV, F> R1CSVar<F> for CpuStateVar<WV, F>
+where
+    W: Word,
+    WV: WordVar<F, NativeWord = W>,
+    F: PrimeField,
+{
+    // TODO: This shouldn't be fixed to 16. This is only the case because CpuStateVar is not
+    // generic over NUM_REGS. For debugging purposes this is fine so far, but don't make it
+    // load-bearing!
+    type Value = CpuState<16, W>;
+
+    fn value(&self) -> Result<Self::Value, SynthesisError> {
+        let condition_flag = self.flag.value()?;
+        let program_counter = self.pc.value()?;
+        let mut registers = [W::ZERO; 16];
+        for i in 0..self.regs.len() {
+            registers[i] = self.regs[i].value()?;
+        }
+        let answer = self.answer.value()?;
+        let primary_tape_pos = self.primary_tape_pos.value()?;
+        let aux_tape_pos = self.aux_tape_pos.value()?;
+
+        Ok(CpuState {
+            condition_flag,
+            program_counter,
+            registers,
+            answer,
+            primary_tape_pos,
+            aux_tape_pos,
+        })
+    }
+
+    fn cs(&self) -> ConstraintSystemRef<F> {
+        self.pc
+            .cs()
+            .or(self.flag.cs())
+            .or(self.regs.cs())
+            .or(self.answer.cs())
+            .or(self.primary_tape_pos.cs())
+            .or(self.aux_tape_pos.cs())
     }
 }
 

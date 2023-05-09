@@ -186,7 +186,7 @@ where
         .concat();
 
         let mut next_cpu_state = self.in_cpu_state_var.clone();
-        let mut next_evals = Default::default();
+        let mut next_evals = self.in_evals_var.clone();
         for ((instr_load, mem_op), mem_sorted_tr_triple) in self
             .instr_loads_var
             .iter()
@@ -195,12 +195,12 @@ where
         {
             (next_cpu_state, next_evals) = transcript_checker::<NUM_REGS, _, _>(
                 self.meta,
-                &self.in_cpu_state_var,
+                &next_cpu_state,
                 &self.chal_var,
                 instr_load,
                 mem_op,
                 &mem_sorted_tr_triple,
-                &self.in_evals_var,
+                &next_evals,
             )?;
         }
 
@@ -272,6 +272,8 @@ mod test {
     // Helper function that runs the given TinyRAM code through the symbolic transcript checker
     fn transcript_tester(code: &str, primary_input: Vec<W>, aux_input: Vec<W>) {
         let mut rng = test_rng();
+        let start_tick = 0;
+        let num_ticks = 2;
 
         let assembly = tinyram_emu::parser::assemble(code);
 
@@ -294,24 +296,40 @@ mod test {
         let (time_sorted_transcript, mem_sorted_transcript) =
             transcript_utils::sort_and_pad(&exec_trace);
 
-        let circuit = TranscriptCheckerCircuit::<NUM_REGS, _, WV, _>::new(meta, 1);
+        let circuit = TranscriptCheckerCircuit::<NUM_REGS, _, WV, _>::new(meta, num_ticks);
         let pk = generate_parameters::<_, E, QAP>(circuit.clone(), &mut rng).unwrap();
         let mut cb = CommitmentBuilder::<_, E, QAP>::new(circuit, &pk);
 
-        // Set stage 0 values for tick 0 and commit
-        cb.circuit.in_cpu_state = CpuState::default();
-        cb.circuit.in_mem_tr_adj = mem_sorted_transcript[0].clone();
+        // Set stage 0 values for start tick and commit
+        cb.circuit.in_cpu_state = if start_tick == 0 {
+            CpuState::default()
+        } else {
+            exec_trace[start_tick - 1].cpu_after.clone()
+        };
+        cb.circuit.in_mem_tr_adj = mem_sorted_transcript[start_tick].clone();
         let (com0, rand0) = cb.commit(&mut rng).unwrap();
 
-        // Set stage 1 values for tick 0 and commit
-        cb.circuit.out_cpu_state = exec_trace[0].cpu_after.clone();
-        cb.circuit.out_mem_tr_adj = mem_sorted_transcript[2].clone();
+        // Set stage 1 values for final tick and commit
+        cb.circuit.out_cpu_state = exec_trace[num_ticks - 1].cpu_after.clone();
+        cb.circuit.out_mem_tr_adj = mem_sorted_transcript[2 * num_ticks].clone();
         let (com1, rand1) = cb.commit(&mut rng).unwrap();
 
-        // Set stage 2 values for tick 0 and commit
-        cb.circuit.instr_loads = vec![time_sorted_transcript[0].clone()];
-        cb.circuit.mem_ops = vec![time_sorted_transcript[1].clone()];
-        cb.circuit.middle_mem_tr_adjs = vec![mem_sorted_transcript[1].clone()];
+        // Set stage 2 values for all the in between ticks and commit
+        cb.circuit.instr_loads = time_sorted_transcript
+            .iter()
+            .step_by(2)
+            .take(num_ticks)
+            .cloned()
+            .collect();
+        cb.circuit.mem_ops = time_sorted_transcript
+            .iter()
+            .skip(1)
+            .step_by(2)
+            .take(num_ticks)
+            .cloned()
+            .collect();
+        cb.circuit.middle_mem_tr_adjs =
+            mem_sorted_transcript[start_tick + 1..start_tick + 2 * num_ticks].to_vec();
         let (com2, rand2) = cb.commit(&mut rng).unwrap();
 
         // Imagine we sent up all our commitments so far. The next step is to hash those
@@ -326,21 +344,28 @@ mod test {
         };
 
         // Set stage 3 values for tick 0 and commit
-        cb.circuit.in_evals = TranscriptCheckerEvals::default(); // first tick
+        cb.circuit.in_evals = if start_tick == 0 {
+            TranscriptCheckerEvals::default()
+        } else {
+            panic!("haven't defined in_evals for non-starting ticks");
+        };
         let (com3, rand3) = cb.commit(&mut rng).unwrap();
 
         // Now compute the next evals
         let mut out_evals = cb.circuit.in_evals.clone();
-        out_evals.update(
-            chal,
-            &cb.circuit.instr_loads[0],
-            &cb.circuit.mem_ops[0],
-            &[
-                cb.circuit.in_mem_tr_adj.clone(),
-                cb.circuit.middle_mem_tr_adjs[0].clone(),
-                cb.circuit.out_mem_tr_adj.clone(),
-            ],
-        );
+        for ((instr_load, mem_op), mem_tr_triple) in cb
+            .circuit
+            .instr_loads
+            .iter()
+            .zip(cb.circuit.mem_ops.iter())
+            .zip(
+                mem_sorted_transcript[start_tick..start_tick + 2 * num_ticks + 1]
+                    .windows(3)
+                    .step_by(2),
+            )
+        {
+            out_evals.update(chal, instr_load, mem_op, mem_tr_triple);
+        }
 
         // Set stage 4 values for tick 0 and commit
         cb.circuit.out_evals = out_evals;

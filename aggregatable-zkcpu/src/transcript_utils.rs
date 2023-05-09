@@ -111,14 +111,17 @@ pub fn ram_transcript_to_polyn<W: Word, F: FftField + PrimeField>(
 }
 
 impl<F: PrimeField> TranscriptCheckerEvals<F> {
-    /// Updates the running evals with the given entries and challenge point
+    /// Updates the running evals with the given entries and challenge point. `mem_tr_adj_seq` is a
+    /// triple of adjacent entries in the memory-sorted trace
     pub(crate) fn update<W: Word>(
         &mut self,
         chal: F,
         instr_load: &ProcessedTranscriptEntry<W>,
         mem_op: &ProcessedTranscriptEntry<W>,
-        mem_tr_adj_seq: &[ProcessedTranscriptEntry<W>; 3],
+        mem_tr_adj_seq: &[ProcessedTranscriptEntry<W>],
     ) {
+        assert_eq!(mem_tr_adj_seq.len(), 3);
+
         let process_ram_op = |m: &ProcessedTranscriptEntry<W>| {
             if m.is_tape_op() || m.is_padding {
                 F::zero()

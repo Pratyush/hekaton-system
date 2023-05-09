@@ -2,7 +2,7 @@ use crate::word::Word;
 
 pub(crate) type TapePos = u32;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CpuState<const NUM_REGS: usize, W: Word> {
     /// Condition flag that is set as a result of instruction exection.
     pub condition_flag: bool,
