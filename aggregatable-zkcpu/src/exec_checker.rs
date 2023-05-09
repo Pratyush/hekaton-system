@@ -1,7 +1,7 @@
 use crate::{
     common::*,
     transcript_checker::ProcessedTranscriptEntryVar,
-    util::{arr_set, log2, uint32_to_fpvar},
+    util::{arr_set, log2, uint32_to_fpvar, uint8_lt},
     word::{DWordVar, WordVar},
 };
 use tinyram_emu::{
@@ -19,6 +19,7 @@ use ark_r1cs_std::{
     fields::{fp::FpVar, FieldVar},
     select::CondSelectGadget,
     uint32::UInt32,
+    uint8::UInt8,
 };
 use ark_relations::{
     ns,
@@ -121,7 +122,7 @@ fn decode_instr<const NUM_REGS: usize, WV: WordVar<F>, F: PrimeField>(
     ),
     SynthesisError,
 > {
-    let num_regs = FpVar::constant(F::from(NUM_REGS as u64));
+    let num_regs = UInt8::constant(NUM_REGS as u8);
     let regidx_bitlen: usize = log2(NUM_REGS);
     let instr_bits: Vec<Boolean<F>> = encoded_instr.as_le_bits();
 
@@ -158,10 +159,10 @@ fn decode_instr<const NUM_REGS: usize, WV: WordVar<F>, F: PrimeField>(
     };
 
     // Check that the registers are within range
-    reg1.to_fpvar()?
-        .enforce_cmp(&num_regs, Ordering::Less, false)?;
-    reg2.to_fpvar()?
-        .enforce_cmp(&num_regs, Ordering::Less, false)?;
+    let reg1_in_range = uint8_lt(&reg1.0, &num_regs)?;
+    let reg2_in_range = uint8_lt(&reg2.0, &num_regs)?;
+    reg1_in_range.enforce_equal(&Boolean::TRUE)?;
+    reg2_in_range.enforce_equal(&Boolean::TRUE)?;
 
     return Ok((opcode, reg1, reg2, imm_or_reg));
 }

@@ -47,18 +47,22 @@ pub(crate) fn log2(x: usize) -> usize {
     (x as f32).log2().ceil() as usize
 }
 
+fn uint8_to_bits_le<F: PrimeField>(a: &UInt8<F>) -> Vec<Boolean<F>> {
+    a.to_bits_le().unwrap()
+}
+
 /// Returns true iff a < b
 // This function is adapted from subtle's ct_gt function
 // https://github.com/dalek-cryptography/subtle/blob/6b6a81ad9a6a00c0b42c327eaf4b2f785774377e/src/lib.rs#L875
 #[rustfmt::skip]
 macro_rules! gen_uint_cmp {
-    ($t:ident, $fn_name:ident, $bitwidth:expr) => {
+    ($t:ident, $fn_name:ident, $bitwidth:expr, $tobits_le_fn:path) => {
         pub(crate) fn $fn_name<F: PrimeField>(
             a: &$t<F>,
             b: &$t<F>,
         ) -> Result<Boolean<F>, SynthesisError> {
-            let a_bits = a.to_bits_le();
-            let b_bits = b.to_bits_le();
+            let a_bits = $tobits_le_fn(a);
+            let b_bits = $tobits_le_fn(b);
 
             // All the bits in a that are greater than their corresponding bits in b.
             let gtb = a_bits
@@ -126,8 +130,25 @@ macro_rules! gen_uint_cmp {
     };
 }
 
-gen_uint_cmp!(UInt32, uint32_gt, 32);
-gen_uint_cmp!(UInt64, uint64_gt, 64);
+gen_uint_cmp!(UInt8, uint8_gt, 8, uint8_to_bits_le);
+gen_uint_cmp!(UInt32, uint32_gt, 32, UInt32::to_bits_le);
+gen_uint_cmp!(UInt64, uint64_gt, 64, UInt64::to_bits_le);
+
+pub(crate) fn uint8_le<F: PrimeField>(
+    a: &UInt8<F>,
+    b: &UInt8<F>,
+) -> Result<Boolean<F>, SynthesisError> {
+    Ok(uint8_gt(a, b)?.not())
+}
+
+pub(crate) fn uint8_lt<F: PrimeField>(
+    a: &UInt8<F>,
+    b: &UInt8<F>,
+) -> Result<Boolean<F>, SynthesisError> {
+    let le = uint8_le(a, b)?;
+    let eq = a.is_eq(b)?;
+    le.and(&eq.not())
+}
 
 pub(crate) fn uint32_le<F: PrimeField>(
     a: &UInt32<F>,
