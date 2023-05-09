@@ -16,6 +16,11 @@ pub(crate) fn uint32_to_fpvar<F: PrimeField>(v: &UInt32<F>) -> Result<FpVar<F>, 
     Boolean::le_bits_to_fp_var(&v.to_bits_le())
 }
 
+pub(crate) fn uint32_to_uint64<F: PrimeField>(v: &UInt32<F>) -> UInt64<F> {
+    let all_bits = [v.to_bits_le(), vec![Boolean::FALSE; 32]].concat();
+    UInt64::from_bits_le(&all_bits)
+}
+
 /// Returns `out` such that `out[i] == vals[i]` for all `i != idx_to_change`, and
 /// `out[idx_to_change] = new_val`.
 pub(crate) fn arr_set<T, F>(
@@ -134,6 +139,15 @@ gen_uint_cmp!(UInt8, uint8_gt, 8, uint8_to_bits_le);
 gen_uint_cmp!(UInt32, uint32_gt, 32, UInt32::to_bits_le);
 gen_uint_cmp!(UInt64, uint64_gt, 64, UInt64::to_bits_le);
 
+pub(crate) fn uint8_ge<F: PrimeField>(
+    a: &UInt8<F>,
+    b: &UInt8<F>,
+) -> Result<Boolean<F>, SynthesisError> {
+    let gt = uint8_gt(a, b)?;
+    let eq = a.is_eq(b)?;
+    gt.or(&eq)
+}
+
 pub(crate) fn uint8_le<F: PrimeField>(
     a: &UInt8<F>,
     b: &UInt8<F>,
@@ -150,6 +164,15 @@ pub(crate) fn uint8_lt<F: PrimeField>(
     le.and(&eq.not())
 }
 
+pub(crate) fn uint32_ge<F: PrimeField>(
+    a: &UInt32<F>,
+    b: &UInt32<F>,
+) -> Result<Boolean<F>, SynthesisError> {
+    let gt = uint32_gt(a, b)?;
+    let eq = a.is_eq(b)?;
+    gt.or(&eq)
+}
+
 pub(crate) fn uint32_le<F: PrimeField>(
     a: &UInt32<F>,
     b: &UInt32<F>,
@@ -164,6 +187,15 @@ pub(crate) fn uint32_lt<F: PrimeField>(
     let le = uint32_le(a, b)?;
     let eq = a.is_eq(b)?;
     le.and(&eq.not())
+}
+
+pub(crate) fn uint64_ge<F: PrimeField>(
+    a: &UInt64<F>,
+    b: &UInt64<F>,
+) -> Result<Boolean<F>, SynthesisError> {
+    let gt = uint64_gt(a, b)?;
+    let eq = a.is_eq(b)?;
+    gt.or(&eq)
 }
 
 pub(crate) fn uint64_le<F: PrimeField>(

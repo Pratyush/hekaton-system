@@ -1,7 +1,7 @@
 use crate::{
     common::*,
     transcript_checker::ProcessedTranscriptEntryVar,
-    util::{arr_set, log2, uint32_to_fpvar, uint8_lt},
+    util::{arr_set, log2, uint32_ge, uint32_to_fpvar, uint32_to_uint64, uint8_lt},
     word::{DWordVar, WordVar},
 };
 use tinyram_emu::{
@@ -624,17 +624,15 @@ fn run_instr<WV: WordVar<F>, F: PrimeField>(
             // will be 0 and the condition flag will be true.
             let cur_tape_pos =
                 UInt32::conditionally_select(&is_primary, primary_tape_pos, aux_tape_pos)?;
-            let cur_tape_pos_fp = { uint32_to_fpvar(&cur_tape_pos)? };
             let tape_len = {
-                let primary_len = FpVar::constant(F::from(meta.primary_input_len));
-                let aux_len = FpVar::constant(F::from(meta.aux_input_len));
-                FpVar::conditionally_select(&is_primary, &primary_len, &aux_len)?
+                let primary_len = UInt32::constant(meta.primary_input_len);
+                let aux_len = UInt32::constant(meta.aux_input_len);
+                UInt32::conditionally_select(&is_primary, &primary_len, &aux_len)?
             };
-            let is_out_of_bounds =
-                cur_tape_pos_fp.is_cmp(&tape_len, core::cmp::Ordering::Greater, true)?;
+            let is_out_of_bounds = uint32_ge(&cur_tape_pos, &tape_len)?;
 
             // Check that the read head is at the expected position
-            let mut err = cur_tape_pos_fp.is_neq(&mem_op.location_fp)?;
+            let mut err = mem_op.location.is_neq(&uint32_to_uint64(&cur_tape_pos))?;
 
             // Increment the tape position
             let new_tape_pos = UInt32::addmany(&[cur_tape_pos, UInt32::one()])?;
