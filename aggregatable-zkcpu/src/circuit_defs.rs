@@ -208,6 +208,7 @@ where
         next_cpu_state.enforce_equal(&self.out_cpu_state_var)?;
         next_evals.enforce_equal(&self.out_evals_var)?;
 
+        println!("Num constraints post-stage6 {}", _cs.num_constraints());
         Ok(())
     }
 }
@@ -273,7 +274,7 @@ mod test {
     fn transcript_tester(code: &str, primary_input: Vec<W>, aux_input: Vec<W>) {
         let mut rng = test_rng();
         let start_tick = 0;
-        let num_ticks = 2;
+        let num_ticks = 1;
 
         let assembly = tinyram_emu::parser::assemble(code);
 

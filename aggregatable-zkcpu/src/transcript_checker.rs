@@ -1,6 +1,6 @@
 use crate::{
     exec_checker::{exec_checker, CpuStateVar},
-    util::log2,
+    util::{log2, uint32_lt, uint64_lt},
     word::{DWordVar, WordVar},
 };
 
@@ -654,6 +654,7 @@ pub fn transcript_checker<const NUM_REGS: usize, WV: WordVar<F>, F: PrimeField>(
     evals: &TranscriptCheckerEvalsVar<F>,
 ) -> Result<(CpuStateVar<WV, F>, TranscriptCheckerEvalsVar<F>), SynthesisError> {
     assert_eq!(mem_tr_adj_seq.len(), 3);
+    let cs = cpu_state.cs();
 
     // pc_load occurs at time t
     let t = &instr_load.timestamp;
@@ -706,7 +707,9 @@ pub fn transcript_checker<const NUM_REGS: usize, WV: WordVar<F>, F: PrimeField>(
     let instr = &instr_load.val;
 
     // Run the CPU for one tick
+    println!("Num constraints pre-exec-checker {}", cs.num_constraints());
     let new_cpu_state = exec_checker::<NUM_REGS, _, _>(meta, &mem_op, cpu_state, instr)?;
+    println!("Num constraints post-exec-checker {}", cs.num_constraints());
 
     // --------------------------------------------------------------------------------------------
     // Checking memory-sorted transcript consistency
@@ -746,9 +749,12 @@ pub fn transcript_checker<const NUM_REGS: usize, WV: WordVar<F>, F: PrimeField>(
         // Check that this is sorted by memory idx then time. That is, check
         //       prev.location < cur.location
         //     ∨ (prev.location == cur.location ∧ prev.timestamp < cur.timestamp);
-        let loc_has_incrd = prev
-            .location_fp
-            .is_cmp(&cur.location_fp, Ordering::Less, false)?;
+        let num_constraints_pre_cmp = cs.num_constraints();
+        let loc_has_incrd = uint64_lt(&prev.location, &cur.location)?;
+        println!(
+            "Cost of UInt64 cmp: {} constraints",
+            cs.num_constraints() - num_constraints_pre_cmp
+        );
         let t_has_incrd = prev
             .timestamp
             .is_cmp(&cur.timestamp, Ordering::Less, false)?;
