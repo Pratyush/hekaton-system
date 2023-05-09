@@ -32,7 +32,7 @@ use rand::Rng;
 /// A timestamp in the memory access transcript
 type Timestamp = u64;
 /// A timestamp in the memory access transcript, in ZK land
-pub type TimestampVar<F> = FpVar<F>;
+pub type TimestampVar<F> = UInt64<F>;
 
 /// The offset to use when witnessing transcript entries. This gives us room for no-op entries at
 /// the beginning. We only really need 1 padding element.
@@ -285,7 +285,7 @@ where
         // Witness the instruction load
         let timestamp_var = TimestampVar::new_variable(
             ns!(cs, "instr timestamp"),
-            || entry.map(|e| F::from(e.timestamp)),
+            || entry.map(|e| e.timestamp),
             mode,
         )?;
         // Witness the padding flag
@@ -360,14 +360,7 @@ where
 
     fn value(&self) -> Result<Self::Value, SynthesisError> {
         let is_padding = self.is_padding.value()?;
-        let timestamp = {
-            // Make sure the timestamp is at most a single u64
-            let repr = self.timestamp.value()?.into_bigint();
-            let limbs: &[u64] = repr.as_ref();
-            // The number of limbs can exceed 1, but everything after the first must be 0
-            assert!(limbs.iter().skip(1).all(|&x| x == 0));
-            limbs[0]
-        };
+        let timestamp = self.timestamp.value()?;
         // Get the discriminant of the memory op
         let op_disc = {
             let repr = self.op.value()?.into_bigint();
@@ -517,7 +510,7 @@ impl<WV: WordVar<F>, F: PrimeField> ProcessedTranscriptEntryVar<WV, F> {
         let mut field_repr = self.as_ff_notime(is_init)?;
 
         // Add timestamp in the low 64 bits
-        field_repr += &self.timestamp;
+        field_repr += &self.timestamp.as_fpvar()?;
 
         Ok(field_repr)
     }
@@ -657,9 +650,9 @@ pub fn transcript_checker<const NUM_REGS: usize, WV: WordVar<F>, F: PrimeField>(
     let cs = cpu_state.cs();
 
     // pc_load occurs at time t
-    let t = &instr_load.timestamp;
+    let t = instr_load.timestamp.clone();
     // mem_op, if defined, occurs at time t
-    let t_plus_one = t + FpVar::one();
+    let t_plus_one = TimestampVar::addmany(&[t, TimestampVar::constant(1)])?;
 
     let is_padding = &mem_op.is_padding;
 
@@ -755,9 +748,12 @@ pub fn transcript_checker<const NUM_REGS: usize, WV: WordVar<F>, F: PrimeField>(
             "Cost of UInt64 cmp: {} constraints",
             cs.num_constraints() - num_constraints_pre_cmp
         );
+        /*
         let t_has_incrd = prev
             .timestamp
             .is_cmp(&cur.timestamp, Ordering::Less, false)?;
+        */
+        let t_has_incrd = uint64_lt(&prev.timestamp, &cur.timestamp)?;
         let cond = loc_has_incrd.or(&loc_is_eq.and(&t_has_incrd)?)?;
         cond.enforce_equal(&Boolean::TRUE)?;
 
