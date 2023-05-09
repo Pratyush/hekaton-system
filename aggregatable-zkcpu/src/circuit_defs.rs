@@ -27,23 +27,23 @@ where
 
     // Stage 0 values. Inputs that equal the output of the last tick.
     pub in_cpu_state: CpuState<NUM_REGS, W>,
-    pub mem_tr_adj_0: ProcessedTranscriptEntry<W>,
+    pub in_mem_tr_adj: ProcessedTranscriptEntry<W>,
     in_cpu_state_var: CpuStateVar<WV, F>,
-    mem_tr_adj_0_var: ProcessedTranscriptEntryVar<WV, F>,
+    in_mem_tr_adj_var: ProcessedTranscriptEntryVar<WV, F>,
 
     // Stage 1 values. Outputs that equal the input of the next tick.
     pub out_cpu_state: CpuState<NUM_REGS, W>,
-    pub mem_tr_adj_2: ProcessedTranscriptEntry<W>,
+    pub out_mem_tr_adj: ProcessedTranscriptEntry<W>,
     out_cpu_state_var: CpuStateVar<WV, F>,
-    mem_tr_adj_2_var: ProcessedTranscriptEntryVar<WV, F>,
+    out_mem_tr_adj_var: ProcessedTranscriptEntryVar<WV, F>,
 
     // Stage 2 values. Intermediate values not repeated anywhere.
-    pub instr_load: ProcessedTranscriptEntry<W>,
-    pub mem_op: ProcessedTranscriptEntry<W>,
-    pub mem_tr_adj_1: ProcessedTranscriptEntry<W>,
-    instr_load_var: ProcessedTranscriptEntryVar<WV, F>,
-    mem_op_var: ProcessedTranscriptEntryVar<WV, F>,
-    mem_tr_adj_1_var: ProcessedTranscriptEntryVar<WV, F>,
+    pub instr_loads: Vec<ProcessedTranscriptEntry<W>>,
+    pub mem_ops: Vec<ProcessedTranscriptEntry<W>>,
+    pub middle_mem_tr_adjs: Vec<ProcessedTranscriptEntry<W>>,
+    instr_loads_var: Vec<ProcessedTranscriptEntryVar<WV, F>>,
+    mem_ops_var: Vec<ProcessedTranscriptEntryVar<WV, F>>,
+    middle_mem_tr_adjs_var: Vec<ProcessedTranscriptEntryVar<WV, F>>,
 
     // Stage 3 values. Inputs whose value depend on the commitments of all the above stages. This
     // is all the polynomial evals.
@@ -67,25 +67,25 @@ where
     F: PrimeField,
 {
     /// Makes a new circuit with all placeholder values
-    fn new(meta: ProgramMetadata) -> Self {
+    fn new(meta: ProgramMetadata, num_ticks: usize) -> Self {
         TranscriptCheckerCircuit {
             meta,
             in_cpu_state: Default::default(),
-            mem_tr_adj_0: Default::default(),
+            in_mem_tr_adj: Default::default(),
             in_cpu_state_var: CpuStateVar::default::<NUM_REGS>(),
-            mem_tr_adj_0_var: Default::default(),
+            in_mem_tr_adj_var: Default::default(),
 
             out_cpu_state: Default::default(),
-            mem_tr_adj_2: Default::default(),
+            out_mem_tr_adj: Default::default(),
             out_cpu_state_var: CpuStateVar::default::<NUM_REGS>(),
-            mem_tr_adj_2_var: Default::default(),
+            out_mem_tr_adj_var: Default::default(),
 
-            instr_load: Default::default(),
-            mem_op: Default::default(),
-            mem_tr_adj_1: Default::default(),
-            instr_load_var: Default::default(),
-            mem_op_var: Default::default(),
-            mem_tr_adj_1_var: Default::default(),
+            instr_loads: vec![Default::default(); num_ticks],
+            mem_ops: vec![Default::default(); num_ticks],
+            middle_mem_tr_adjs: vec![Default::default(); 2 * num_ticks - 1],
+            instr_loads_var: vec![Default::default()],
+            mem_ops_var: vec![Default::default(); num_ticks],
+            middle_mem_tr_adjs_var: vec![Default::default(); 2 * num_ticks - 1],
 
             in_evals: Default::default(),
             in_evals_var: Default::default(),
@@ -110,9 +110,9 @@ where
     fn stage0(&mut self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
         self.in_cpu_state_var =
             CpuStateVar::new_witness(ns!(cs, "in cpu state"), || Ok(&self.in_cpu_state))?;
-        self.mem_tr_adj_0_var =
+        self.in_mem_tr_adj_var =
             ProcessedTranscriptEntryVar::new_witness(ns!(cs, "mem tr adj 0"), || {
-                Ok(&self.mem_tr_adj_0)
+                Ok(&self.in_mem_tr_adj)
             })?;
 
         Ok(())
@@ -123,9 +123,9 @@ where
     fn stage1(&mut self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
         self.out_cpu_state_var =
             CpuStateVar::new_witness(ns!(cs, "out cpu state"), || Ok(&self.out_cpu_state))?;
-        self.mem_tr_adj_2_var =
+        self.out_mem_tr_adj_var =
             ProcessedTranscriptEntryVar::new_witness(ns!(cs, "mem tr adj 2"), || {
-                Ok(&self.mem_tr_adj_2)
+                Ok(&self.out_mem_tr_adj)
             })?;
 
         Ok(())
@@ -133,34 +133,24 @@ where
 
     /// Commit to the time-sorted memory operations, i.e., the instr load and CPU mem op
     fn stage2(&mut self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
-        self.instr_load_var =
-            ProcessedTranscriptEntryVar::new_witness(ns!(cs, "instr load"), || {
-                Ok(&self.instr_load)
-            })?;
-        self.mem_op_var =
-            ProcessedTranscriptEntryVar::new_witness(ns!(cs, "mem op"), || Ok(&self.mem_op))?;
-        self.mem_tr_adj_1_var =
-            ProcessedTranscriptEntryVar::new_witness(ns!(cs, "mem tr adj 1"), || {
-                Ok(&self.mem_tr_adj_1)
-            })?;
-
-        Ok(())
-    }
-
-    /// Commit to the mem-sorted memory operations
-    /*
-    fn stage1(&mut self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
-        self.mem_tr_adj_seq_var = self
-            .mem_tr_adj_seq
+        self.instr_loads_var = self
+            .instr_loads
             .iter()
-            .map(|item| {
-                ProcessedTranscriptEntryVar::new_witness(ns!(cs, "mem tr adj seq"), || Ok(item))
-            })
+            .map(|op| ProcessedTranscriptEntryVar::new_witness(ns!(cs, "instr load"), || Ok(op)))
+            .collect::<Result<Vec<_>, _>>()?;
+        self.mem_ops_var = self
+            .mem_ops
+            .iter()
+            .map(|op| ProcessedTranscriptEntryVar::new_witness(ns!(cs, "mem op"), || Ok(op)))
+            .collect::<Result<Vec<_>, _>>()?;
+        self.middle_mem_tr_adjs_var = self
+            .middle_mem_tr_adjs
+            .iter()
+            .map(|op| ProcessedTranscriptEntryVar::new_witness(ns!(cs, "mem tr adj 1"), || Ok(op)))
             .collect::<Result<Vec<_>, _>>()?;
 
         Ok(())
     }
-    */
 
     /// Commit to the input evals
     fn stage3(&mut self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
@@ -186,23 +176,37 @@ where
 
     /// Do the transcript check
     fn stage6(&mut self, _cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
-        let mem_tr_adj_seq_var = vec![
-            self.mem_tr_adj_0_var.clone(),
-            self.mem_tr_adj_1_var.clone(),
-            self.mem_tr_adj_2_var.clone(),
-        ];
-        let (claimed_out_cpu_state, claimed_out_evals) = transcript_checker::<NUM_REGS, _, _>(
-            self.meta,
-            &self.in_cpu_state_var,
-            &self.chal_var,
-            &self.instr_load_var,
-            &self.mem_op_var,
-            &mem_tr_adj_seq_var,
-            &self.in_evals_var,
-        )?;
+        // Concat the memory-sorted trace elements into the a contiguous chunk. We will iterate
+        // over this in windows of 3 with overlap of 1 (ie step size 2)
+        let mem_tr_adj_seq_var = [
+            &[self.in_mem_tr_adj_var.clone()][..],
+            &self.middle_mem_tr_adjs_var.clone(),
+            &[self.out_mem_tr_adj_var.clone()][..],
+        ]
+        .concat();
 
-        claimed_out_cpu_state.enforce_equal(&self.out_cpu_state_var)?;
-        claimed_out_evals.enforce_equal(&self.out_evals_var)?;
+        let mut next_cpu_state = self.in_cpu_state_var.clone();
+        let mut next_evals = Default::default();
+        for ((instr_load, mem_op), mem_sorted_tr_triple) in self
+            .instr_loads_var
+            .iter()
+            .zip(self.mem_ops_var.iter())
+            .zip(mem_tr_adj_seq_var.windows(3).step_by(2))
+        {
+            (next_cpu_state, next_evals) = transcript_checker::<NUM_REGS, _, _>(
+                self.meta,
+                &self.in_cpu_state_var,
+                &self.chal_var,
+                instr_load,
+                mem_op,
+                &mem_sorted_tr_triple,
+                &self.in_evals_var,
+            )?;
+        }
+
+        // The output values should be equal to the final next_* values
+        next_cpu_state.enforce_equal(&self.out_cpu_state_var)?;
+        next_evals.enforce_equal(&self.out_evals_var)?;
 
         Ok(())
     }
@@ -290,24 +294,24 @@ mod test {
         let (time_sorted_transcript, mem_sorted_transcript) =
             transcript_utils::sort_and_pad(&exec_trace);
 
-        let circuit = TranscriptCheckerCircuit::<NUM_REGS, _, WV, _>::new(meta);
+        let circuit = TranscriptCheckerCircuit::<NUM_REGS, _, WV, _>::new(meta, 1);
         let pk = generate_parameters::<_, E, QAP>(circuit.clone(), &mut rng).unwrap();
         let mut cb = CommitmentBuilder::<_, E, QAP>::new(circuit, &pk);
 
         // Set stage 0 values for tick 0 and commit
         cb.circuit.in_cpu_state = CpuState::default();
-        cb.circuit.mem_tr_adj_0 = mem_sorted_transcript[0].clone();
+        cb.circuit.in_mem_tr_adj = mem_sorted_transcript[0].clone();
         let (com0, rand0) = cb.commit(&mut rng).unwrap();
 
         // Set stage 1 values for tick 0 and commit
         cb.circuit.out_cpu_state = exec_trace[0].cpu_after.clone();
-        cb.circuit.mem_tr_adj_2 = mem_sorted_transcript[2].clone();
+        cb.circuit.out_mem_tr_adj = mem_sorted_transcript[2].clone();
         let (com1, rand1) = cb.commit(&mut rng).unwrap();
 
         // Set stage 2 values for tick 0 and commit
-        cb.circuit.instr_load = time_sorted_transcript[0].clone();
-        cb.circuit.mem_op = time_sorted_transcript[1].clone();
-        cb.circuit.mem_tr_adj_1 = mem_sorted_transcript[1].clone();
+        cb.circuit.instr_loads = vec![time_sorted_transcript[0].clone()];
+        cb.circuit.mem_ops = vec![time_sorted_transcript[1].clone()];
+        cb.circuit.middle_mem_tr_adjs = vec![mem_sorted_transcript[1].clone()];
         let (com2, rand2) = cb.commit(&mut rng).unwrap();
 
         // Imagine we sent up all our commitments so far. The next step is to hash those
@@ -329,12 +333,12 @@ mod test {
         let mut out_evals = cb.circuit.in_evals.clone();
         out_evals.update(
             chal,
-            &cb.circuit.instr_load,
-            &cb.circuit.mem_op,
+            &cb.circuit.instr_loads[0],
+            &cb.circuit.mem_ops[0],
             &[
-                cb.circuit.mem_tr_adj_0.clone(),
-                cb.circuit.mem_tr_adj_1.clone(),
-                cb.circuit.mem_tr_adj_2.clone(),
+                cb.circuit.in_mem_tr_adj.clone(),
+                cb.circuit.middle_mem_tr_adjs[0].clone(),
+                cb.circuit.out_mem_tr_adj.clone(),
             ],
         );
 
