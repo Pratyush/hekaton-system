@@ -1,14 +1,13 @@
 use crate::{
     exec_checker::{exec_checker, CpuStateVar},
-    util::{log2, uint32_lt, uint64_lt},
+    util::{log2, uint64_lt},
     word::{DWordVar, WordVar},
 };
 
-use core::{borrow::Borrow, cmp::Ordering};
+use core::borrow::Borrow;
 
 use tinyram_emu::{
     interpreter::{MemOp, MemOpKind, TranscriptEntry},
-    program_state::CpuState,
     word::Word,
     ProgramMetadata,
 };
@@ -748,11 +747,6 @@ pub fn transcript_checker<const NUM_REGS: usize, WV: WordVar<F>, F: PrimeField>(
             "Cost of UInt64 cmp: {} constraints",
             cs.num_constraints() - num_constraints_pre_cmp
         );
-        /*
-        let t_has_incrd = prev
-            .timestamp
-            .is_cmp(&cur.timestamp, Ordering::Less, false)?;
-        */
         let t_has_incrd = uint64_lt(&prev.timestamp, &cur.timestamp)?;
         let cond = loc_has_incrd.or(&loc_is_eq.and(&t_has_incrd)?)?;
         cond.enforce_equal(&Boolean::TRUE)?;
@@ -797,7 +791,7 @@ mod test {
     use tinyram_emu::{ProgramMetadata, TinyRamArch};
 
     use ark_bls12_381::Fr;
-    use ark_ff::{Field, UniformRand};
+    use ark_ff::UniformRand;
     use ark_poly::Polynomial;
     use ark_r1cs_std::{alloc::AllocVar, uint32::UInt32, R1CSVar};
     use ark_relations::{ns, r1cs::ConstraintSystem};
