@@ -56,6 +56,21 @@ fn uint8_to_bits_le<F: PrimeField>(a: &UInt8<F>) -> Vec<Boolean<F>> {
     a.to_bits_le()
 }
 
+/// Packs all the bits of the given value into as few `FpVars` as possible
+pub(crate) fn pack_to_fps<F, T>(val: T) -> Vec<FpVar<F>>
+where
+    F: PrimeField,
+    T: ToBitsGadget<F>,
+{
+    let bits = val.to_bits_le().unwrap();
+
+    // Split into chunks of maximal size and make them field elements. The unwrap() is ok
+    // because the only error condition is when #bits = MODULUS_BIT_SIZE
+    bits.chunks(F::MODULUS_BIT_SIZE as usize - 1)
+        .map(|chunk| Boolean::le_bits_to_fp(chunk).unwrap())
+        .collect()
+}
+
 pub(crate) fn transpose<T: Clone>(matrix: Vec<Vec<T>>) -> Vec<Vec<T>> {
     let num_cols = matrix.first().unwrap().len();
     matrix

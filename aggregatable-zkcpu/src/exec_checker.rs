@@ -1,7 +1,7 @@
 use crate::{
     common::*,
     transcript_checker::ProcessedTranscriptEntryVar,
-    util::{arr_set, uint32_to_uint64},
+    util::{arr_set, pack_to_fps, uint32_to_uint64},
     word::{DWordVar, WordVar},
 };
 use tinyram_emu::{
@@ -264,13 +264,23 @@ impl<WV: WordVar<F>, F: PrimeField> AllocVar<Option<WV::NativeWord>, F> for CpuA
     }
 }
 
-impl<WV, F> ToBitsGadget<F> for CpuAnswerVar<WV, F>
+impl<'a, WV, F> ToBitsGadget<F> for &'a CpuAnswerVar<WV, F>
 where
     WV: WordVar<F>,
     F: PrimeField,
 {
     fn to_bits_le(&self) -> Result<Vec<Boolean<F>>, SynthesisError> {
         Ok([vec![self.is_set.clone()], self.val.as_le_bits()].concat())
+    }
+}
+
+impl<WV, F> ToBitsGadget<F> for CpuAnswerVar<WV, F>
+where
+    WV: WordVar<F>,
+    F: PrimeField,
+{
+    fn to_bits_le(&self) -> Result<Vec<Boolean<F>>, SynthesisError> {
+        <&Self>::to_bits_le(&self)
     }
 }
 
@@ -315,39 +325,28 @@ impl<WV: WordVar<F>, F: PrimeField> CpuStateVar<WV, F> {
             aux_tape_pos: TapeHeadPosVar::zero(),
         }
     }
-
-    /// Packs all the bits of this `CpuStateVar` into as few `FpVars` as possible
-    fn pack(&self) -> Vec<FpVar<F>> {
-        let bits = self.to_bits_le().unwrap();
-
-        // Split into chunks of maximal size and make them field elements. The unwrap() is ok
-        // because the only error condition is when #bits = MODULUS_BIT_SIZE
-        bits.chunks(F::MODULUS_BIT_SIZE as usize - 1)
-            .map(|chunk| Boolean::le_bits_to_fp(chunk).unwrap())
-            .collect()
-    }
-
-    fn unpack<const NUM_REGS: usize>(fps: &[FpVar<F>]) -> Self {
-        let mut bits: Vec<Boolean<F>> = fps
-            .iter()
-            .flat_map(|f| {
-                // We only packed BITLEN-1 bits. If there's a leading zero, cut it off.
-                let mut bits = f.to_bits_le().unwrap();
-                bits.truncate(F::MODULUS_BIT_SIZE as usize - 1);
-                bits
-            })
-            .collect();
-
-        // Make the bitstring the correct length
+    // TODO: Make a FromBitsGadget that has this method. This requires CpuStateVar being made
+    // generic over NUM_REGS
+    /// Returns the size of this CpuStateVar when serialized to bits
+    fn bitlen<const NUM_REGS: usize>() -> usize {
         let pc_len = WV::BITLEN;
         let flag_len = 1;
         let regs_len = NUM_REGS * WV::BITLEN;
         let answer_len = WV::BITLEN + 1;
         let primary_tape_pos_len = <TapeHeadPosVar<F> as WordVar<F>>::BITLEN;
         let aux_tape_pos_len = <TapeHeadPosVar<F> as WordVar<F>>::BITLEN;
-        let expected_len =
-            pc_len + flag_len + regs_len + answer_len + primary_tape_pos_len + aux_tape_pos_len;
-        bits.truncate(expected_len);
+        pc_len + flag_len + regs_len + answer_len + primary_tape_pos_len + aux_tape_pos_len
+    }
+
+    // TODO: Make a FromBitsGadget that has this method. This requires CpuStateVar being made
+    // generic over NUM_REGS
+    /// Converts the given bitstring to a `CpuStateVar`. Requires that `bits.len() == Self::bitlen`
+    fn from_bits_le<const NUM_REGS: usize>(bits: &[Boolean<F>]) -> Self {
+        assert_eq!(bits.len(), Self::bitlen::<NUM_REGS>());
+
+        let pc_len = WV::BITLEN;
+        let answer_len = WV::BITLEN + 1;
+        let tape_pos_len = <TapeHeadPosVar<F> as WordVar<F>>::BITLEN;
 
         // Keep a cursor into the bits array
         let mut idx = 0;
@@ -369,10 +368,10 @@ impl<WV: WordVar<F>, F: PrimeField> CpuStateVar<WV, F> {
         let answer = CpuAnswerVar::from_bits_le(&bits[idx..idx + answer_len]);
         idx += answer_len;
 
-        let primary_tape_pos = TapeHeadPosVar::from_le_bits(&bits[idx..idx + primary_tape_pos_len]);
-        idx += primary_tape_pos_len;
-        let aux_tape_pos = TapeHeadPosVar::from_le_bits(&bits[idx..idx + aux_tape_pos_len]);
-        idx += aux_tape_pos_len;
+        let primary_tape_pos = TapeHeadPosVar::from_le_bits(&bits[idx..idx + tape_pos_len]);
+        idx += tape_pos_len;
+        let aux_tape_pos = TapeHeadPosVar::from_le_bits(&bits[idx..idx + tape_pos_len]);
+        idx += tape_pos_len;
 
         _ = idx;
 
@@ -384,6 +383,34 @@ impl<WV: WordVar<F>, F: PrimeField> CpuStateVar<WV, F> {
             primary_tape_pos,
             aux_tape_pos,
         }
+    }
+
+    /// Undoes `pack_to_fps`, i.e., deserializes from its packed representation as field
+    /// elements.
+    fn unpack_from_fps<const NUM_REGS: usize>(fps: &[FpVar<F>]) -> Self {
+        let bits_per_fp = F::MODULUS_BIT_SIZE as usize - 1;
+
+        // Check that not too many field elements were given
+        assert!(
+            fps.len() * bits_per_fp < Self::bitlen::<NUM_REGS>() + bits_per_fp,
+            "expected fewer field elements"
+        );
+
+        // Serialize the field elems
+        let mut bits: Vec<Boolean<F>> = fps
+            .iter()
+            .flat_map(|f| {
+                // We only packed BITLEN-1 bits. If there's a leading zero, cut it off.
+                let mut bits = f.to_bits_le().unwrap();
+                bits.truncate(F::MODULUS_BIT_SIZE as usize - 1);
+                bits
+            })
+            .collect();
+        // Truncate to the appropriate size
+        bits.truncate(Self::bitlen::<NUM_REGS>());
+
+        // Deserialize
+        Self::from_bits_le::<NUM_REGS>(&bits)
     }
 }
 
@@ -531,7 +558,7 @@ where
     }
 }
 
-impl<WV, F> ToBitsGadget<F> for CpuStateVar<WV, F>
+impl<'a, WV, F> ToBitsGadget<F> for &'a CpuStateVar<WV, F>
 where
     WV: WordVar<F>,
     F: PrimeField,
@@ -549,6 +576,98 @@ where
     }
 }
 
+impl<WV, F> ToBitsGadget<F> for CpuStateVar<WV, F>
+where
+    WV: WordVar<F>,
+    F: PrimeField,
+{
+    fn to_bits_le(&self) -> Result<Vec<Boolean<F>>, SynthesisError> {
+        <&Self>::to_bits_le(&self)
+    }
+}
+
+/// The output of a `run_instr()` invocation. This has the resulting CPU state, and a flag for if
+/// an error occured
+#[derive(Clone)]
+struct InstrResult<WV, F>
+where
+    WV: WordVar<F>,
+    F: PrimeField,
+{
+    state: CpuStateVar<WV, F>,
+    err: Boolean<F>,
+}
+
+impl<'a, WV, F> ToBitsGadget<F> for &'a InstrResult<WV, F>
+where
+    WV: WordVar<F>,
+    F: PrimeField,
+{
+    fn to_bits_le(&self) -> Result<Vec<Boolean<F>>, SynthesisError> {
+        Ok([self.state.to_bits_le().unwrap(), vec![self.err.clone()]].concat())
+    }
+}
+
+impl<WV: WordVar<F>, F: PrimeField> InstrResult<WV, F> {
+    // The default is an error. This is appropriate because it's used as padding in the CPU output
+    // selector. Anything that isn't defined is an error by default.
+    // TODO: Figure out whether invalid instructions are necessarily errors
+    fn default<const NUM_REGS: usize>() -> Self {
+        InstrResult {
+            state: CpuStateVar::default::<NUM_REGS>(),
+            err: Boolean::TRUE,
+        }
+    }
+
+    /// Returns the size of this CpuStateVar when serialized to bits
+    fn bitlen<const NUM_REGS: usize>() -> usize {
+        CpuStateVar::<WV, _>::bitlen::<NUM_REGS>() + 1
+    }
+
+    // TODO: Make a FromBitsGadget that has this method. This requires CpuStateVar being made
+    // generic over NUM_REGS
+    /// Converts the given bitstring to a `CpuStateVar`. Requires that `bits.len() == Self::bitlen`
+    fn from_bits_le<const NUM_REGS: usize>(bits: &[Boolean<F>]) -> Self {
+        assert_eq!(bits.len(), Self::bitlen::<NUM_REGS>());
+
+        let state_bitlen = CpuStateVar::<WV, _>::bitlen::<NUM_REGS>();
+        let state = CpuStateVar::from_bits_le::<NUM_REGS>(&bits[..state_bitlen]);
+        let err = bits[state_bitlen].clone();
+
+        InstrResult { state, err }
+    }
+
+    // TODO: Make this generic for anything with `FromBitsGadget`. This is copied verbatim from
+    // CpuStateVar
+    /// Undoes `pack_to_fps`, i.e., deserializes from its packed representation as field
+    /// elements.
+    fn unpack_from_fps<const NUM_REGS: usize>(fps: &[FpVar<F>]) -> Self {
+        let bits_per_fp = F::MODULUS_BIT_SIZE as usize - 1;
+
+        // Check that not too many field elements were given
+        assert!(
+            fps.len() * bits_per_fp < Self::bitlen::<NUM_REGS>() + bits_per_fp,
+            "expected fewer field elements"
+        );
+
+        // Serialize the field elems
+        let mut bits: Vec<Boolean<F>> = fps
+            .iter()
+            .flat_map(|f| {
+                // We only packed BITLEN-1 bits. If there's a leading zero, cut it off.
+                let mut bits = f.to_bits_le().unwrap();
+                bits.truncate(F::MODULUS_BIT_SIZE as usize - 1);
+                bits
+            })
+            .collect();
+        // Truncate to the appropriate size
+        bits.truncate(Self::bitlen::<NUM_REGS>());
+
+        // Deserialize
+        Self::from_bits_le::<NUM_REGS>(&bits)
+    }
+}
+
 /// A helper to `exec_checker`. This takes a native opcode and its zk parameters, executes it, and
 /// returns `(new_state, err)`. `err` is set if the contents of `mem_op` do not match the
 /// instruction.
@@ -562,7 +681,7 @@ fn run_instr<WV: WordVar<F>, F: PrimeField>(
     imm_or_reg_val: &WV,
     incrd_pc: &WV,
     pc_overflow: &Boolean<F>,
-) -> Result<(CpuStateVar<WV, F>, Boolean<F>), SynthesisError> {
+) -> Result<InstrResult<WV, F>, SynthesisError> {
     let CpuStateVar {
         pc: _,
         flag,
@@ -591,7 +710,7 @@ fn run_instr<WV: WordVar<F>, F: PrimeField>(
             // add is not a memory operation. This MUST be padding.
             err |= !&mem_op.is_padding;
 
-            Ok((state, err))
+            Ok(InstrResult { state, err })
         },
         Xor => {
             let output_val = reg2_val.xor(&imm_or_reg_val)?;
@@ -610,7 +729,7 @@ fn run_instr<WV: WordVar<F>, F: PrimeField>(
             // xor is not a memory operation. This MUST be padding.
             err |= !&mem_op.is_padding;
 
-            Ok((state, err))
+            Ok(InstrResult { state, err })
         },
         CmpE => {
             // Compare the two input values
@@ -629,7 +748,7 @@ fn run_instr<WV: WordVar<F>, F: PrimeField>(
             // cmpe is not a memory operation. This MUST be padding.
             err |= !&mem_op.is_padding;
 
-            Ok((state, err))
+            Ok(InstrResult { state, err })
         },
         Jmp => {
             // Set the new PC to be the imm-or-reg
@@ -646,7 +765,7 @@ fn run_instr<WV: WordVar<F>, F: PrimeField>(
             // cmpe is not a memory operation. This MUST be padding.
             let err = !&mem_op.is_padding;
 
-            Ok((state, err))
+            Ok(InstrResult { state, err })
         },
         CJmp => {
             // Let pc' = imm_or_reg_val if flag is set. Otherwise, let pc' = pc + 1
@@ -668,7 +787,7 @@ fn run_instr<WV: WordVar<F>, F: PrimeField>(
             // cjmp is not a memory operation. This MUST be padding.
             err |= !&mem_op.is_padding;
 
-            Ok((state, err))
+            Ok(InstrResult { state, err })
         },
         Answer => {
             let state = CpuStateVar {
@@ -685,7 +804,7 @@ fn run_instr<WV: WordVar<F>, F: PrimeField>(
             // answer is not a memory operation. This MUST be padding.
             let err = !&mem_op.is_padding;
 
-            Ok((state, err))
+            Ok(InstrResult { state, err })
         },
         LoadW => {
             // Get the correct word from the memory op, and save it in the register
@@ -705,7 +824,7 @@ fn run_instr<WV: WordVar<F>, F: PrimeField>(
             // load.w is a memory operation. This MUST NOT be padding.
             err |= &mem_op.is_padding;
 
-            Ok((state, err))
+            Ok(InstrResult { state, err })
         },
         StoreW => {
             // Storing doesn't change anything. We don't have to do anything here
@@ -723,7 +842,7 @@ fn run_instr<WV: WordVar<F>, F: PrimeField>(
             // store.w is a memory operation. This MUST NOT be padding.
             err |= &mem_op.is_padding;
 
-            Ok((state, err))
+            Ok(InstrResult { state, err })
         },
         Read => {
             // Get the correct word from the memory op, and save it in the register
@@ -784,7 +903,7 @@ fn run_instr<WV: WordVar<F>, F: PrimeField>(
             // read is a memory operation. This MUST NOT be padding.
             err |= &mem_op.is_padding;
 
-            Ok((state, err))
+            Ok(InstrResult { state, err })
         },
         _ => todo!(),
     }
@@ -801,9 +920,7 @@ pub(crate) fn exec_checker<const NUM_REGS: usize, WV: WordVar<F>, F: PrimeField>
     // Prepare to run all the instructions. This will hold new_state for all possible instructions,
     // and all_errors will hold the corresponding errors flags. At the end, we'll use the opcode to
     // select the output state we want to return, and assert that err == false.
-    let mut all_output_states = vec![cpu_state.clone(); 32];
-    // TODO: Figure out whether invalid instructions are necessarily errors
-    let mut all_errors = vec![Boolean::TRUE; 32];
+    let mut all_outputs = vec![InstrResult::default::<NUM_REGS>(); 32];
 
     // Unpack the CPu state and make sure it hasn't already halted
     let CpuStateVar {
@@ -850,10 +967,9 @@ pub(crate) fn exec_checker<const NUM_REGS: usize, WV: WordVar<F>, F: PrimeField>
     };
     let reg1_fp = reg1.to_fpvar()?;
 
-    // Go through every opcode, do the operation, and save the results in all_output_states and
-    // all_mem_ops
+    // Go through every opcode, do the operation, and save the results in all_outputs
     for opcode in supported_opcodes {
-        let (new_state, err) = run_instr(
+        let out = run_instr(
             meta,
             opcode,
             cpu_state,
@@ -864,34 +980,31 @@ pub(crate) fn exec_checker<const NUM_REGS: usize, WV: WordVar<F>, F: PrimeField>
             &incrd_pc,
             &pc_overflow,
         )?;
-        all_output_states[opcode as usize] = new_state;
-        all_errors[opcode as usize] = err;
+        all_outputs[opcode as usize] = out;
     }
 
     // Pack the output states for muxing. Transpose the packing so that the first index is the
     // vector of all the first packed FpVars, the second is the vector of all the second packed
     // FpVars etc.
-    let packed_output_states: Vec<Vec<FpVar<F>>> =
-        all_output_states.iter().map(CpuStateVar::pack).collect();
-    let transposed_packings = crate::util::transpose(packed_output_states);
+    let packed_outputs: Vec<Vec<FpVar<F>>> = all_outputs.iter().map(pack_to_fps).collect();
+    let transposed_packings = crate::util::transpose(packed_outputs);
 
     // Decode the opcode and use it to index into the vec of next CPU states
     let opcode_bits = opcode.to_bits_be()?;
 
     // Out of all the computed output states and memory operations, pick the ones that correspond
     // to this instruction's opcode
-    let chosen_packed_out_state = transposed_packings
+    let chosen_packed_output = transposed_packings
         .into_iter()
         .map(|fps| FpVar::conditionally_select_power_of_two_vector(&opcode_bits, &fps))
         .collect::<Result<Vec<_>, _>>()?;
     // Unpack the state
-    let chosen_out_state = CpuStateVar::unpack::<NUM_REGS>(&chosen_packed_out_state);
+    let chosen_output = InstrResult::unpack_from_fps::<NUM_REGS>(&chosen_packed_output);
 
     // Check that this operation didn't error
-    let err = Boolean::conditionally_select_power_of_two_vector(&opcode_bits, &all_errors[..])?;
-    err.enforce_equal(&Boolean::FALSE)?;
+    chosen_output.err.enforce_equal(&Boolean::FALSE)?;
 
-    Ok(chosen_out_state)
+    Ok(chosen_output.state)
 }
 
 #[cfg(test)]
@@ -1000,7 +1113,7 @@ mod test {
 
             // Check that packing/unpacking is a no-op
             assert_eq!(
-                CpuStateVar::<WV, _>::unpack::<NUM_REGS>(&cpu_state.pack()).value(),
+                CpuStateVar::<WV, _>::unpack_from_fps::<NUM_REGS>(&pack_to_fps(&cpu_state)).value(),
                 cpu_state.value()
             );
         }
