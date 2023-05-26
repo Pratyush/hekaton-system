@@ -967,6 +967,12 @@ pub(crate) fn exec_checker<const NUM_REGS: usize, WV: WordVar<F>, F: PrimeField>
     };
     let reg1_fp = reg1.to_fpvar()?;
 
+    let cs = cpu_state.cs();
+    println!(
+        "Num constraints pre-exec_checker-loop {}",
+        cs.num_constraints()
+    );
+
     // Go through every opcode, do the operation, and save the results in all_outputs
     for opcode in supported_opcodes {
         let out = run_instr(
@@ -982,6 +988,12 @@ pub(crate) fn exec_checker<const NUM_REGS: usize, WV: WordVar<F>, F: PrimeField>
         )?;
         all_outputs[opcode as usize] = out;
     }
+    println!(
+        "Num constraints post-exec_checker-loop {}",
+        cs.num_constraints()
+    );
+
+    let pre_packing_num_constraints = cs.num_constraints();
 
     // Pack the output states for muxing. Transpose the packing so that the first index is the
     // vector of all the first packed FpVars, the second is the vector of all the second packed
@@ -1003,6 +1015,11 @@ pub(crate) fn exec_checker<const NUM_REGS: usize, WV: WordVar<F>, F: PrimeField>
 
     // Check that this operation didn't error
     chosen_output.err.enforce_equal(&Boolean::FALSE)?;
+
+    println!(
+        "Cost to pack, mux, and unpack == {}",
+        cs.num_constraints() - pre_packing_num_constraints
+    );
 
     Ok(chosen_output.state)
 }

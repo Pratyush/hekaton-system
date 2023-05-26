@@ -176,6 +176,8 @@ where
 
     /// Do the transcript check
     fn stage6(&mut self, _cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
+        println!("Num constraints pre-stage6 {}", _cs.num_constraints());
+
         // Concat the memory-sorted trace elements into the a contiguous chunk. We will iterate
         // over this in windows of 3 with overlap of 1 (ie step size 2)
         let mem_tr_adj_seq_var = [

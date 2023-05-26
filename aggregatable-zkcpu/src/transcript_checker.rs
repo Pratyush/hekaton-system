@@ -731,12 +731,7 @@ pub fn transcript_checker<const NUM_REGS: usize, WV: WordVar<F>, F: PrimeField>(
         // Check that this is sorted by memory idx then time. That is, check
         //       prev.location < cur.location
         //     ∨ (prev.location == cur.location ∧ prev.timestamp < cur.timestamp);
-        let num_constraints_pre_cmp = cs.num_constraints();
         let loc_has_incrd = prev.location.is_lt(&cur.location)?;
-        println!(
-            "Cost of UInt64 cmp: {} constraints",
-            cs.num_constraints() - num_constraints_pre_cmp
-        );
         let t_has_incrd = &prev.timestamp.is_lt(&cur.timestamp)?;
         let cond = loc_has_incrd | (loc_is_eq & t_has_incrd);
         cond.enforce_equal(&Boolean::TRUE)?;
