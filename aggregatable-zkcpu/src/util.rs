@@ -56,6 +56,24 @@ fn uint8_to_bits_le<F: PrimeField>(a: &UInt8<F>) -> Vec<Boolean<F>> {
     a.to_bits_le()
 }
 
+pub(crate) fn transpose<T: Clone>(matrix: Vec<Vec<T>>) -> Vec<Vec<T>> {
+    let num_cols = matrix.first().unwrap().len();
+    matrix
+        .iter()
+        .for_each(|row| assert_eq!(row.len(), num_cols));
+
+    let mut row_iters: Vec<_> = matrix.into_iter().map(Vec::into_iter).collect();
+    let mut out: Vec<Vec<_>> = (0..num_cols).map(|_| Vec::new()).collect();
+
+    for out_row in out.iter_mut() {
+        for it in row_iters.iter_mut() {
+            out_row.push(it.next().unwrap());
+        }
+    }
+
+    out
+}
+
 /*
 
 pub(crate) fn uint16_lt<F: PrimeField>(

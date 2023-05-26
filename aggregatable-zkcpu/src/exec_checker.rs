@@ -14,6 +14,7 @@ use core::borrow::Borrow;
 use ark_ff::PrimeField;
 use ark_r1cs_std::{
     alloc::{AllocVar, AllocationMode},
+    bits::ToBitsGadget,
     boolean::Boolean,
     eq::EqGadget,
     fields::{fp::FpVar, FieldVar},
@@ -26,6 +27,9 @@ use ark_relations::{
     r1cs::{ConstraintSystemRef, Namespace, SynthesisError},
 };
 use ark_std::log2;
+
+/// The position of a tape head
+type TapeHeadPosVar<F> = UInt32<F>;
 
 /// An `ExecTickMemData` can be a LOAD (=0), a STORE (=1), or no-mem (=2)
 #[derive(Clone)]
@@ -260,6 +264,31 @@ impl<WV: WordVar<F>, F: PrimeField> AllocVar<Option<WV::NativeWord>, F> for CpuA
     }
 }
 
+impl<WV, F> ToBitsGadget<F> for CpuAnswerVar<WV, F>
+where
+    WV: WordVar<F>,
+    F: PrimeField,
+{
+    fn to_bits_le(&self) -> Result<Vec<Boolean<F>>, SynthesisError> {
+        Ok([vec![self.is_set.clone()], self.val.as_le_bits()].concat())
+    }
+}
+
+impl<WV, F> CpuAnswerVar<WV, F>
+where
+    WV: WordVar<F>,
+    F: PrimeField,
+{
+    /// Create a `CpuAnswerVar` from a bitstring. Panics if `bits.len() != WV::BITLEN + 1`.
+    fn from_bits_le(bits: &[Boolean<F>]) -> Self {
+        assert_eq!(bits.len(), WV::BITLEN + 1);
+        let is_set = bits[0].clone();
+        let val = WV::from_le_bits(&bits[1..WV::BITLEN + 1]);
+
+        CpuAnswerVar { is_set, val }
+    }
+}
+
 // TODO: Make this and RegistersVar take NUM_REGS: usize
 #[derive(Clone, Debug)]
 pub struct CpuStateVar<WV, F>
@@ -271,8 +300,8 @@ where
     pub(crate) flag: Boolean<F>,
     pub(crate) regs: RegistersVar<WV>,
     pub(crate) answer: CpuAnswerVar<WV, F>,
-    pub(crate) primary_tape_pos: UInt32<F>,
-    pub(crate) aux_tape_pos: UInt32<F>,
+    pub(crate) primary_tape_pos: TapeHeadPosVar<F>,
+    pub(crate) aux_tape_pos: TapeHeadPosVar<F>,
 }
 
 impl<WV: WordVar<F>, F: PrimeField> CpuStateVar<WV, F> {
@@ -282,8 +311,78 @@ impl<WV: WordVar<F>, F: PrimeField> CpuStateVar<WV, F> {
             flag: Boolean::FALSE,
             regs: vec![WV::zero(); NUM_REGS],
             answer: CpuAnswerVar::default(),
-            primary_tape_pos: UInt32::zero(),
-            aux_tape_pos: UInt32::zero(),
+            primary_tape_pos: TapeHeadPosVar::zero(),
+            aux_tape_pos: TapeHeadPosVar::zero(),
+        }
+    }
+
+    /// Packs all the bits of this `CpuStateVar` into as few `FpVars` as possible
+    fn pack(&self) -> Vec<FpVar<F>> {
+        let bits = self.to_bits_le().unwrap();
+
+        // Split into chunks of maximal size and make them field elements. The unwrap() is ok
+        // because the only error condition is when #bits = MODULUS_BIT_SIZE
+        bits.chunks(F::MODULUS_BIT_SIZE as usize - 1)
+            .map(|chunk| Boolean::le_bits_to_fp(chunk).unwrap())
+            .collect()
+    }
+
+    fn unpack<const NUM_REGS: usize>(fps: &[FpVar<F>]) -> Self {
+        let mut bits: Vec<Boolean<F>> = fps
+            .iter()
+            .flat_map(|f| {
+                // We only packed BITLEN-1 bits. If there's a leading zero, cut it off.
+                let mut bits = f.to_bits_le().unwrap();
+                bits.truncate(F::MODULUS_BIT_SIZE as usize - 1);
+                bits
+            })
+            .collect();
+
+        // Make the bitstring the correct length
+        let pc_len = WV::BITLEN;
+        let flag_len = 1;
+        let regs_len = NUM_REGS * WV::BITLEN;
+        let answer_len = WV::BITLEN + 1;
+        let primary_tape_pos_len = <TapeHeadPosVar<F> as WordVar<F>>::BITLEN;
+        let aux_tape_pos_len = <TapeHeadPosVar<F> as WordVar<F>>::BITLEN;
+        let expected_len =
+            pc_len + flag_len + regs_len + answer_len + primary_tape_pos_len + aux_tape_pos_len;
+        bits.truncate(expected_len);
+
+        // Keep a cursor into the bits array
+        let mut idx = 0;
+
+        let pc = PcVar::from_le_bits(&bits[idx..idx + pc_len]);
+        idx += pc_len;
+
+        let flag = bits[idx].clone();
+        idx += 1;
+
+        let regs = (0..NUM_REGS)
+            .map(|_| {
+                let reg = WV::from_le_bits(&bits[idx..idx + WV::BITLEN]);
+                idx += WV::BITLEN;
+                reg
+            })
+            .collect();
+
+        let answer = CpuAnswerVar::from_bits_le(&bits[idx..idx + answer_len]);
+        idx += answer_len;
+
+        let primary_tape_pos = TapeHeadPosVar::from_le_bits(&bits[idx..idx + primary_tape_pos_len]);
+        idx += primary_tape_pos_len;
+        let aux_tape_pos = TapeHeadPosVar::from_le_bits(&bits[idx..idx + aux_tape_pos_len]);
+        idx += aux_tape_pos_len;
+
+        _ = idx;
+
+        CpuStateVar {
+            pc,
+            answer,
+            flag,
+            regs,
+            primary_tape_pos,
+            aux_tape_pos,
         }
     }
 }
@@ -362,12 +461,12 @@ impl<WV: WordVar<F>, F: PrimeField> CondSelectGadget<F> for CpuStateVar<WV, F> {
             .map(|(t, f)| PcVar::conditionally_select(cond, t, f))
             .collect::<Result<RegistersVar<_>, _>>()?;
         let answer = PcVar::conditionally_select(cond, &true_value.answer, &false_value.answer)?;
-        let primary_tape_pos = UInt32::conditionally_select(
+        let primary_tape_pos = TapeHeadPosVar::conditionally_select(
             cond,
             &true_value.primary_tape_pos,
             &false_value.primary_tape_pos,
         )?;
-        let aux_tape_pos = UInt32::conditionally_select(
+        let aux_tape_pos = TapeHeadPosVar::conditionally_select(
             cond,
             &true_value.aux_tape_pos,
             &false_value.aux_tape_pos,
@@ -410,13 +509,16 @@ where
             RegistersVar::new_variable(ns!(cs, "regs"), || state.map(|s| s.registers), mode)?;
         let answer =
             CpuAnswerVar::new_variable(ns!(cs, "answer"), || state.map(|s| s.answer), mode)?;
-        let primary_tape_pos = UInt32::new_variable(
+        let primary_tape_pos = TapeHeadPosVar::new_variable(
             ns!(cs, "primary head"),
             || state.map(|s| s.primary_tape_pos),
             mode,
         )?;
-        let aux_tape_pos =
-            UInt32::new_variable(ns!(cs, "aux head"), || state.map(|s| s.aux_tape_pos), mode)?;
+        let aux_tape_pos = TapeHeadPosVar::new_variable(
+            ns!(cs, "aux head"),
+            || state.map(|s| s.aux_tape_pos),
+            mode,
+        )?;
 
         Ok(CpuStateVar {
             pc,
@@ -426,6 +528,24 @@ where
             primary_tape_pos,
             aux_tape_pos,
         })
+    }
+}
+
+impl<WV, F> ToBitsGadget<F> for CpuStateVar<WV, F>
+where
+    WV: WordVar<F>,
+    F: PrimeField,
+{
+    fn to_bits_le(&self) -> Result<Vec<Boolean<F>>, SynthesisError> {
+        Ok([
+            self.pc.as_le_bits(),
+            vec![self.flag.clone()],
+            self.regs.iter().flat_map(|w| w.as_le_bits()).collect(),
+            self.answer.to_bits_le().unwrap(),
+            self.primary_tape_pos.as_le_bits(),
+            self.aux_tape_pos.as_le_bits(),
+        ]
+        .concat())
     }
 }
 
@@ -623,11 +743,11 @@ fn run_instr<WV: WordVar<F>, F: PrimeField>(
             // if is_invalid_tape == true, but that's fine because in either case, the value set
             // will be 0 and the condition flag will be true.
             let cur_tape_pos =
-                UInt32::conditionally_select(&is_primary, primary_tape_pos, aux_tape_pos)?;
+                TapeHeadPosVar::conditionally_select(&is_primary, primary_tape_pos, aux_tape_pos)?;
             let tape_len = {
-                let primary_len = UInt32::constant(meta.primary_input_len);
-                let aux_len = UInt32::constant(meta.aux_input_len);
-                UInt32::conditionally_select(&is_primary, &primary_len, &aux_len)?
+                let primary_len = TapeHeadPosVar::constant(meta.primary_input_len);
+                let aux_len = TapeHeadPosVar::constant(meta.aux_input_len);
+                TapeHeadPosVar::conditionally_select(&is_primary, &primary_len, &aux_len)?
             };
             let is_out_of_bounds = cur_tape_pos.is_ge(&tape_len)?;
 
@@ -635,11 +755,12 @@ fn run_instr<WV: WordVar<F>, F: PrimeField>(
             let mut err = mem_op.location.is_neq(&uint32_to_uint64(&cur_tape_pos))?;
 
             // Increment the tape position
-            let new_tape_pos = UInt32::wrapping_add_many(&[cur_tape_pos, UInt32::one()])?;
+            let new_tape_pos =
+                TapeHeadPosVar::wrapping_add_many(&[cur_tape_pos, TapeHeadPosVar::one()])?;
             let new_primary_tape_pos =
-                UInt32::conditionally_select(&is_primary, &new_tape_pos, primary_tape_pos)?;
+                TapeHeadPosVar::conditionally_select(&is_primary, &new_tape_pos, primary_tape_pos)?;
             let new_aux_tape_pos =
-                UInt32::conditionally_select(&is_aux, &new_tape_pos, aux_tape_pos)?;
+                TapeHeadPosVar::conditionally_select(&is_aux, &new_tape_pos, aux_tape_pos)?;
 
             // Now determine if the read triggers the condition flag. It triggers the condition
             // flag iff either the tape index is > 1 or the tape head has reached the end of the
@@ -747,20 +868,30 @@ pub(crate) fn exec_checker<const NUM_REGS: usize, WV: WordVar<F>, F: PrimeField>
         all_errors[opcode as usize] = err;
     }
 
+    // Pack the output states for muxing. Transpose the packing so that the first index is the
+    // vector of all the first packed FpVars, the second is the vector of all the second packed
+    // FpVars etc.
+    let packed_output_states: Vec<Vec<FpVar<F>>> =
+        all_output_states.iter().map(CpuStateVar::pack).collect();
+    let transposed_packings = crate::util::transpose(packed_output_states);
+
     // Decode the opcode and use it to index into the vec of next CPU states
     let opcode_bits = opcode.to_bits_be()?;
 
     // Out of all the computed output states and memory operations, pick the ones that correspond
     // to this instruction's opcode
-    let out_state = CpuStateVar::conditionally_select_power_of_two_vector(
-        &opcode_bits,
-        &all_output_states[..],
-    )?;
+    let chosen_packed_out_state = transposed_packings
+        .into_iter()
+        .map(|fps| FpVar::conditionally_select_power_of_two_vector(&opcode_bits, &fps))
+        .collect::<Result<Vec<_>, _>>()?;
+    // Unpack the state
+    let chosen_out_state = CpuStateVar::unpack::<NUM_REGS>(&chosen_packed_out_state);
+
     // Check that this operation didn't error
     let err = Boolean::conditionally_select_power_of_two_vector(&opcode_bits, &all_errors[..])?;
     err.enforce_equal(&Boolean::FALSE)?;
 
-    Ok(out_state)
+    Ok(chosen_out_state)
 }
 
 #[cfg(test)]
@@ -866,6 +997,12 @@ mod test {
             cpu_state =
                 exec_checker::<NUM_REGS, _, _>(meta, &non_mem_op, &cpu_state, &encoded_instr_var)
                     .unwrap();
+
+            // Check that packing/unpacking is a no-op
+            assert_eq!(
+                CpuStateVar::<WV, _>::unpack::<NUM_REGS>(&cpu_state.pack()).value(),
+                cpu_state.value()
+            );
         }
 
         // Make sure nothing errored
