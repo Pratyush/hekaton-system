@@ -650,13 +650,28 @@ impl<WV: WordVar<F>, F: PrimeField> InstrResult<WV, F> {
             "expected fewer field elements"
         );
 
+        let cs = fps[0].cs();
+
         // Serialize the field elems
         let mut bits: Vec<Boolean<F>> = fps
             .iter()
             .flat_map(|f| {
                 // We only packed BITLEN-1 bits. If there's a leading zero, cut it off.
-                let mut bits = f.to_bits_le().unwrap();
+                let pre_tobits = cs.num_constraints();
+
+                // We don't need to use FpVar::to_bits_le. We don't set the top bit in our packing.
+                // So it suffices to just ensure that the top bit isn't set in the non-unique
+                // decoding
+                let mut bits = f.to_non_unique_bits_le().unwrap();
+                bits[F::MODULUS_BIT_SIZE as usize - 1]
+                    .enforce_equal(&Boolean::FALSE)
+                    .unwrap();
+
                 bits.truncate(F::MODULUS_BIT_SIZE as usize - 1);
+                println!(
+                    "Num constraints to run FpVar::to_bits_le(): {}",
+                    cs.num_constraints() - pre_tobits
+                );
                 bits
             })
             .collect();
@@ -993,8 +1008,6 @@ pub(crate) fn exec_checker<const NUM_REGS: usize, WV: WordVar<F>, F: PrimeField>
         cs.num_constraints()
     );
 
-    let pre_packing_num_constraints = cs.num_constraints();
-
     // Pack the output states for muxing. Transpose the packing so that the first index is the
     // vector of all the first packed FpVars, the second is the vector of all the second packed
     // FpVars etc.
@@ -1015,11 +1028,6 @@ pub(crate) fn exec_checker<const NUM_REGS: usize, WV: WordVar<F>, F: PrimeField>
 
     // Check that this operation didn't error
     chosen_output.err.enforce_equal(&Boolean::FALSE)?;
-
-    println!(
-        "Cost to pack, mux, and unpack == {}",
-        cs.num_constraints() - pre_packing_num_constraints
-    );
 
     Ok(chosen_output.state)
 }

@@ -108,6 +108,8 @@ where
     /// Commit to the input state, i.e., the given CPU state and first item in the mem-sorted trace
     /// window
     fn stage0(&mut self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
+        println!("Num constraints pre-stage0 {}", cs.num_constraints());
+
         self.in_cpu_state_var =
             CpuStateVar::new_witness(ns!(cs, "in cpu state"), || Ok(&self.in_cpu_state))?;
         self.in_mem_tr_adj_var =
@@ -115,12 +117,16 @@ where
                 Ok(&self.in_mem_tr_adj)
             })?;
 
+        println!("Num constraints post-stage0 {}", cs.num_constraints());
+
         Ok(())
     }
 
     /// Commit to the output state, i.e., the given CPU state and last item in the mem-sorted trace
     /// window
     fn stage1(&mut self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
+        println!("Num constraints pre-stage1 {}", cs.num_constraints());
+
         self.out_cpu_state_var =
             CpuStateVar::new_witness(ns!(cs, "out cpu state"), || Ok(&self.out_cpu_state))?;
         self.out_mem_tr_adj_var =
@@ -128,11 +134,15 @@ where
                 Ok(&self.out_mem_tr_adj)
             })?;
 
+        println!("Num constraints post-stage1 {}", cs.num_constraints());
+
         Ok(())
     }
 
     /// Commit to the time-sorted memory operations, i.e., the instr load and CPU mem op
     fn stage2(&mut self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
+        println!("Num constraints pre-stage2 {}", cs.num_constraints());
+
         self.instr_loads_var = self
             .instr_loads
             .iter()
@@ -149,27 +159,41 @@ where
             .map(|op| ProcessedTranscriptEntryVar::new_witness(ns!(cs, "mem tr adj 1"), || Ok(op)))
             .collect::<Result<Vec<_>, _>>()?;
 
+        println!("Num constraints post-stage2 {}", cs.num_constraints());
+
         Ok(())
     }
 
     /// Commit to the input evals
     fn stage3(&mut self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
+        println!("Num constraints pre-stage3 {}", cs.num_constraints());
+
         self.in_evals_var =
             TranscriptCheckerEvalsVar::new_witness(ns!(cs, "in evals"), || Ok(&self.in_evals))?;
+
+        println!("Num constraints post-stage3 {}", cs.num_constraints());
 
         Ok(())
     }
 
     /// Commit to the output evals
     fn stage4(&mut self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
+        println!("Num constraints pre-stage4 {}", cs.num_constraints());
+
         self.out_evals_var =
             TranscriptCheckerEvalsVar::new_witness(ns!(cs, "out evals"), || Ok(&self.out_evals))?;
+
+        println!("Num constraints post-stage4 {}", cs.num_constraints());
 
         Ok(())
     }
 
     fn stage5(&mut self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
+        println!("Num constraints pre-stage5 {}", cs.num_constraints());
+
         self.chal_var = FpVar::new_witness(ns!(cs, "chal"), || Ok(self.chal))?;
+
+        println!("Num constraints post-stage5 {}", cs.num_constraints());
 
         Ok(())
     }
