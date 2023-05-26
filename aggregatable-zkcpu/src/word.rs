@@ -28,7 +28,7 @@ pub struct DWordVar<W: WordVar<F>, F: PrimeField> {
 
 impl<W: WordVar<F>, F: PrimeField> EqGadget<F> for DWordVar<W, F> {
     fn is_eq(&self, other: &Self) -> Result<Boolean<F>, SynthesisError> {
-        self.w0.is_eq(&other.w0)?.and(&self.w1.is_eq(&other.w1)?)
+        Ok(self.w0.is_eq(&other.w0)? & self.w1.is_eq(&other.w1)?)
     }
 }
 
@@ -124,6 +124,8 @@ pub trait WordVar<F: PrimeField>:
         v
     }
 
+    fn word_is_lt(&self, other: &Self) -> Result<Boolean<F>, SynthesisError>;
+
     /// Unpacks this Word into its constituent bytes
     fn unpack(&self) -> Vec<UInt8<F>> {
         // Unpack simply returns the little-endian byte repr
@@ -137,7 +139,7 @@ pub trait WordVar<F: PrimeField>:
     fn pack(&self, bytes: &[UInt8<F>]) -> Self {
         assert_eq!(bytes.len(), Self::BITLEN / 8);
         // Pack simply puts the bytes into the word in little-endian order
-        let bits: Vec<_> = bytes.iter().flat_map(|b| b.to_bits_le().unwrap()).collect();
+        let bits: Vec<_> = bytes.iter().flat_map(|b| b.to_bits_le()).collect();
         Self::from_le_bits(&bits)
     }
 
@@ -175,7 +177,7 @@ macro_rules! impl_word {
             }
 
             fn as_fpvar(&self) -> Result<FpVar<F>, SynthesisError> {
-                Boolean::le_bits_to_fp_var(&self.to_bits_le())
+                Boolean::le_bits_to_fp(&self.to_bits_le())
             }
 
             fn as_native(&self) -> Result<Self::NativeWord, SynthesisError> {
@@ -190,6 +192,10 @@ macro_rules! impl_word {
                 let mut v = self.to_bits_le();
                 v.reverse();
                 v
+            }
+
+            fn word_is_lt(&self, other: &Self) -> Result<Boolean<F>, SynthesisError> {
+                self.is_lt(other)
             }
 
             fn from_le_bits(bits: &[Boolean<F>]) -> Self {
@@ -212,83 +218,20 @@ macro_rules! impl_word {
 
             /// Computes the `self ⊕ other`
             fn xor(&self, other: &Self) -> Result<Self, SynthesisError> {
-                let xored_bits: Result<Vec<_>, _> = self
+                let xored_bits = self
                     .as_le_bits()
                     .into_iter()
                     .zip(other.as_le_bits().into_iter())
-                    .map(|(a, b)| a.xor(&b))
-                    .collect();
+                    .map(|(a, b)| a ^ b)
+                    .collect::<Vec<_>>();
 
-                Ok(Self::from_le_bits(&xored_bits?))
+                Ok(Self::from_le_bits(&xored_bits))
             }
         }
     };
 }
 
+impl_word!(UInt8, u8);
 impl_word!(UInt16, u16);
 impl_word!(UInt32, u32);
 impl_word!(UInt64, u64);
-
-// Ugh, we need to implement this separately because UInt8 impls ToBitsGadget, so its to_bits_le()
-// method returns a Result rather than a plain Vec (though it is still infallible)
-impl<F: PrimeField> WordVar<F> for UInt8<F> {
-    type NativeWord = u8;
-
-    fn zero() -> Self {
-        Self::constant(0)
-    }
-
-    fn one() -> Self {
-        Self::constant(1)
-    }
-
-    fn constant(w: Self::NativeWord) -> Self {
-        UInt8::constant(w)
-    }
-
-    fn as_fpvar(&self) -> Result<FpVar<F>, SynthesisError> {
-        Boolean::le_bits_to_fp_var(&self.to_bits_le().unwrap())
-    }
-
-    fn as_native(&self) -> Result<Self::NativeWord, SynthesisError> {
-        self.value()
-    }
-
-    fn as_le_bits(&self) -> Vec<Boolean<F>> {
-        <Self as ToBitsGadget<F>>::to_bits_le(&self).unwrap()
-    }
-
-    fn as_be_bits(&self) -> Vec<Boolean<F>> {
-        <Self as ToBitsGadget<F>>::to_bits_be(&self).unwrap()
-    }
-
-    fn from_le_bits(bits: &[Boolean<F>]) -> Self {
-        Self::from_bits_le(bits)
-    }
-
-    fn carrying_add(&self, other: &Self) -> Result<(Self, Boolean<F>), SynthesisError> {
-        // Do the full addition and convert to little endian. The BITLEN bit is the carry
-        // bit
-        let sum = self.as_fpvar()? + &other.as_fpvar()?;
-        let sum_bits = sum.to_bits_le()?;
-
-        // Extract the carry bit
-        let carry = sum_bits[Self::BITLEN].clone();
-        // Get the lower bits
-        let lower_bits = &sum_bits[..Self::BITLEN];
-
-        Ok((Self::from_bits_le(lower_bits), carry))
-    }
-
-    /// Computes the `self ⊕ other`
-    fn xor(&self, other: &Self) -> Result<Self, SynthesisError> {
-        let xored_bits: Result<Vec<_>, _> = self
-            .as_le_bits()
-            .into_iter()
-            .zip(other.as_le_bits().into_iter())
-            .map(|(a, b)| a.xor(&b))
-            .collect();
-
-        Ok(Self::from_le_bits(&xored_bits?))
-    }
-}

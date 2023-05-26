@@ -1,19 +1,24 @@
-use ark_ff::PrimeField;
+use crate::word::WordVar;
+
+use ark_ff::{BigInteger, PrimeField};
 use ark_r1cs_std::{
-    bits::{uint32::UInt32, uint64::UInt64, uint8::UInt8, ToBitsGadget},
+    bits::{uint16::UInt16, uint32::UInt32, uint64::UInt64, uint8::UInt8, ToBitsGadget},
     boolean::Boolean,
     eq::EqGadget,
     fields::{fp::FpVar, FieldVar},
     select::CondSelectGadget,
 };
-use ark_relations::r1cs::SynthesisError;
+use ark_relations::{
+    lc,
+    r1cs::{ConstraintSystemRef, LinearCombination, Namespace, SynthesisError, Variable},
+};
 
 pub(crate) fn uint8_to_fpvar<F: PrimeField>(v: &UInt8<F>) -> Result<FpVar<F>, SynthesisError> {
-    Boolean::le_bits_to_fp_var(&v.to_bits_le()?)
+    Boolean::le_bits_to_fp(&v.to_bits_le())
 }
 
 pub(crate) fn uint32_to_fpvar<F: PrimeField>(v: &UInt32<F>) -> Result<FpVar<F>, SynthesisError> {
-    Boolean::le_bits_to_fp_var(&v.to_bits_le())
+    Boolean::le_bits_to_fp(&v.to_bits_le())
 }
 
 pub(crate) fn uint32_to_uint64<F: PrimeField>(v: &UInt32<F>) -> UInt64<F> {
@@ -47,13 +52,60 @@ where
     Ok(out)
 }
 
-/// A log2 function for small `usize` values
-pub(crate) fn log2(x: usize) -> usize {
-    (x as f32).log2().ceil() as usize
+fn uint8_to_bits_le<F: PrimeField>(a: &UInt8<F>) -> Vec<Boolean<F>> {
+    a.to_bits_le()
 }
 
-fn uint8_to_bits_le<F: PrimeField>(a: &UInt8<F>) -> Vec<Boolean<F>> {
-    a.to_bits_le().unwrap()
+/*
+
+pub(crate) fn uint16_lt<F: PrimeField>(
+    a: &UInt16<F>,
+    b: &UInt16<F>,
+) -> Result<Boolean<F>, SynthesisError> {
+    use ark_r1cs_std::{alloc::AllocVar, R1CSVar};
+    // Take the difference of the values. We need to ensure that this is in [0, 2¹⁶)
+    let cs = a.cs().or(b.cs());
+    let diff = b.as_fpvar()? - a.as_fpvar()?;
+    // Unwrap into an AllocatedFp
+    let diff = match a.as_fpvar()? - b.as_fpvar()? {
+        FpVar::Var(f) => f,
+        FpVar::Constant(f) => {
+            let is_within_uint_limit = f
+                .into_bigint()
+                .to_bits_le()
+                .into_iter()
+                .skip(16)
+                .any(|b| b == false);
+            return Ok(Boolean::constant(is_within_uint_limit));
+        },
+    };
+
+    let low_bit_vals: Vec<Option<bool>> = match diff.value() {
+        Ok(d) => ark_ff::BitIteratorLE::new(d.into_bigint())
+            .take(16)
+            .map(|b| Some(b))
+            .collect(),
+        Err(_) => vec![None; 16],
+    };
+
+    let low_bit_vars = low_bit_vals
+        .into_iter()
+        .map(|b| Boolean::new_witness(cs.clone(), || b.ok_or(SynthesisError::AssignmentMissing)))
+        .collect::<Result<Vec<Boolean<F>>, _>>()?;
+
+    let mut lc = LinearCombination::zero();
+    let mut coeff = F::one();
+
+    for bit in low_bit_vars.iter() {
+        lc = &lc + bit.lc() * coeff;
+        coeff.double_in_place();
+    }
+    lc = lc - diff.variable;
+    cs.enforce_constraint(lc!(), lc!(), lc)?;
+
+    // TODO: Make a boolean representing whether lc is satisfied
+
+    Ok(())
 }
 
 /// Returns true iff a < b
@@ -247,6 +299,8 @@ mod test {
         }
     }
 }
+*/
+
 /*
 impl ConstantTimeGreater for $t_u {
     /// Returns Choice::from(1) iff x > y, and Choice::from(0) iff x <= y.

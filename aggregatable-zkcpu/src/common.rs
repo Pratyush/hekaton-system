@@ -1,6 +1,8 @@
 //! Contains data pub(crate) types used in various parts of the ZKCPU
 
-use crate::{util::log2, word::WordVar};
+use crate::word::WordVar;
+
+use tinyram_emu::word::Word;
 
 use core::cmp::Ordering;
 
@@ -9,6 +11,7 @@ use ark_r1cs_std::{
     bits::ToBitsGadget, boolean::Boolean, eq::EqGadget, fields::fp::FpVar, uint8::UInt8, R1CSVar,
 };
 use ark_relations::r1cs::{ConstraintSystemRef, SynthesisError};
+use ark_std::log2;
 
 /// Program counter, in ZK land
 pub(crate) type PcVar<W> = W;
@@ -80,7 +83,7 @@ impl<F: PrimeField> RegIdxVar<F> {
     pub(crate) fn as_selector<const NUM_REGS: usize>(
         &self,
     ) -> Result<Vec<Boolean<F>>, SynthesisError> {
-        let selector_bitlen = log2(NUM_REGS);
+        let selector_bitlen = log2(NUM_REGS) as usize;
         let mut bits = self.0.to_bits_be()?;
         // Select the bottom selector_bitlen bits
         Ok(bits.split_off(8 - selector_bitlen))
@@ -102,7 +105,7 @@ impl<F: PrimeField> RegIdxVar<F> {
     }
 
     pub(crate) fn to_fpvar(&self) -> Result<FpVar<F>, SynthesisError> {
-        Boolean::le_bits_to_fp_var(&self.0.to_bits_le()?)
+        Boolean::le_bits_to_fp(&self.0.to_bits_le())
     }
 }
 
@@ -127,7 +130,7 @@ impl<W: WordVar<F>, F: PrimeField> ImmOrRegisterVar<W, F> {
     pub(crate) fn as_selector<const NUM_REGS: usize>(
         &self,
     ) -> Result<Vec<Boolean<F>>, SynthesisError> {
-        let selector_bitlen = log2(NUM_REGS);
+        let selector_bitlen = log2(NUM_REGS) as usize;
         let mut bits = self.val.as_be_bits();
         // Select the bottom selector_bitlen bits
         Ok(bits.split_off(W::BITLEN - selector_bitlen))
@@ -142,11 +145,10 @@ impl<W: WordVar<F>, F: PrimeField> ImmOrRegisterVar<W, F> {
         let imm_val = self.val.clone();
 
         // Check that, if this is a regsiter index, it is less than NUM_REGS
-        let num_regs = FpVar::Constant(F::from(NUM_REGS as u64));
+        let num_regs = W::constant(W::NativeWord::from_u64(NUM_REGS as u64).unwrap());
         imm_val
-            .as_fpvar()?
-            .is_cmp(&num_regs, Ordering::Less, false)?
-            .conditional_enforce_equal(&Boolean::TRUE, &self.is_imm.not())?;
+            .word_is_lt(&num_regs)?
+            .conditional_enforce_equal(&Boolean::TRUE, &!self.is_imm.clone())?;
 
         // Select the immediate or register value
         W::conditionally_select(&self.is_imm, &imm_val, &reg_val)

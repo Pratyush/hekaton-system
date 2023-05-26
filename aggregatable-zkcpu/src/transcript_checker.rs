@@ -1,6 +1,5 @@
 use crate::{
     exec_checker::{exec_checker, CpuStateVar},
-    util::{log2, uint64_lt},
     word::{DWordVar, WordVar},
 };
 
@@ -26,6 +25,7 @@ use ark_relations::{
     ns,
     r1cs::{ConstraintSystemRef, Namespace, SynthesisError},
 };
+use ark_std::log2;
 use rand::Rng;
 
 /// A timestamp in the memory access transcript
@@ -62,7 +62,7 @@ impl<F: PrimeField> RunningEvalVar<F> {
         // The field repr of mem_op is 0 iff it's a tape op or padding
         let field_repr = {
             let ff = mem_op.as_ff(false)?;
-            let cond = mem_op.is_tape_op()?.or(&mem_op.is_padding)?;
+            let cond = mem_op.is_tape_op()? | &mem_op.is_padding;
             FpVar::conditionally_select(&cond, &FpVar::zero(), &ff)?
         };
 
@@ -95,7 +95,7 @@ impl<F: PrimeField> RunningEvalVar<F> {
         // The field repr of mem_op is 0 iff it's a tape op or padding
         let field_repr = {
             let ff = mem_op.as_ff_notime(false)?;
-            let cond = mem_op.is_tape_op()?.or(&mem_op.is_padding)?;
+            let cond = mem_op.is_tape_op()? | &mem_op.is_padding;
             FpVar::conditionally_select(&cond, &FpVar::zero(), &ff)?
         };
 
@@ -451,12 +451,12 @@ impl<WV: WordVar<F>, F: PrimeField> ProcessedTranscriptEntryVar<WV, F> {
         let is_aux = self
             .op
             .is_eq(&FpVar::Constant(F::from(MemOpKind::ReadAux as u8)))?;
-        is_primary.or(&is_aux)
+        Ok(is_primary | is_aux)
     }
 
     /// Returns whether this memory operation is a `load` or `store`
     fn is_ram_op(&self) -> Result<Boolean<F>, SynthesisError> {
-        Ok(self.is_tape_op()?.not())
+        Ok(!self.is_tape_op()?)
     }
 }
 
@@ -525,7 +525,7 @@ impl<WV: WordVar<F>, F: PrimeField> ProcessedTranscriptEntryVar<WV, F> {
         // load is the correct dword, i.e., all but the bottom bitmask bits of idx and self.location
         // match.
         let bytes_per_word = WV::BITLEN / 8;
-        let word_bitmask_len = log2(bytes_per_word);
+        let word_bitmask_len = log2(bytes_per_word) as usize;
         let dword_bitmask_len = word_bitmask_len + 1;
 
         let idx_bits = idx.as_le_bits();
@@ -539,7 +539,7 @@ impl<WV: WordVar<F>, F: PrimeField> ProcessedTranscriptEntryVar<WV, F> {
                 .into_iter()
                 .skip(dword_bitmask_len),
         ) {
-            err = err.or(&b1.is_neq(&b2)?)?;
+            err |= b1.is_neq(&b2)?;
         }
 
         // Now get the word-aligned index and use the lowest word bit to select the word
@@ -583,10 +583,9 @@ pub struct TranscriptCheckerEvalsVar<F: PrimeField> {
 
 impl<F: PrimeField> EqGadget<F> for TranscriptCheckerEvalsVar<F> {
     fn is_eq(&self, other: &Self) -> Result<Boolean<F>, SynthesisError> {
-        self.time_tr_exec
-            .is_eq(&other.time_tr_exec)?
-            .and(&self.mem_tr_exec.is_eq(&other.mem_tr_exec)?)?
-            .and(&self.tr_init_accessed.is_eq(&other.tr_init_accessed)?)
+        Ok(self.time_tr_exec.is_eq(&other.time_tr_exec)?
+            & self.mem_tr_exec.is_eq(&other.mem_tr_exec)?
+            & self.tr_init_accessed.is_eq(&other.tr_init_accessed)?)
     }
 }
 
@@ -651,7 +650,7 @@ pub fn transcript_checker<const NUM_REGS: usize, WV: WordVar<F>, F: PrimeField>(
     // pc_load occurs at time t
     let t = instr_load.timestamp.clone();
     // mem_op, if defined, occurs at time t
-    let t_plus_one = TimestampVar::addmany(&[t, TimestampVar::constant(1)])?;
+    let t_plus_one = TimestampVar::wrapping_add_many(&[t, TimestampVar::constant(1)])?;
 
     let is_padding = &mem_op.is_padding;
 
@@ -667,15 +666,12 @@ pub fn transcript_checker<const NUM_REGS: usize, WV: WordVar<F>, F: PrimeField>(
     // transcript. Concretely, we check
     //       ¬mem_op.is_padding
     //     ∨ mem_op.is_load()
-    is_padding
-        .not()
-        .or(&mem_op.is_load()?)?
-        .enforce_equal(&Boolean::TRUE)?;
+    (!is_padding | mem_op.is_load()?).enforce_equal(&Boolean::TRUE)?;
 
     // If mem_op is a real entry, i.e., not padding, it must have timestamp t + 1
     mem_op
         .timestamp
-        .conditional_enforce_equal(&t_plus_one, &mem_op.is_padding.not())?;
+        .conditional_enforce_equal(&t_plus_one, &!mem_op.is_padding.clone())?;
 
     // We're gonna update our running evals
     let mut new_evals = evals.clone();
@@ -720,19 +716,13 @@ pub fn transcript_checker<const NUM_REGS: usize, WV: WordVar<F>, F: PrimeField>(
         cur.is_ram_op()?.enforce_equal(&Boolean::TRUE)?;
         // For the same reasons as earlier in this function, ensure that, if these ops are padding,
         // they are `load` ops
-        prev.is_padding
-            .not()
-            .or(&prev.is_load()?)?
-            .enforce_equal(&Boolean::TRUE)?;
-        cur.is_padding
-            .not()
-            .or(&prev.is_load()?)?
-            .enforce_equal(&Boolean::TRUE)?;
+        (!&prev.is_padding | prev.is_load()?).enforce_equal(&Boolean::TRUE)?;
+        (!&cur.is_padding | prev.is_load()?).enforce_equal(&Boolean::TRUE)?;
 
         // Check that padding never changes the memory location from the previous location. That
         // is, padding → locations are equal
         let loc_is_eq = prev.location.is_eq(&cur.location)?;
-        let cond = cur.is_padding.not().or(&loc_is_eq)?;
+        let cond = !&cur.is_padding | &loc_is_eq;
         cond.enforce_equal(&Boolean::TRUE)?;
 
         // These asserts are taken from Figure 5 in Constant-Overhead Zero-Knowledge for RAM
@@ -742,13 +732,13 @@ pub fn transcript_checker<const NUM_REGS: usize, WV: WordVar<F>, F: PrimeField>(
         //       prev.location < cur.location
         //     ∨ (prev.location == cur.location ∧ prev.timestamp < cur.timestamp);
         let num_constraints_pre_cmp = cs.num_constraints();
-        let loc_has_incrd = uint64_lt(&prev.location, &cur.location)?;
+        let loc_has_incrd = prev.location.is_lt(&cur.location)?;
         println!(
             "Cost of UInt64 cmp: {} constraints",
             cs.num_constraints() - num_constraints_pre_cmp
         );
-        let t_has_incrd = uint64_lt(&prev.timestamp, &cur.timestamp)?;
-        let cond = loc_has_incrd.or(&loc_is_eq.and(&t_has_incrd)?)?;
+        let t_has_incrd = &prev.timestamp.is_lt(&cur.timestamp)?;
+        let cond = loc_has_incrd | (loc_is_eq & t_has_incrd);
         cond.enforce_equal(&Boolean::TRUE)?;
 
         // Check that two adjacent LOADs on the same idx produced the same value. That is, check
@@ -758,7 +748,7 @@ pub fn transcript_checker<const NUM_REGS: usize, WV: WordVar<F>, F: PrimeField>(
         let loc_is_neq = prev.location.is_neq(&cur.location)?;
         let val_is_eq = prev.val_fp.is_eq(&cur.val_fp)?;
         let op_is_store = cur.is_store()?;
-        let cond = loc_is_neq.or(&val_is_eq)?.or(&op_is_store)?;
+        let cond = &loc_is_neq | val_is_eq | op_is_store;
         cond.enforce_equal(&Boolean::TRUE)?;
 
         // On every tick, absorb all but the first entry in to the mem-sorted execution trace. This
@@ -774,7 +764,7 @@ pub fn transcript_checker<const NUM_REGS: usize, WV: WordVar<F>, F: PrimeField>(
         // 0), since padding is never an initial load. padding is always a repetition of the last
         // mem op (converted to a load, if need be). We also don't have to check that cur is a tape
         // op (which also makes the field repr equal 0), since that's enforced to be false above.
-        let is_new_load = loc_is_neq.and(&cur.is_load()?)?;
+        let is_new_load = loc_is_neq & cur.is_load()?;
         new_evals
             .tr_init_accessed
             .conditionally_update_with_ram_op_notime(&is_new_load, &cur, chal)?;

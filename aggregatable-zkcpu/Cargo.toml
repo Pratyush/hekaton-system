@@ -11,12 +11,17 @@ categories = ["cryptography", "no-std"]
 [dependencies]
 ark-ff = {version = "0.4", default-features = false }
 ark-poly = { version = "0.4.0" }
-ark-r1cs-std = { version = "0.4", default-features = false }
+#ark-r1cs-std = { version = "0.4", default-features = false }
 ark-relations = { version = "0.4", default-features = false, features = ["std"] }
 ark-serialize = { version = "0.4", default-features = false }
 rand = "0.8"
 tinyram-emu = { path = "../tinyram-emu" }
 cp-groth16 = { path = "../cp-groth16" }
+ark-std = "0.4.0"
+
+[dependencies.ark-r1cs-std]
+git = "ssh://git@github.com/arkworks-rs/r1cs-std.git"
+branch = "refactor-uints"
 
 [dev-dependencies]
 ark-bls12-381 = "0.4"
