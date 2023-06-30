@@ -148,11 +148,11 @@ fn decode_instr<const NUM_REGS: usize, WV: WordVar<F>, F: PrimeField>(
     cur_bit_idx += WV::BITLEN;
 
     let reg2: RegIdxVar<F> =
-        RegIdxVar::<F>::from_bits_le(&instr_bits[cur_bit_idx..cur_bit_idx + regidx_bitlen]);
+        RegIdxVar::<F>::from_le_bits(&instr_bits[cur_bit_idx..cur_bit_idx + regidx_bitlen]);
     cur_bit_idx += regidx_bitlen;
 
     let reg1: RegIdxVar<F> =
-        RegIdxVar::<F>::from_bits_le(&instr_bits[cur_bit_idx..cur_bit_idx + regidx_bitlen]);
+        RegIdxVar::<F>::from_le_bits(&instr_bits[cur_bit_idx..cur_bit_idx + regidx_bitlen]);
     cur_bit_idx += regidx_bitlen;
 
     let is_imm: Boolean<F> = instr_bits[cur_bit_idx].clone();
@@ -594,7 +594,13 @@ where
     WV: WordVar<F>,
     F: PrimeField,
 {
-    state: CpuStateVar<WV, F>,
+    pub(crate) pc: PcVar<WV>,
+    pub(crate) flag: Boolean<F>,
+    pub(crate) reg_to_write: RegIdxVar<F>,
+    pub(crate) reg_val: WV,
+    pub(crate) answer: CpuAnswerVar<WV, F>,
+    pub(crate) primary_tape_pos: TapeHeadPosVar<F>,
+    pub(crate) aux_tape_pos: TapeHeadPosVar<F>,
     err: Boolean<F>,
 }
 
@@ -604,7 +610,17 @@ where
     F: PrimeField,
 {
     fn to_bits_le(&self) -> Result<Vec<Boolean<F>>, SynthesisError> {
-        Ok([self.state.to_bits_le().unwrap(), vec![self.err.clone()]].concat())
+        Ok([
+            self.pc.as_le_bits(),
+            vec![self.flag.clone()],
+            self.reg_to_write.to_bits_le().unwrap(),
+            self.reg_val.as_le_bits(),
+            self.answer.to_bits_le().unwrap(),
+            self.primary_tape_pos.as_le_bits(),
+            self.aux_tape_pos.as_le_bits(),
+            vec![self.err.clone()],
+        ]
+        .concat())
     }
 }
 
@@ -614,14 +630,35 @@ impl<WV: WordVar<F>, F: PrimeField> InstrResult<WV, F> {
     // TODO: Figure out whether invalid instructions are necessarily errors
     fn default<const NUM_REGS: usize>() -> Self {
         InstrResult {
-            state: CpuStateVar::default::<NUM_REGS>(),
+            pc: WV::zero(),
+            flag: Boolean::FALSE,
+            reg_to_write: RegIdxVar::zero(),
+            reg_val: WV::zero(),
+            answer: CpuAnswerVar::default(),
+            primary_tape_pos: TapeHeadPosVar::zero(),
+            aux_tape_pos: TapeHeadPosVar::zero(),
             err: Boolean::TRUE,
         }
     }
 
     /// Returns the size of this CpuStateVar when serialized to bits
     fn bitlen<const NUM_REGS: usize>() -> usize {
-        CpuStateVar::<WV, _>::bitlen::<NUM_REGS>() + 1
+        let pc_len = WV::BITLEN;
+        let flag_len = 1;
+        let reg_to_write_len = RegIdxVar::<F>::BITLEN;
+        let reg_val_len = WV::BITLEN;
+        let answer_len = WV::BITLEN + 1;
+        let primary_tape_pos_len = <TapeHeadPosVar<F> as WordVar<F>>::BITLEN;
+        let aux_tape_pos_len = <TapeHeadPosVar<F> as WordVar<F>>::BITLEN;
+        let err_len = 1;
+        pc_len
+            + flag_len
+            + reg_to_write_len
+            + reg_val_len
+            + answer_len
+            + primary_tape_pos_len
+            + aux_tape_pos_len
+            + err_len
     }
 
     // TODO: Make a FromBitsGadget that has this method. This requires CpuStateVar being made
@@ -630,11 +667,48 @@ impl<WV: WordVar<F>, F: PrimeField> InstrResult<WV, F> {
     fn from_bits_le<const NUM_REGS: usize>(bits: &[Boolean<F>]) -> Self {
         assert_eq!(bits.len(), Self::bitlen::<NUM_REGS>());
 
-        let state_bitlen = CpuStateVar::<WV, _>::bitlen::<NUM_REGS>();
-        let state = CpuStateVar::from_bits_le::<NUM_REGS>(&bits[..state_bitlen]);
-        let err = bits[state_bitlen].clone();
+        let pc_len = WV::BITLEN;
+        let answer_len = WV::BITLEN + 1;
+        let tape_pos_len = <TapeHeadPosVar<F> as WordVar<F>>::BITLEN;
 
-        InstrResult { state, err }
+        // Keep a cursor into the bits array
+        let mut idx = 0;
+
+        let pc = PcVar::from_le_bits(&bits[idx..idx + pc_len]);
+        idx += pc_len;
+
+        let flag = bits[idx].clone();
+        idx += 1;
+
+        let reg_to_write = RegIdxVar::from_le_bits(&bits[idx..idx + RegIdxVar::<F>::BITLEN]);
+        idx += RegIdxVar::<F>::BITLEN;
+
+        let reg_val = WV::from_le_bits(&bits[idx..idx + WV::BITLEN]);
+        idx += WV::BITLEN;
+
+        let answer = CpuAnswerVar::from_bits_le(&bits[idx..idx + answer_len]);
+        idx += answer_len;
+
+        let primary_tape_pos = TapeHeadPosVar::from_le_bits(&bits[idx..idx + tape_pos_len]);
+        idx += tape_pos_len;
+        let aux_tape_pos = TapeHeadPosVar::from_le_bits(&bits[idx..idx + tape_pos_len]);
+        idx += tape_pos_len;
+
+        let err = bits[idx].clone();
+        idx += 1;
+
+        _ = idx;
+
+        InstrResult {
+            pc,
+            flag,
+            reg_to_write,
+            reg_val,
+            answer,
+            primary_tape_pos,
+            aux_tape_pos,
+            err,
+        }
     }
 
     // TODO: Make this generic for anything with `FromBitsGadget`. This is copied verbatim from
@@ -691,7 +765,8 @@ fn run_instr<WV: WordVar<F>, F: PrimeField>(
     op: Opcode,
     cpu_state: &CpuStateVar<WV, F>,
     mem_op: &ProcessedTranscriptEntryVar<WV, F>,
-    reg1: &FpVar<F>,
+    reg1: &RegIdxVar<F>,
+    reg1_val: &WV,
     reg2_val: &WV,
     imm_or_reg_val: &WV,
     incrd_pc: &WV,
@@ -706,45 +781,52 @@ fn run_instr<WV: WordVar<F>, F: PrimeField>(
         aux_tape_pos,
     } = cpu_state;
 
+    // The first register, if given, is always the output register
+    let reg_to_write = reg1.clone();
+    // The default value to write to the first register is itself, i.e., do a no-op.
+    let reg_val = reg1_val.clone();
+
     use Opcode::*;
     match op {
         Add => {
-            let (output_val, new_flag) = reg2_val.carrying_add(&imm_or_reg_val)?;
-            let new_regs = arr_set(&regs, reg1, &output_val)?;
+            // New reg val is the sum of the inputs
+            let (reg_val, new_flag) = reg2_val.carrying_add(&imm_or_reg_val)?;
 
             // The PC is incremented (need to check overflow), and the flag and registers are new.
             let mut err = pc_overflow.clone();
-            let state = CpuStateVar {
-                pc: incrd_pc.clone(),
-                flag: new_flag,
-                regs: new_regs,
-                answer: answer.clone(),
-                primary_tape_pos: primary_tape_pos.clone(),
-                aux_tape_pos: aux_tape_pos.clone(),
-            };
             // add is not a memory operation. This MUST be padding.
             err |= !&mem_op.is_padding;
 
-            Ok(InstrResult { state, err })
-        },
-        Xor => {
-            let output_val = reg2_val.xor(&imm_or_reg_val)?;
-            let new_regs = arr_set(&regs, reg1, &output_val)?;
-
-            // The PC is incremented (need to check overflow), and the registers are new.
-            let mut err = pc_overflow.clone();
-            let state = CpuStateVar {
+            Ok(InstrResult {
                 pc: incrd_pc.clone(),
-                flag: flag.clone(),
-                regs: new_regs,
+                flag: new_flag,
+                reg_to_write,
+                reg_val,
                 answer: answer.clone(),
                 primary_tape_pos: primary_tape_pos.clone(),
                 aux_tape_pos: aux_tape_pos.clone(),
-            };
+                err,
+            })
+        },
+        Xor => {
+            // New reg val is the xor of the inputs
+            let reg_val = reg2_val.xor(&imm_or_reg_val)?;
+
+            // The PC is incremented (need to check overflow), and the registers are new.
+            let mut err = pc_overflow.clone();
             // xor is not a memory operation. This MUST be padding.
             err |= !&mem_op.is_padding;
 
-            Ok(InstrResult { state, err })
+            Ok(InstrResult {
+                pc: incrd_pc.clone(),
+                flag: flag.clone(),
+                reg_to_write,
+                reg_val,
+                answer: answer.clone(),
+                primary_tape_pos: primary_tape_pos.clone(),
+                aux_tape_pos: aux_tape_pos.clone(),
+                err,
+            })
         },
         CmpE => {
             // Compare the two input values
@@ -752,35 +834,37 @@ fn run_instr<WV: WordVar<F>, F: PrimeField>(
 
             //  The PC is incremented (need to check overflow), and the flag is new
             let mut err = pc_overflow.clone();
-            let state = CpuStateVar {
-                pc: incrd_pc.clone(),
-                flag: new_flag,
-                regs: regs.clone(),
-                answer: answer.clone(),
-                primary_tape_pos: primary_tape_pos.clone(),
-                aux_tape_pos: aux_tape_pos.clone(),
-            };
             // cmpe is not a memory operation. This MUST be padding.
             err |= !&mem_op.is_padding;
 
-            Ok(InstrResult { state, err })
+            Ok(InstrResult {
+                pc: incrd_pc.clone(),
+                flag: new_flag,
+                reg_to_write,
+                reg_val,
+                answer: answer.clone(),
+                primary_tape_pos: primary_tape_pos.clone(),
+                aux_tape_pos: aux_tape_pos.clone(),
+                err,
+            })
         },
         Jmp => {
             // Set the new PC to be the imm-or-reg
             let new_pc = imm_or_reg_val.clone();
 
-            let state = CpuStateVar {
-                pc: new_pc,
-                flag: flag.clone(),
-                regs: regs.clone(),
-                answer: answer.clone(),
-                primary_tape_pos: primary_tape_pos.clone(),
-                aux_tape_pos: aux_tape_pos.clone(),
-            };
             // cmpe is not a memory operation. This MUST be padding.
             let err = !&mem_op.is_padding;
 
-            Ok(InstrResult { state, err })
+            Ok(InstrResult {
+                pc: new_pc,
+                flag: flag.clone(),
+                reg_to_write,
+                reg_val,
+                answer: answer.clone(),
+                primary_tape_pos: primary_tape_pos.clone(),
+                aux_tape_pos: aux_tape_pos.clone(),
+                err,
+            })
         },
         CJmp => {
             // Let pc' = imm_or_reg_val if flag is set. Otherwise, let pc' = pc + 1
@@ -790,79 +874,80 @@ fn run_instr<WV: WordVar<F>, F: PrimeField>(
             let used_incrd_pc = !flag;
             let relevant_pc_overflow = pc_overflow & used_incrd_pc;
             let mut err = relevant_pc_overflow.clone();
-
-            let state = CpuStateVar {
-                pc: new_pc,
-                flag: flag.clone(),
-                regs: regs.clone(),
-                answer: answer.clone(),
-                primary_tape_pos: primary_tape_pos.clone(),
-                aux_tape_pos: aux_tape_pos.clone(),
-            };
             // cjmp is not a memory operation. This MUST be padding.
             err |= !&mem_op.is_padding;
 
-            Ok(InstrResult { state, err })
+            Ok(InstrResult {
+                pc: new_pc,
+                flag: flag.clone(),
+                reg_to_write,
+                reg_val,
+                answer: answer.clone(),
+                primary_tape_pos: primary_tape_pos.clone(),
+                aux_tape_pos: aux_tape_pos.clone(),
+                err,
+            })
         },
         Answer => {
-            let state = CpuStateVar {
+            // answer is not a memory operation. This MUST be padding.
+            let err = !&mem_op.is_padding;
+
+            Ok(InstrResult {
                 pc: incrd_pc.clone(),
                 flag: flag.clone(),
-                regs: regs.clone(),
+                reg_to_write,
+                reg_val,
                 answer: CpuAnswerVar {
                     is_set: Boolean::TRUE,
                     val: imm_or_reg_val.clone(),
                 },
                 primary_tape_pos: primary_tape_pos.clone(),
                 aux_tape_pos: aux_tape_pos.clone(),
-            };
-            // answer is not a memory operation. This MUST be padding.
-            let err = !&mem_op.is_padding;
-
-            Ok(InstrResult { state, err })
+                err,
+            })
         },
         LoadW => {
             // Get the correct word from the memory op, and save it in the register
-            let (loaded_word, mut err) = mem_op.select_word(&imm_or_reg_val)?;
-            let new_regs = arr_set(&regs, reg1, &loaded_word)?;
+            let (reg_val, mut err) = mem_op.select_word(&imm_or_reg_val)?;
 
             // The PC is incremented (need to check overflow), and the registers are new.
             err |= pc_overflow;
-            let state = CpuStateVar {
-                pc: incrd_pc.clone(),
-                flag: flag.clone(),
-                regs: new_regs,
-                answer: answer.clone(),
-                primary_tape_pos: primary_tape_pos.clone(),
-                aux_tape_pos: aux_tape_pos.clone(),
-            };
             // load.w is a memory operation. This MUST NOT be padding.
             err |= &mem_op.is_padding;
 
-            Ok(InstrResult { state, err })
+            Ok(InstrResult {
+                pc: incrd_pc.clone(),
+                flag: flag.clone(),
+                reg_to_write,
+                reg_val,
+                answer: answer.clone(),
+                primary_tape_pos: primary_tape_pos.clone(),
+                aux_tape_pos: aux_tape_pos.clone(),
+                err,
+            })
         },
         StoreW => {
             // Storing doesn't change anything. We don't have to do anything here
 
             // The PC is incremented (need to check overflow)
             let mut err = pc_overflow.clone();
-            let state = CpuStateVar {
-                pc: incrd_pc.clone(),
-                flag: flag.clone(),
-                regs: regs.clone(),
-                answer: answer.clone(),
-                primary_tape_pos: primary_tape_pos.clone(),
-                aux_tape_pos: aux_tape_pos.clone(),
-            };
             // store.w is a memory operation. This MUST NOT be padding.
             err |= &mem_op.is_padding;
 
-            Ok(InstrResult { state, err })
+            Ok(InstrResult {
+                pc: incrd_pc.clone(),
+                flag: flag.clone(),
+                reg_to_write,
+                reg_val,
+                answer: answer.clone(),
+                primary_tape_pos: primary_tape_pos.clone(),
+                aux_tape_pos: aux_tape_pos.clone(),
+                err,
+            })
         },
         Read => {
             // Get the correct word from the memory op, and save it in the register
-            let read_word = mem_op.val_low_word();
-            let new_regs = arr_set(&regs, reg1, &read_word)?;
+            let reg_val = mem_op.val_low_word();
 
             // Learn which tape is being read
             let is_primary = mem_op
@@ -902,23 +987,23 @@ fn run_instr<WV: WordVar<F>, F: PrimeField>(
             let new_flag = is_invalid_tape | is_out_of_bounds;
 
             // Make sure that the val is 0 when the flag is set
-            err |= &new_flag & read_word.is_neq(&WV::zero())?;
-
+            err |= &new_flag & reg_val.is_neq(&WV::zero())?;
             // The PC is incremented (need to check overflow), the registers are new, and so is one
             // of the tape heads.
             err |= pc_overflow;
-            let state = CpuStateVar {
-                pc: incrd_pc.clone(),
-                flag: new_flag,
-                regs: new_regs,
-                answer: answer.clone(),
-                primary_tape_pos: new_primary_tape_pos,
-                aux_tape_pos: new_aux_tape_pos,
-            };
             // read is a memory operation. This MUST NOT be padding.
             err |= &mem_op.is_padding;
 
-            Ok(InstrResult { state, err })
+            Ok(InstrResult {
+                pc: incrd_pc.clone(),
+                flag: new_flag,
+                reg_to_write,
+                reg_val,
+                answer: answer.clone(),
+                primary_tape_pos: new_primary_tape_pos,
+                aux_tape_pos: new_aux_tape_pos,
+                err,
+            })
         },
         _ => todo!(),
     }
@@ -967,8 +1052,10 @@ pub(crate) fn exec_checker<const NUM_REGS: usize, WV: WordVar<F>, F: PrimeField>
     //];
 
     // Read the registers
-    // reg1 (if used) is always the output register. So we don't need to read that
+    // reg1 (if used) is always the output register. We need to read that in case the operation
+    //     doesn't modify registers, and we need to overwrite reg1 with itself (as a no-op)
     // reg2 (if used) is always a secondary input
+    let reg1_val = reg1.value::<NUM_REGS, _>(&regs)?;
     let reg2_val = reg2.value::<NUM_REGS, _>(&regs)?;
     // imm_or_reg is always present
     let imm_or_reg_val = {
@@ -980,7 +1067,6 @@ pub(crate) fn exec_checker<const NUM_REGS: usize, WV: WordVar<F>, F: PrimeField>
 
         WV::conditionally_select(&imm_or_reg.is_imm, &imm_val, &reg_val)?
     };
-    let reg1_fp = reg1.to_fpvar()?;
 
     let cs = cpu_state.cs();
     println!(
@@ -995,7 +1081,8 @@ pub(crate) fn exec_checker<const NUM_REGS: usize, WV: WordVar<F>, F: PrimeField>
             opcode,
             cpu_state,
             mem_op,
-            &reg1_fp,
+            &reg1,
+            &reg1_val,
             &reg2_val,
             &imm_or_reg_val,
             &incrd_pc,
@@ -1029,7 +1116,31 @@ pub(crate) fn exec_checker<const NUM_REGS: usize, WV: WordVar<F>, F: PrimeField>
     // Check that this operation didn't error
     chosen_output.err.enforce_equal(&Boolean::FALSE)?;
 
-    Ok(chosen_output.state)
+    // Convert the result into a full CPU state. This means conditionally setting each register
+    let reg_to_write = chosen_output.reg_to_write.to_fpvar()?;
+
+    // Overwrite the `reg_to_write`-th register with the value in chosen_output.reg_val
+    let new_regs = cpu_state
+        .regs
+        .iter()
+        .enumerate()
+        .map(|(i, existing_val)| {
+            let idx_is_eq = reg_to_write.is_eq(&FpVar::constant(F::from(i as u8)))?;
+            WV::conditionally_select(&idx_is_eq, &chosen_output.reg_val, existing_val)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    println!("Num constraints post-unpacking {}", cs.num_constraints());
+
+    // Output the full CPU state
+    Ok(CpuStateVar {
+        pc: chosen_output.pc,
+        flag: chosen_output.flag,
+        regs: new_regs,
+        answer: chosen_output.answer,
+        primary_tape_pos: chosen_output.primary_tape_pos,
+        aux_tape_pos: chosen_output.aux_tape_pos,
+    })
 }
 
 #[cfg(test)]

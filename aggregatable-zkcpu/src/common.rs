@@ -54,6 +54,7 @@ impl<F: PrimeField> R1CSVar<F> for OpcodeVar<F> {
 
 /// An index into the registers, in ZK land
 // This is a UInt8 because the number of registers cannot exceed 256
+#[derive(Clone)]
 pub(crate) struct RegIdxVar<F: PrimeField>(pub(crate) UInt8<F>);
 
 impl<F: PrimeField> R1CSVar<F> for RegIdxVar<F> {
@@ -68,8 +69,29 @@ impl<F: PrimeField> R1CSVar<F> for RegIdxVar<F> {
     }
 }
 
+impl<'a, F: PrimeField> ToBitsGadget<F> for &'a RegIdxVar<F>
+where
+    F: PrimeField,
+{
+    fn to_bits_le(&self) -> Result<Vec<Boolean<F>>, SynthesisError> {
+        Ok(self.0.to_bits_le())
+    }
+}
+
+impl<F: PrimeField> ToBitsGadget<F> for RegIdxVar<F> {
+    fn to_bits_le(&self) -> Result<Vec<Boolean<F>>, SynthesisError> {
+        <&Self>::to_bits_le(&self)
+    }
+}
+
 impl<F: PrimeField> RegIdxVar<F> {
-    pub(crate) fn from_bits_le(bits: &[Boolean<F>]) -> Self {
+    pub(crate) const BITLEN: usize = 8;
+
+    pub(crate) fn zero() -> Self {
+        RegIdxVar(UInt8::zero())
+    }
+
+    pub(crate) fn from_le_bits(bits: &[Boolean<F>]) -> Self {
         assert!(bits.len() <= 8);
 
         // Pad out the remaining bits to get to a byte

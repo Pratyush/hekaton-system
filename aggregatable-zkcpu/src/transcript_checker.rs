@@ -733,14 +733,14 @@ pub fn transcript_checker<const NUM_REGS: usize, WV: WordVar<F>, F: PrimeField>(
         //     ∨ (prev.location == cur.location ∧ prev.timestamp < cur.timestamp);
         let loc_has_incrd = prev.location.is_lt(&cur.location)?;
         let t_has_incrd = &prev.timestamp.is_lt(&cur.timestamp)?;
-        let cond = loc_has_incrd | (loc_is_eq & t_has_incrd);
+        let cond = loc_has_incrd | (&loc_is_eq & t_has_incrd);
         cond.enforce_equal(&Boolean::TRUE)?;
 
         // Check that two adjacent LOADs on the same idx produced the same value. That is, check
         //       prev.location != cur.location
         //     ∨ prev.val == cur.val
         //     ∨ cur.op == STORE;
-        let loc_is_neq = prev.location.is_neq(&cur.location)?;
+        let loc_is_neq = !loc_is_eq;
         let val_is_eq = prev.val_fp.is_eq(&cur.val_fp)?;
         let op_is_store = cur.is_store()?;
         let cond = &loc_is_neq | val_is_eq | op_is_store;
