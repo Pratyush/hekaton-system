@@ -8,7 +8,7 @@ use core::cmp::Ordering;
 
 use ark_ff::PrimeField;
 use ark_r1cs_std::{
-    bits::ToBitsGadget, boolean::Boolean, eq::EqGadget, fields::fp::FpVar, uint8::UInt8, R1CSVar,
+    convert::ToBitsGadget, boolean::Boolean, eq::EqGadget, fields::fp::FpVar, uint8::UInt8, R1CSVar,
 };
 use ark_relations::r1cs::{ConstraintSystemRef, SynthesisError};
 use ark_std::log2;
@@ -74,7 +74,7 @@ where
     F: PrimeField,
 {
     fn to_bits_le(&self) -> Result<Vec<Boolean<F>>, SynthesisError> {
-        Ok(self.0.to_bits_le())
+        self.0.to_bits_le()
     }
 }
 
@@ -127,7 +127,7 @@ impl<F: PrimeField> RegIdxVar<F> {
     }
 
     pub(crate) fn to_fpvar(&self) -> Result<FpVar<F>, SynthesisError> {
-        Boolean::le_bits_to_fp(&self.0.to_bits_le())
+        self.0.to_fp()
     }
 }
 
@@ -167,9 +167,9 @@ impl<W: WordVar<F>, F: PrimeField> ImmOrRegisterVar<W, F> {
         let imm_val = self.val.clone();
 
         // Check that, if this is a regsiter index, it is less than NUM_REGS
-        let num_regs = W::constant(W::NativeWord::from_u64(NUM_REGS as u64).unwrap());
+        let num_regs = W::constant(W::Native::from_u64(NUM_REGS as u64).unwrap());
         imm_val
-            .word_is_lt(&num_regs)?
+            .is_lt(&num_regs)?
             .conditional_enforce_equal(&Boolean::TRUE, &!self.is_imm.clone())?;
 
         // Select the immediate or register value

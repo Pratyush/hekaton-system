@@ -1,39 +1,40 @@
 use core::{borrow::Borrow, fmt::Debug, marker::PhantomData};
+use std::ops::{BitXor, BitAnd, BitOr};
 
 use tinyram_emu::word::Word;
 
 use ark_ff::PrimeField;
 use ark_r1cs_std::{
     alloc::{AllocVar, AllocationMode},
-    bits::{uint16::UInt16, uint32::UInt32, uint64::UInt64, uint8::UInt8, ToBitsGadget},
+    uint16::UInt16, uint32::UInt32, uint64::UInt64, uint8::UInt8, convert::ToBitsGadget,
     boolean::Boolean,
     eq::EqGadget,
     fields::fp::FpVar,
     select::CondSelectGadget,
-    R1CSVar,
+    R1CSVar, cmp::CmpGadget,
 };
 use ark_relations::{
     ns,
     r1cs::{ConstraintSystemRef, Namespace, SynthesisError},
 };
 
-pub(crate) type DWord<W> = (W, W);
+pub(crate) type DoubleWord<W> = (W, W);
 
 #[derive(Clone)]
-pub struct DWordVar<W: WordVar<F>, F: PrimeField> {
+pub struct DoubleWordVar<W: WordVar<F>, F: PrimeField> {
     pub(crate) w0: W,
     pub(crate) w1: W,
     _marker: PhantomData<F>,
 }
 
-impl<W: WordVar<F>, F: PrimeField> EqGadget<F> for DWordVar<W, F> {
+impl<W: WordVar<F>, F: PrimeField> EqGadget<F> for DoubleWordVar<W, F> {
     fn is_eq(&self, other: &Self) -> Result<Boolean<F>, SynthesisError> {
         Ok(self.w0.is_eq(&other.w0)? & self.w1.is_eq(&other.w1)?)
     }
 }
 
-impl<W: WordVar<F>, F: PrimeField> AllocVar<DWord<W::NativeWord>, F> for DWordVar<W, F> {
-    fn new_variable<T: Borrow<DWord<W::NativeWord>>>(
+impl<W: WordVar<F>, F: PrimeField> AllocVar<DoubleWord<W::Native>, F> for DoubleWordVar<W, F> {
+    fn new_variable<T: Borrow<DoubleWord<W::Native>>>(
         cs: impl Into<Namespace<F>>,
         f: impl FnOnce() -> Result<T, SynthesisError>,
         mode: AllocationMode,
@@ -41,10 +42,10 @@ impl<W: WordVar<F>, F: PrimeField> AllocVar<DWord<W::NativeWord>, F> for DWordVa
         let ns = cs.into();
         let cs = ns.cs();
 
-        f().and_then(|dword| {
-            let dword = dword.borrow();
-            W::new_variable(ns!(cs, "w0"), || Ok(dword.0), mode).and_then(|w0| {
-                W::new_variable(ns!(cs, "w1"), || Ok(dword.1), mode).map(|w1| DWordVar {
+        f().and_then(|double_word| {
+            let double_word = double_word.borrow();
+            W::new_variable(ns!(cs, "w0"), || Ok(double_word.0), mode).and_then(|w0| {
+                W::new_variable(ns!(cs, "w1"), || Ok(double_word.1), mode).map(|w1| DoubleWordVar {
                     w0,
                     w1,
                     _marker: PhantomData,
@@ -54,8 +55,8 @@ impl<W: WordVar<F>, F: PrimeField> AllocVar<DWord<W::NativeWord>, F> for DWordVa
     }
 }
 
-impl<W: WordVar<F>, F: PrimeField> R1CSVar<F> for DWordVar<W, F> {
-    type Value = DWord<W::NativeWord>;
+impl<W: WordVar<F>, F: PrimeField> R1CSVar<F> for DoubleWordVar<W, F> {
+    type Value = DoubleWord<W::Native>;
 
     fn cs(&self) -> ConstraintSystemRef<F> {
         self.w0.cs().or(self.w1.cs())
@@ -66,7 +67,7 @@ impl<W: WordVar<F>, F: PrimeField> R1CSVar<F> for DWordVar<W, F> {
     }
 }
 
-impl<W: WordVar<F>, F: PrimeField> DWordVar<W, F> {
+impl<W: WordVar<F>, F: PrimeField> DoubleWordVar<W, F> {
     pub(crate) fn zero() -> Self {
         Self {
             w0: W::zero(),
@@ -75,15 +76,15 @@ impl<W: WordVar<F>, F: PrimeField> DWordVar<W, F> {
         }
     }
 
-    /// Returns the bits of this dword in little-endian order
+    /// Returns the bits of this double word in little-endian order
     pub(crate) fn as_le_bits(&self) -> Vec<Boolean<F>> {
         [self.w1.as_le_bits(), self.w0.as_le_bits()].concat()
     }
 
-    /// Stuffs the two words in this dword into a single field element
+    /// Stuffs the two words in this double word into a single field element
     pub(crate) fn as_fpvar(&self) -> Result<FpVar<F>, SynthesisError> {
         // Return w0 || w1
-        let shifted_w0 = self.w0.as_fpvar()? * F::from(1u64 << W::NativeWord::BITLEN);
+        let shifted_w0 = self.w0.as_fpvar()? * F::from(1u64 << W::Native::BIT_LENGTH);
         Ok(shifted_w0 + self.w1.as_fpvar()?)
     }
 }
@@ -91,13 +92,17 @@ impl<W: WordVar<F>, F: PrimeField> DWordVar<W, F> {
 pub trait WordVar<F: PrimeField>:
     Debug
     + EqGadget<F>
-    + AllocVar<Self::NativeWord, F>
+    + CmpGadget<F>
+    + BitXor<Output = Self>
+    + BitAnd<Output = Self>
+    + BitOr<Output = Self>
+    + AllocVar<Self::Native, F>
     + CondSelectGadget<F>
-    + R1CSVar<F, Value = Self::NativeWord>
+    + R1CSVar<F, Value = Self::Native>
 {
-    type NativeWord: tinyram_emu::word::Word;
+    type Native: tinyram_emu::word::Word;
 
-    const BITLEN: usize = Self::NativeWord::BITLEN;
+    const BITLEN: usize = Self::Native::BIT_LENGTH;
 
     /// Returns the 0 word
     fn zero() -> Self;
@@ -106,13 +111,13 @@ pub trait WordVar<F: PrimeField>:
     fn one() -> Self;
 
     /// Returns the constant given by `w`
-    fn constant(w: Self::NativeWord) -> Self;
+    fn constant(w: Self::Native) -> Self;
 
     /// Convert `self` to a field element
     fn as_fpvar(&self) -> Result<FpVar<F>, SynthesisError>;
 
     /// Convert `self` to a field element
-    fn as_native(&self) -> Result<Self::NativeWord, SynthesisError>;
+    fn as_native(&self) -> Result<Self::Native, SynthesisError>;
 
     /// Convert `self` to its little-endian bit representation
     fn as_le_bits(&self) -> Vec<Boolean<F>>;
@@ -123,8 +128,6 @@ pub trait WordVar<F: PrimeField>:
         v.reverse();
         v
     }
-
-    fn word_is_lt(&self, other: &Self) -> Result<Boolean<F>, SynthesisError>;
 
     /// Unpacks this Word into its constituent bytes
     fn unpack(&self) -> Vec<UInt8<F>> {
@@ -139,7 +142,7 @@ pub trait WordVar<F: PrimeField>:
     fn pack(&self, bytes: &[UInt8<F>]) -> Self {
         assert_eq!(bytes.len(), Self::BITLEN / 8);
         // Pack simply puts the bytes into the word in little-endian order
-        let bits: Vec<_> = bytes.iter().flat_map(|b| b.to_bits_le()).collect();
+        let bits: Vec<_> = bytes.iter().flat_map(|b| b.to_bits_le().unwrap()).collect();
         Self::from_le_bits(&bits)
     }
 
@@ -154,15 +157,12 @@ pub trait WordVar<F: PrimeField>:
 
     /// Computes the `self + other`, and returns the carry bit (if any).
     fn carrying_add(&self, other: &Self) -> Result<(Self, Boolean<F>), SynthesisError>;
-
-    /// Computes the `self ⊕ other`
-    fn xor(&self, other: &Self) -> Result<Self, SynthesisError>;
 }
 
 macro_rules! impl_word {
     ($word_var: ident, $native_word: ty) => {
         impl<F: PrimeField> WordVar<F> for $word_var<F> {
-            type NativeWord = $native_word;
+            type Native = $native_word;
 
             fn zero() -> Self {
                 Self::constant(0)
@@ -172,30 +172,26 @@ macro_rules! impl_word {
                 Self::constant(1)
             }
 
-            fn constant(w: Self::NativeWord) -> Self {
+            fn constant(w: Self::Native) -> Self {
                 $word_var::constant(w)
             }
 
             fn as_fpvar(&self) -> Result<FpVar<F>, SynthesisError> {
-                Boolean::le_bits_to_fp(&self.to_bits_le())
+                Boolean::le_bits_to_fp(&self.to_bits_le()?)
             }
 
-            fn as_native(&self) -> Result<Self::NativeWord, SynthesisError> {
+            fn as_native(&self) -> Result<Self::Native, SynthesisError> {
                 self.value()
             }
 
             fn as_le_bits(&self) -> Vec<Boolean<F>> {
-                self.to_bits_le()
+                self.to_bits_le().unwrap()
             }
 
             fn as_be_bits(&self) -> Vec<Boolean<F>> {
-                let mut v = self.to_bits_le();
+                let mut v = self.to_bits_le().unwrap();
                 v.reverse();
                 v
-            }
-
-            fn word_is_lt(&self, other: &Self) -> Result<Boolean<F>, SynthesisError> {
-                self.is_lt(other)
             }
 
             fn from_le_bits(bits: &[Boolean<F>]) -> Self {
@@ -214,18 +210,6 @@ macro_rules! impl_word {
                 let lower_bits = &sum_bits[..Self::BITLEN];
 
                 Ok((Self::from_bits_le(lower_bits), carry))
-            }
-
-            /// Computes the `self ⊕ other`
-            fn xor(&self, other: &Self) -> Result<Self, SynthesisError> {
-                let xored_bits = self
-                    .as_le_bits()
-                    .into_iter()
-                    .zip(other.as_le_bits().into_iter())
-                    .map(|(a, b)| a ^ b)
-                    .collect::<Vec<_>>();
-
-                Ok(Self::from_le_bits(&xored_bits))
             }
         }
     };

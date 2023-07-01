@@ -1,7 +1,7 @@
-mod circuit_defs;
+pub mod circuit_defs;
 mod common;
-mod exec_checker;
-mod transcript_checker;
+pub mod exec_checker;
+pub mod transcript_checker;
 pub mod transcript_utils;
 mod util;
 mod word;

@@ -147,10 +147,19 @@ fn lower_rri_instr<W: Word>(ctx: &LoweringCtx, pair: Pair<Rule>) -> Instr<W> {
     let in2 = lower_imm_or_reg(ctx, in2_pair);
 
     match op {
-        Opcode::Add => Instr::Add { in1, in2, out },
+        Opcode::And => Instr::And { in1, in2, out },
         Opcode::Or => Instr::Or { in1, in2, out },
         Opcode::Xor => Instr::Xor { in1, in2, out },
-        _ => panic!("Unexpected op {:?}", op),
+        Opcode::Add => Instr::Add { in1, in2, out },
+        Opcode::Sub => Instr::Sub { in1, in2, out },
+        Opcode::MulL => Instr::MulL { in1, in2, out },
+        Opcode::UMulH => Instr::UMulH { in1, in2, out },
+        Opcode::SMulH => Instr::SMulH { in1, in2, out },
+        Opcode::UDiv => Instr::UDiv { in1, in2, out },
+        Opcode::UMod => Instr::UMod { in1, in2, out },
+        Opcode::Shl => Instr::Shl { in1, in2, out },
+        Opcode::Shr => Instr::Shr { in1, in2, out },
+        _ => panic!("Unexpected opcode: {op:?}"),
     }
 }
 
@@ -170,30 +179,24 @@ fn lower_ri_instr<W: Word>(ctx: &LoweringCtx, pair: Pair<Rule>) -> Instr<W> {
 
     // Parse reg1. This is either in1 or out, depending on the instruction
     let reg1_pair = it.next().unwrap();
-    let reg1 = lower_reg(reg1_pair);
+    let arg1 = lower_reg(reg1_pair);
 
     // Parse imm_or_reg. This is either in2 or in1, depending on the instruction
     let imm_or_reg_pair = it.next().unwrap();
-    let imm_or_reg = lower_imm_or_reg(ctx, imm_or_reg_pair);
+    let arg2 = lower_imm_or_reg(ctx, imm_or_reg_pair);
 
     match op {
-        Opcode::CmpE => Instr::CmpE {
-            in1: reg1,
-            in2: imm_or_reg,
-        },
-        Opcode::LoadW => Instr::LoadW {
-            out: reg1,
-            in1: imm_or_reg,
-        },
-        Opcode::LoadB => Instr::LoadB {
-            out: reg1,
-            in1: imm_or_reg,
-        },
-        Opcode::Read => Instr::Read {
-            out: reg1,
-            in1: imm_or_reg,
-        },
-        _ => panic!("Unexpected op {:?}", op),
+        Opcode::CmpE => Instr::CmpE { in1: arg1, in2: arg2, },
+        Opcode::CmpA => Instr::CmpA { in1: arg1, in2: arg2, },
+        Opcode::CmpAe => Instr::CmpAE { in1: arg1, in2: arg2, },
+        Opcode::CmpG => Instr::CmpG { in1: arg1, in2: arg2, },
+        Opcode::CmpGe => Instr::CmpGE { in1: arg1, in2: arg2, },
+        Opcode::Mov => Instr::Mov { in1: arg2, out: arg1, },
+        Opcode::CMov => Instr::CMov { in1: arg2, out: arg1 },
+        Opcode::LoadB => Instr::LoadB { out: arg1, in1: arg2, },
+        Opcode::LoadW => Instr::LoadW { out: arg1, in1: arg2, },
+        Opcode::Read => Instr::Read { out: arg1, in1: arg2, },
+        _ => panic!("Unexpected op {op:?}"),
     }
 }
 
@@ -220,15 +223,9 @@ fn lower_ir_instr<W: Word>(ctx: &LoweringCtx, pair: Pair<Rule>) -> Instr<W> {
     let reg1 = lower_reg(reg1_pair);
 
     match op {
-        Opcode::StoreW => Instr::StoreW {
-            in1: reg1,
-            out: imm_or_reg,
-        },
-        Opcode::StoreB => Instr::StoreB {
-            in1: reg1,
-            out: imm_or_reg,
-        },
-        _ => panic!("Unexpected op {:?}", op),
+        Opcode::StoreW => Instr::StoreW { in1: reg1, out: imm_or_reg, },
+        Opcode::StoreB => Instr::StoreB { in1: reg1, out: imm_or_reg, },
+        _ => panic!("Unexpected op {op:?}"),
     }
 }
 
@@ -253,6 +250,7 @@ fn lower_i_instr<W: Word>(ctx: &LoweringCtx, pair: Pair<Rule>) -> Instr<W> {
     match op {
         Opcode::Jmp => Instr::Jmp { in1 },
         Opcode::CJmp => Instr::CJmp { in1 },
+        Opcode::CnJmp => Instr::CNJmp { in1 },
         Opcode::Answer => Instr::Answer { in1 },
         _ => panic!("Unexpected op {:?}", op),
     }
@@ -268,7 +266,7 @@ fn lower_any_instr<W: Word>(ctx: &LoweringCtx, pair: Pair<Rule>) -> Instr<W> {
         Rule::ir_instr => lower_ir_instr(ctx, val),
         Rule::ri_instr => lower_ri_instr(ctx, val),
         Rule::rri_instr => lower_rri_instr(ctx, val),
-        r => panic!("unexpected rule {:?}", r),
+        r => panic!("unexpected rule {r:?}"),
     }
 }
 
@@ -314,7 +312,6 @@ fn build_label_table<'a>(header: &TinyRamHeader, lines: Pairs<'a, Rule>) -> BTre
     };
 
     for t in lines.flatten() {
-        // println!("t == {:?}", t);
         match t.as_rule() {
             Rule::label_def => {
                 let label = t.into_inner().next().unwrap().as_str();

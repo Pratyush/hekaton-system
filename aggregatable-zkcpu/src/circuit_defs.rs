@@ -1,7 +1,7 @@
 use crate::{
     exec_checker::CpuStateVar,
     transcript_checker::{
-        transcript_checker, ProcessedTranscriptEntry, ProcessedTranscriptEntryVar,
+        check_transcript, ProcessedTranscriptEntry, ProcessedTranscriptEntryVar,
         TranscriptCheckerEvals, TranscriptCheckerEvalsVar,
     },
     word::WordVar,
@@ -17,10 +17,10 @@ use cp_groth16::{MultiStageConstraintSynthesizer, MultiStageConstraintSystem};
 use tinyram_emu::{program_state::CpuState, word::Word, ProgramMetadata};
 
 #[derive(Clone)]
-struct TranscriptCheckerCircuit<const NUM_REGS: usize, W, WV, F>
+pub struct TranscriptCheckerCircuit<const NUM_REGS: usize, W, WV, F>
 where
     W: Word,
-    WV: WordVar<F, NativeWord = W>,
+    WV: WordVar<F, Native = W>,
     F: PrimeField,
 {
     meta: ProgramMetadata,
@@ -63,11 +63,11 @@ where
 impl<const NUM_REGS: usize, W, WV, F> TranscriptCheckerCircuit<NUM_REGS, W, WV, F>
 where
     W: Word,
-    WV: WordVar<F, NativeWord = W>,
+    WV: WordVar<F, Native = W>,
     F: PrimeField,
 {
     /// Makes a new circuit with all placeholder values
-    fn new(meta: ProgramMetadata, num_ticks: usize) -> Self {
+    pub fn new(meta: ProgramMetadata, num_ticks: usize) -> Self {
         TranscriptCheckerCircuit {
             meta,
             in_cpu_state: Default::default(),
@@ -102,7 +102,7 @@ where
 impl<const NUM_REGS: usize, W, WV, F> TranscriptCheckerCircuit<NUM_REGS, W, WV, F>
 where
     W: Word,
-    WV: WordVar<F, NativeWord = W>,
+    WV: WordVar<F, Native = W>,
     F: PrimeField,
 {
     /// Commit to the input state, i.e., the given CPU state and first item in the mem-sorted trace
@@ -219,7 +219,7 @@ where
             .zip(self.mem_ops_var.iter())
             .zip(mem_tr_adj_seq_var.windows(3).step_by(2))
         {
-            (next_cpu_state, next_evals) = transcript_checker::<NUM_REGS, _, _>(
+            (next_cpu_state, next_evals) = check_transcript::<NUM_REGS, _, _>(
                 self.meta,
                 &next_cpu_state,
                 &self.chal_var,
@@ -243,7 +243,7 @@ impl<const NUM_REGS: usize, W, WV, F> MultiStageConstraintSynthesizer<F>
     for TranscriptCheckerCircuit<NUM_REGS, W, WV, F>
 where
     W: Word,
-    WV: WordVar<F, NativeWord = W>,
+    WV: WordVar<F, Native = W>,
     F: PrimeField,
 {
     fn total_num_stages(&self) -> usize {
@@ -294,7 +294,7 @@ mod test {
     type E = Bls12_381;
     type F = Fr;
     type WV = UInt32<F>;
-    type W = <WV as WordVar<F>>::NativeWord;
+    type W = <WV as WordVar<F>>::Native;
 
     // Helper function that runs the given TinyRAM code through the symbolic transcript checker
     fn transcript_tester(code: &str, primary_input: Vec<W>, aux_input: Vec<W>) {

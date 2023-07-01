@@ -3,7 +3,7 @@ use core::{
     ops::{BitAnd, BitOr, BitXor, Div, Not, Rem, Sub},
 };
 
-use ark_ff::Field;
+use ark_ff::PrimeField;
 use rand::Rng;
 
 /// A double word. The first element is the low word, the second is the high word.
@@ -28,11 +28,11 @@ pub trait Word:
 {
     type Signed: Eq + Ord + Copy;
 
-    const BITLEN: usize;
-    const BYTELEN: usize = Self::BITLEN / 8;
+    const BIT_LENGTH: usize;
+    const BYTE_LENGTH: usize = Self::BIT_LENGTH / 8;
 
     /// The number of bytes an instruction takes up. It's 2 words.
-    const INSTR_BYTELEN: usize = 2 * Self::BITLEN / 8;
+    const INSTR_BYTE_LENGTH: usize = 2 * Self::BIT_LENGTH / 8;
     const MAX: Self;
     const ZERO: Self;
 
@@ -41,24 +41,24 @@ pub trait Word:
         Self::try_from(val).map_err(|_| ())
     }
 
-    /// Clears out the bottom bits of the word so that it can be used an index to dword-aligned
+    /// Clears out the bottom bits of the word so that it can be used an index to double word-aligned
     /// memory, i.e., the memory format we use for transcripts
-    fn align_to_dword(&self) -> Self;
+    fn align_to_double_word(&self) -> Self;
+    
+    /// Convert from big-endian bytes. Fails if `bytes.len() != Self::BYTE_LENGTH`.
+    fn from_be_bytes(bytes: &[u8]) -> Option<Self>;
 
-    /// Convert from big-endian bytes. Fails if `bytes.len() != Self::BYTELEN`
-    fn from_be_bytes(bytes: &[u8]) -> Result<Self, ()>;
+    /// Convert from little-endian bytes. Fails if `bytes.len() != Self::BYTE_LENGTH`.
+    fn from_le_bytes(bytes: &[u8]) -> Option<Self>;
 
-    /// Convert from little-endian bytes. Fails if `bytes.len() != Self::BYTELEN`
-    fn from_le_bytes(bytes: &[u8]) -> Result<Self, ()>;
-
-    /// Convert to little-endian bytes
+    /// Convert to little-endian bytes.
     fn to_le_bytes(&self) -> Vec<u8>;
 
     /// Convert `self` to a `BIT_SIZE`-bit signed integer.
     fn to_signed(self) -> Self::Signed;
 
     /// Convert `self` to a field element
-    fn to_ff<F: Field>(self) -> F {
+    fn to_fp<F: PrimeField>(self) -> F {
         // Convert W -> u64 -> F
         self.into().into()
     }
@@ -111,26 +111,24 @@ macro_rules! impl_word {
         impl Word for $word {
             type Signed = $signed;
 
-            const BITLEN: usize = $bit_size;
+            const BIT_LENGTH: usize = $bit_size;
             const MAX: Self = <$word>::MAX;
             const ZERO: Self = <$word>::MIN;
 
-            fn from_be_bytes(bytes: &[u8]) -> Result<Self, ()> {
-                if bytes.len() != Self::BYTELEN {
-                    return Err(());
-                }
-                let mut buf = [0u8; Self::BYTELEN];
-                buf.copy_from_slice(bytes);
-                Ok(<$word>::from_be_bytes(buf))
+            fn from_be_bytes(bytes: &[u8]) -> Option<Self> {
+                (bytes.len() == Self::BYTE_LENGTH).then(|| {
+                    let mut buf = [0u8; Self::BYTE_LENGTH];
+                    buf.copy_from_slice(bytes);
+                    <$word>::from_be_bytes(buf)
+                })
             }
 
-            fn from_le_bytes(bytes: &[u8]) -> Result<Self, ()> {
-                if bytes.len() != Self::BYTELEN {
-                    return Err(());
-                }
-                let mut buf = [0u8; Self::BYTELEN];
-                buf.copy_from_slice(bytes);
-                Ok(<$word>::from_le_bytes(buf))
+            fn from_le_bytes(bytes: &[u8]) -> Option<Self> {
+                (bytes.len() == Self::BYTE_LENGTH).then(|| {
+                    let mut buf = [0u8; Self::BYTE_LENGTH];
+                    buf.copy_from_slice(bytes);
+                    <$word>::from_le_bytes(buf)
+                })
             }
 
             // TODO: don't allocate for this
@@ -138,9 +136,9 @@ macro_rules! impl_word {
                 <$word>::to_le_bytes(*self).to_vec()
             }
 
-            fn align_to_dword(&self) -> Self {
-                // Clear the low log2(Self::BYTELEN)+1 bits of this word
-                let bitmask_len = log2(Self::BYTELEN) + 1;
+            fn align_to_double_word(&self) -> Self {
+                // Clear the low log2(Self::BYTE_LENGTH)+1 bits of this word
+                let bitmask_len = log2(Self::BYTE_LENGTH) + 1;
                 let bitmask = !((1 << bitmask_len) - 1);
                 self & bitmask
             }

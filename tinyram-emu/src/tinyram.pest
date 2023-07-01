@@ -22,27 +22,27 @@ imm = { dec_num | label }
 imm_or_reg = { imm | reg }
 
 // Parse reg, reg, imm-or-reg instructions
-rri_instr_mnemonic = { "add" | "or" | "xor" }
+rri_instr_mnemonic = { "and" | "or" | "xor" | "add" | "sub" | "mull" | "umulh" | "smulh" | "udiv" | "umod" | "shl" | "shr" }
 rri_instr_inputs = { reg ~ COMMA ~ reg ~ COMMA ~ imm_or_reg }
 // The mnemonic (i.e., opcode) must be separated from the inputs with whitespace
 rri_instr_begin = @{ rri_instr_mnemonic ~ WHITE_SPACE }
 rri_instr = { rri_instr_begin ~ rri_instr_inputs }
 
 // Parse reg, imm-or-reg instructions. Similar to above
-ri_instr_mnemonic = { "not" | "cmpe" | "load.w" | "read" }
+ri_instr_mnemonic = { "not" | "cmpe" | "cmpa" | "cmpae" | "cmpg" | "cmpge" | "mov" | "cmov" | "load.b" | "load.w" | "read" }
 ri_instr_inputs = { reg ~ COMMA ~ imm_or_reg }
 ri_instr_begin = @{ ri_instr_mnemonic ~ WHITE_SPACE }
 ri_instr = { ri_instr_begin ~ ri_instr_inputs }
 
 // Parse imm-or-reg, reg instructions. Similar to above
 ir_instr_inputs = { imm_or_reg ~ COMMA ~ reg }
-ir_instr_mnemonic = { "store.w" }
+ir_instr_mnemonic = { "store.b" | "store.w" }
 ir_instr_begin = @{ ir_instr_mnemonic ~ WHITE_SPACE }
 ir_instr = { ir_instr_begin ~ ir_instr_inputs }
 
 // Parse imm-or-reg instructions. Similar to above
 i_instr_inputs = { imm_or_reg }
-i_instr_mnemonic = { "jmp" | "cjmp" | "answer" }
+i_instr_mnemonic = { "jmp" | "cjmp" | "cnjmp" | "answer" }
 i_instr_begin = @{ i_instr_mnemonic ~ WHITE_SPACE }
 i_instr = { i_instr_begin ~ i_instr_inputs }
 

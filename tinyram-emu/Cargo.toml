@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 ark-ff = "0.4"
+phf = { version = "0.11", features = ["macros"] }
 bitfield = "0.14"
 pest = "2.5.1"
 pest_derive = "2.5.1"

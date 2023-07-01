@@ -35,7 +35,7 @@ type TapeIdx = Word;
 type Pc = Word;
 type Instruction = DWord;
 
-/// An entry in the transcript of RAM accesses. We load/store data at dword granularity. The
+/// An entry in the transcript of RAM accesses. We load/store data at double word granularity. The
 /// values `t` and `idx` both MUST start at 1, rather than 0. The 0 values are reserved for
 /// placeholders.
 struct TranscriptEntry {
@@ -48,11 +48,11 @@ struct TranscriptEntry {
     // architecture, and represents a load from program memory.
     op: { Load, Store, ReadPrimary, ReadAux, LoadPrg },
     // The index being loaded from, stored to, or read from the public tape. When used as a data
-    // (rather than program) index, this is dword-aligned, meaning the low bits specifying
+    // (rather than program) index, this is double word-aligned, meaning the low bits specifying
     // individual words MUST be 0. When used as a program index, no alignment is enforced.
     idx: Word,
-    // The dword being loaded or stored
-    dword: DWord,
+    // The double word being loaded or stored
+    double_word: DWord,
 }
 
 impl TranscriptEntry {
@@ -76,14 +76,14 @@ impl TranscriptEntry {
     // not all 0, or `self.padding == true`.
     fn select_word(&self, idx: RamIdx) -> (Word, Boolean);
 
-    // Extracts the dword at the given RAM index, returning it and an error flag. Ignores the low
+    // Extracts the double word at the given RAM index, returning it and an error flag. Ignores the low
     // bits of `idx` denoting sub-word precision. `err = true` iff `self.idx` and the high
     // (non-byte- or word-precision) bits of `idx` are not equal, or the low bits of `self.idx` are
     // not all 0, or `self.padding == true`.
     //
-    // NOTE: This will return an `err` if it receives an `idx` that is not dword-aligned. This is
-    // good, because we only allow PC to be dword-aligned
-    fn select_dword(&self, idx: RamIdx) -> (Word, Boolean);
+    // NOTE: This will return an `err` if it receives an `idx` that is not double word-aligned. This is
+    // good, because we only allow PC to be double word-aligned
+    fn select_double_word(&self, idx: RamIdx) -> (Word, Boolean);
 
     // Extracts the word from an input tape (of given length) at the given index (which, recall,
     // refers to words, not bytes). Returns `(word, end, err)`, where `word` is the loaded word,
@@ -411,7 +411,7 @@ fn transcript_checker(
     assert !mem_op.is_padding ∨ (mem_op.op == Load);
 
     // Get the instruction from the PC load
-    let instr = pc_load.select_dword(pc);
+    let instr = pc_load.select_double_word(pc);
     // Do a CPU tick
     let (new_regs, new_pc) = full_exec_checker(instr, regs, tape_idx, mem_op);
 

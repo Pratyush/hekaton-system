@@ -102,7 +102,7 @@ pub fn ram_transcript_to_polyn<W: Word, F: FftField + PrimeField>(
             if e.is_tape_op() || e.is_padding {
                 F::ZERO
             } else {
-                e.as_ff::<F>(false)
+                e.as_fp::<F>(false)
             }
         })
         .chain(extra_zeros)
@@ -126,14 +126,14 @@ impl<F: PrimeField> TranscriptCheckerEvals<F> {
             if m.is_tape_op() || m.is_padding {
                 F::zero()
             } else {
-                m.as_ff(false)
+                m.as_fp(false)
             }
         };
         let process_ram_op_notime = |m: &ProcessedTranscriptEntry<W>| {
             if m.is_tape_op() || m.is_padding {
                 F::zero()
             } else {
-                m.as_ff_notime(false)
+                m.as_fp_notime(false)
             }
         };
 

@@ -7,80 +7,109 @@ use bitfield::BitRangeMut;
 use rand::Rng;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
+#[rustfmt::skip]
+#[repr(u8)]
 pub enum Opcode {
-    And = 0b00000,
-    Or,
-    Xor,
-    Not,
-    Add,
-    Sub,
-    MulL,
-    UMulH,
-    SMulH,
-    UDiv,
-    UMod,
-    Shl,
-    Shr,
-    CmpE,
-    CmpA,
-    CmpAe,
-    CmpG,
-    CmpGe,
-    Mov,
-    CMov,
-    Jmp,
-    CJmp,
-    CnJmp,
+    And    = 0b00000,
+    Or     = 0b00001,
+    Xor    = 0b00010,
+    Not    = 0b00011,
+    Add    = 0b00100,
+    Sub    = 0b00101,
+    MulL   = 0b00110,
+    UMulH  = 0b00111,
+    SMulH  = 0b01000,
+    UDiv   = 0b01001,
+    UMod   = 0b01010,
+    Shl    = 0b01011,
+    Shr    = 0b01100,
+    CmpE   = 0b01101,
+    CmpA   = 0b01110,
+    CmpAe  = 0b01111,
+    CmpG   = 0b10000,
+    CmpGe  = 0b10001,
+    Mov    = 0b10010,
+    CMov   = 0b10011,
+    Jmp    = 0b10100,
+    CJmp   = 0b10101,
+    CnJmp  = 0b10110,
     StoreB = 0b11010,
-    LoadB,
-    StoreW,
-    LoadW,
-    Read,
-    Answer,
+    LoadB  = 0b11011,
+    StoreW = 0b11100,
+    LoadW  = 0b11101,
+    Read   = 0b11110,
+    Answer = 0b11111,
 }
+
+const BYTE_TO_OPCODE: phf::Map<u8, Opcode> = phf::phf_map! {
+    0b00000u8 => Opcode::And   ,
+    0b00001u8 => Opcode::Or    ,
+    0b00010u8 => Opcode::Xor   ,
+    0b00011u8 => Opcode::Not   ,
+    0b00100u8 => Opcode::Add   ,
+    0b00101u8 => Opcode::Sub   ,
+    0b00110u8 => Opcode::MulL  ,
+    0b00111u8 => Opcode::UMulH ,
+    0b01000u8 => Opcode::SMulH ,
+    0b01001u8 => Opcode::UDiv  ,
+    0b01010u8 => Opcode::UMod  ,
+    0b01011u8 => Opcode::Shl   ,
+    0b01100u8 => Opcode::Shr   ,
+    0b01101u8 => Opcode::CmpE  ,
+    0b01110u8 => Opcode::CmpA  ,
+    0b01111u8 => Opcode::CmpAe ,
+    0b10000u8 => Opcode::CmpG  ,
+    0b10001u8 => Opcode::CmpGe ,
+    0b10010u8 => Opcode::Mov   ,
+    0b10011u8 => Opcode::CMov  ,
+    0b10100u8 => Opcode::Jmp   ,
+    0b10101u8 => Opcode::CJmp  ,
+    0b10110u8 => Opcode::CnJmp ,
+    0b11010u8 => Opcode::StoreB,
+    0b11011u8 => Opcode::LoadB ,
+    0b11100u8 => Opcode::StoreW,
+    0b11101u8 => Opcode::LoadW ,
+    0b11110u8 => Opcode::Read  ,
+    0b11111u8 => Opcode::Answer,
+};
+
+const STR_TO_OPCODE: phf::Map<&'static str, Opcode> = phf::phf_map! {
+    "and" => 	Opcode::And,
+    "or" => 	Opcode::Or,
+    "xor" => 	Opcode::Xor,
+    "not" => 	Opcode::Not,
+    "add" => 	Opcode::Add,
+    "sub" => 	Opcode::Sub,
+    "mull" => 	Opcode::MulL,
+    "umulh" => 	Opcode::UMulH,
+    "smulh" => 	Opcode::SMulH,
+    "udiv" => 	Opcode::UDiv,
+    "umod" => 	Opcode::UMod,
+    "shl" => 	Opcode::Shl,
+    "shr" => 	Opcode::Shr,
+    "cmpe" => 	Opcode::CmpE,
+    "cmpa" => 	Opcode::CmpA,
+    "cmpae" => 	Opcode::CmpAe,
+    "cmpg" => 	Opcode::CmpG,
+    "cmpge" => 	Opcode::CmpGe,
+    "mov" => 	Opcode::Mov,
+    "cmov" => 	Opcode::CMov,
+    "jmp" => 	Opcode::Jmp,
+    "cjmp" => 	Opcode::CJmp,
+    "cnjmp" => 	Opcode::CnJmp,
+    "store.b" => 	Opcode::StoreB,
+    "load.b" => 	Opcode::LoadB,
+    "store.w" => 	Opcode::StoreW,
+    "load.w" => 	Opcode::LoadW,
+    "read" => 	Opcode::Read,
+    "answer" => 	Opcode::Answer,
+};
 
 impl TryFrom<u8> for Opcode {
     type Error = ();
 
     fn try_from(input: u8) -> Result<Opcode, ()> {
-        use Opcode::*;
-
-        let table = [
-            (And as u8, And),
-            (Or as u8, Or),
-            (Xor as u8, Xor),
-            (Not as u8, Not),
-            (Add as u8, Add),
-            (Sub as u8, Sub),
-            (MulL as u8, MulL),
-            (UMulH as u8, UMulH),
-            (SMulH as u8, SMulH),
-            (UDiv as u8, UDiv),
-            (UMod as u8, UMod),
-            (Shl as u8, Shl),
-            (Shr as u8, Shr),
-            (CmpE as u8, CmpE),
-            (CmpA as u8, CmpA),
-            (CmpAe as u8, CmpAe),
-            (CmpG as u8, CmpG),
-            (CmpGe as u8, CmpGe),
-            (Mov as u8, Mov),
-            (CMov as u8, CMov),
-            (Jmp as u8, Jmp),
-            (CJmp as u8, CJmp),
-            (CnJmp as u8, CnJmp),
-            (StoreB as u8, StoreB),
-            (LoadB as u8, LoadB),
-            (StoreW as u8, StoreW),
-            (LoadW as u8, LoadW),
-            (Read as u8, Read),
-            (Answer as u8, Answer),
-        ];
-
-        table
-            .iter()
-            .find_map(|(byte, var)| if input == *byte { Some(*var) } else { None })
-            .ok_or(())
+        BYTE_TO_OPCODE.get(&input).ok_or(()).copied()
     }
 }
 
@@ -88,44 +117,7 @@ impl TryFrom<&str> for Opcode {
     type Error = ();
 
     fn try_from(input: &str) -> Result<Opcode, ()> {
-        use Opcode::*;
-
-        let table = [
-            ("and", And),
-            ("or", Or),
-            ("xor", Xor),
-            ("not", Not),
-            ("add", Add),
-            ("sub", Sub),
-            ("mull", MulL),
-            ("umulh", UMulH),
-            ("smulh", SMulH),
-            ("udiv", UDiv),
-            ("umod", UMod),
-            ("shl", Shl),
-            ("shr", Shr),
-            ("cmpe", CmpE),
-            ("cmpa", CmpA),
-            ("cmpae", CmpAe),
-            ("cmpg", CmpG),
-            ("cmpge", CmpGe),
-            ("mov", Mov),
-            ("cmov", CMov),
-            ("jmp", Jmp),
-            ("cjmp", CJmp),
-            ("cnjmp", CnJmp),
-            ("store.b", StoreB),
-            ("load.b", LoadB),
-            ("store.w", StoreW),
-            ("load.w", LoadW),
-            ("read", Read),
-            ("answer", Answer),
-        ];
-
-        table
-            .iter()
-            .find_map(|(s, var)| if input == *s { Some(*var) } else { None })
-            .ok_or(())
+        STR_TO_OPCODE.get(input).ok_or(()).copied()
     }
 }
 
@@ -332,8 +324,8 @@ impl<W: Word> Instr<W> {
         );
         cur_bit_idx += crate::encoding::OPCODE_BITLEN;
         // Encode the imm_or_reg
-        instr.set_bit_range(cur_bit_idx + W::BITLEN - 1, cur_bit_idx, imm_or_reg);
-        cur_bit_idx += W::BITLEN;
+        instr.set_bit_range(cur_bit_idx + W::BIT_LENGTH - 1, cur_bit_idx, imm_or_reg);
+        cur_bit_idx += W::BIT_LENGTH;
         // Encode reg2
         instr.set_bit_range(cur_bit_idx + regidx_bitlen - 1, cur_bit_idx, reg2);
         cur_bit_idx += regidx_bitlen;
@@ -346,6 +338,6 @@ impl<W: Word> Instr<W> {
 
         // A u128 is larger than an instruction. Use the bottom bytes as the instruction encoding
         let instr_bytes = instr.to_be_bytes();
-        Instr::from_bytes::<NUM_REGS>(&instr_bytes[16 - W::INSTR_BYTELEN..16])
+        Instr::from_bytes::<NUM_REGS>(&instr_bytes[16 - W::INSTR_BYTE_LENGTH..16])
     }
 }

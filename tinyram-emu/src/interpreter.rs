@@ -11,22 +11,22 @@ use std::collections::BTreeMap;
 use ark_ff::Field;
 use rand::Rng;
 
-/// A TinyRAM memory operation. This only deals in dwords.
+/// A TinyRAM memory operation. This only deals in double words.
 ///
 /// NOTE: A `read` op from an invalid tape index (2 or greater) is converted to an `xor ri ri`,
 /// i.e., it is not considered a memory operation.
 #[derive(Clone, Debug, Eq, PartialEq, Default)]
 pub enum MemOp<W: Word> {
-    /// Load a dword from RAM
+    /// Load a double word from RAM
     Load {
-        /// The dword being loaded
+        /// The double word being loaded
         val: DWord<W>,
         /// The index the value is being loaded from
         location: W,
     },
-    /// Store a dword to RAM
+    /// Store a double word to RAM
     Store {
-        /// The dword being stored
+        /// The double word being stored
         val: DWord<W>,
         /// The index the value is being stored to
         location: W,
@@ -95,7 +95,7 @@ impl<W: Word> MemOp<W> {
         MemOpKind::from(self)
     }
 
-    /// Gets the dword being loaded or stored. If it's a valid tape op, then returns the word
+    /// Gets the double word being loaded or stored. If it's a valid tape op, then returns the word
     /// being read in the low position, and 0 in the high position. If it's an invalid tape op,
     /// then returns (0, 0)
     pub fn val(&self) -> DWord<W> {
@@ -127,7 +127,7 @@ impl<W: Word> MemOp<W> {
 
     /// Returns this memory operation, packed into the low bits of a field element. Also returns
     /// how many bits are used in the packing.
-    pub fn as_ff<F: Field>(&self) -> (F, usize) {
+    pub fn as_fp<F: Field>(&self) -> (F, usize) {
         fn pow_two<G: Field>(n: usize) -> G {
             G::from(2u8).pow([n as u64])
         }
@@ -150,11 +150,11 @@ impl<W: Word> MemOp<W> {
         out += pow_two::<F>(bitlen) * F::from(loc);
         bitlen += 64;
 
-        // val is a dword, so pack each of its words separately
+        // val is a double word, so pack each of its words separately
         out += pow_two::<F>(bitlen) * F::from(val.0.into());
-        bitlen += W::BITLEN;
+        bitlen += W::BIT_LENGTH;
         out += pow_two::<F>(bitlen) * F::from(val.1.into());
-        bitlen += W::BITLEN;
+        bitlen += W::BIT_LENGTH;
 
         (out, bitlen)
     }
@@ -380,34 +380,34 @@ impl<W: Word> Instr<W> {
                 let in1 = in1.value(&cpu_state.registers);
                 let out = out.value(&cpu_state.registers);
 
-                // Round the byte address down to the nearest word and dword boundary
-                let word_addr: u64 = out.into() - (out.into() % (W::BYTELEN as u64));
-                let dword_addr = word_addr - (word_addr % (2 * W::BYTELEN as u64));
-                // Determine if this word is the low or high word in the dword
-                let is_high = word_addr != dword_addr;
+                // Round the byte address down to the nearest word and double word boundary
+                let word_addr: u64 = out.into() - (out.into() % (W::BYTE_LENGTH as u64));
+                let double_word_addr = word_addr - (word_addr % (2 * W::BYTE_LENGTH as u64));
+                // Determine if this word is the low or high word in the double word
+                let is_high = word_addr != double_word_addr;
 
-                // Fetch a dword's worth of bytes from memory, using 0 where undefined
-                let mut bytes: Vec<u8> = (dword_addr..dword_addr + 2 * W::BYTELEN as u64)
+                // Fetch a double word's worth of bytes from memory, using 0 where undefined
+                let mut bytes: Vec<u8> = (double_word_addr..double_word_addr + 2 * W::BYTE_LENGTH as u64)
                     .map(|i| *mem.data_ram.0.get(&W::from_u64(i).unwrap()).unwrap_or(&0))
                     .collect();
                 // Overwrite whatever is being stored. Overwrite the first word if `is_high = false`.
                 // Otherwise overwrite the second.
-                let start = is_high as usize * W::BYTELEN;
-                bytes[start..start + W::BYTELEN].copy_from_slice(&in1.to_le_bytes());
+                let start = is_high as usize * W::BYTE_LENGTH;
+                bytes[start..start + W::BYTE_LENGTH].copy_from_slice(&in1.to_le_bytes());
 
                 // Now convert the little-endian encoded bytes into words
-                let w0 = W::from_le_bytes(&bytes[..W::BYTELEN]).unwrap();
-                let w1 = W::from_le_bytes(&bytes[W::BYTELEN..]).unwrap();
+                let w0 = W::from_le_bytes(&bytes[..W::BYTE_LENGTH]).unwrap();
+                let w1 = W::from_le_bytes(&bytes[W::BYTE_LENGTH..]).unwrap();
 
                 // Update the memory
-                for (i, b) in (dword_addr..dword_addr + 2 * W::BYTELEN as u64).zip(bytes.iter()) {
+                for (i, b) in (double_word_addr..double_word_addr + 2 * W::BYTE_LENGTH as u64).zip(bytes.iter()) {
                     mem.data_ram.0.insert(W::from_u64(i).unwrap(), *b);
                 }
 
                 // Construct the memory operation
                 let mem_op = MemOp::Store {
                     val: (w0, w1),
-                    location: out.align_to_dword(),
+                    location: out.align_to_double_word(),
                 };
 
                 Some(mem_op)
@@ -416,25 +416,25 @@ impl<W: Word> Instr<W> {
             Instr::LoadW { out, in1 } => {
                 let in1 = in1.value(&cpu_state.registers);
 
-                // Round the byte address down to the nearest word and dword boundary
-                let word_addr: u64 = in1.into() - (in1.into() % (W::BYTELEN as u64));
-                let dword_addr = word_addr - (word_addr % (2 * W::BYTELEN as u64));
-                // Determine if this word is the low or high word in the dword
-                let is_high = word_addr != dword_addr;
+                // Round the byte address down to the nearest word and double word boundary
+                let word_addr: u64 = in1.into() - (in1.into() % (W::BYTE_LENGTH as u64));
+                let double_word_addr = word_addr - (word_addr % (2 * W::BYTE_LENGTH as u64));
+                // Determine if this word is the low or high word in the double word
+                let is_high = word_addr != double_word_addr;
 
-                // Fetch a dword's worth of bytes from memory, using 0 where undefined
-                let bytes: Vec<u8> = (dword_addr..dword_addr + 2 * W::BYTELEN as u64)
+                // Fetch a double word's worth of bytes from memory, using 0 where undefined
+                let bytes: Vec<u8> = (double_word_addr..double_word_addr + 2 * W::BYTE_LENGTH as u64)
                     .map(|i| *mem.data_ram.0.get(&W::from_u64(i).unwrap()).unwrap_or(&0))
                     .collect();
                 // Convert the little-endian encoded bytes into words
-                let w0 = W::from_le_bytes(&bytes[..W::BYTELEN]).unwrap();
-                let w1 = W::from_le_bytes(&bytes[W::BYTELEN..]).unwrap();
+                let w0 = W::from_le_bytes(&bytes[..W::BYTE_LENGTH]).unwrap();
+                let w1 = W::from_le_bytes(&bytes[W::BYTE_LENGTH..]).unwrap();
                 // Construct the memory operation
                 let mem_op = MemOp::Load {
                     val: (w0, w1),
-                    location: in1.align_to_dword(),
+                    location: in1.align_to_double_word(),
                 };
-                // Set set the register to the first part of the dword if `is_high == false`.
+                // Set set the register to the first part of the double word if `is_high == false`.
                 // Otherwise use the second word.
                 cpu_state.registers[out.0 as usize] = if is_high { w1 } else { w0 };
                 Some(mem_op)
@@ -507,11 +507,11 @@ impl<W: Word> Instr<W> {
         let (mut new_state, mem_op) = self.execute(cpu_state, mem);
         if new_state.program_counter == old_pc {
             // The amount we increment the program counter depends on the architecture. In Harvard,
-            // it's 1 (since program memory holds dwords). In VonNeumann it's 2 * the
+            // it's 1 (since program memory holds double_words). In VonNeumann it's 2 * the
             // bytelength of a word (since data memory holds bytes).
             let pc_incr_amount = match arch {
                 TinyRamArch::Harvard => 1u64,
-                TinyRamArch::VonNeumann => 2 * (W::BITLEN as u64) / 8,
+                TinyRamArch::VonNeumann => 2 * (W::BIT_LENGTH as u64) / 8,
             };
 
             // Try to increment the program counter
@@ -548,7 +548,7 @@ pub fn run_program<W: Word, const NUM_REGS: usize>(
             // For Harvard we just wrap the given instructions and that's it
 
             // Make sure the program is word-addressable
-            assert!(program.len() < (1 << W::BITLEN));
+            assert!(program.len() < (1 << W::BIT_LENGTH));
 
             // Return the memory
             (DataMemory::<W>::default(), ProgramMemory(program.to_vec()))
@@ -557,9 +557,9 @@ pub fn run_program<W: Word, const NUM_REGS: usize>(
             // For von Neumann we're gonna have to serialize the whole program into data memory
 
             // Every instruction is 2 words
-            let serialized_program_bytelen = program.len() * 2 * (W::BITLEN as usize / 8);
+            let serialized_program_bytelen = program.len() * 2 * (W::BIT_LENGTH as usize / 8);
             // Make sure the program is word-addressable
-            assert!(serialized_program_bytelen < (1 << W::BITLEN));
+            assert!(serialized_program_bytelen < (1 << W::BIT_LENGTH));
 
             // The memory is initialized with just the program, starting at address 0. Memory is a
             // sparse map of addr -> byte
@@ -607,7 +607,7 @@ pub fn run_program<W: Word, const NUM_REGS: usize>(
                 // bytes
                 let pc = cpu_state.program_counter;
                 let pc_u64 = pc.into();
-                let encoded_instr: Vec<u8> = (pc_u64..pc_u64 + W::INSTR_BYTELEN as u64)
+                let encoded_instr: Vec<u8> = (pc_u64..pc_u64 + W::INSTR_BYTE_LENGTH as u64)
                     .map(|i| {
                         // TODO: Check that `i` didn't overflow W::MAX
                         *mem.data_ram
@@ -628,8 +628,8 @@ pub fn run_program<W: Word, const NUM_REGS: usize>(
         // Register the instruction load. For transcript purposes, make sure the load is
         // word-aligned.
         let pc_load = MemOp::Load {
-            val: instr.to_dword::<NUM_REGS>(),
-            location: pc.align_to_dword(),
+            val: instr.to_double_word::<NUM_REGS>(),
+            location: pc.align_to_double_word(),
         };
 
         // Update the CPU state and save the transcript entry

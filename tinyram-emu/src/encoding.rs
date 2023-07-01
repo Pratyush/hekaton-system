@@ -29,7 +29,7 @@ impl<W: Word> Instr<W> {
     /// instruction is invalid.
     pub fn from_bytes<const NUM_REGS: usize>(bytes: &[u8]) -> Self {
         use Opcode::*;
-        assert!(bytes.len() == W::INSTR_BYTELEN);
+        assert!(bytes.len() == W::INSTR_BYTE_LENGTH);
 
         let instr = {
             let mut buf = [0u8; 16];
@@ -176,8 +176,8 @@ impl<W: Word> Instr<W> {
         let opcode = instr_opcode(instr);
         cur_bit_idx += OPCODE_BITLEN;
 
-        let imm_or_reg_val = instr.bit_range(cur_bit_idx + (W::BITLEN as usize) - 1, cur_bit_idx);
-        cur_bit_idx += W::BITLEN as usize;
+        let imm_or_reg_val = instr.bit_range(cur_bit_idx + (W::BIT_LENGTH as usize) - 1, cur_bit_idx);
+        cur_bit_idx += W::BIT_LENGTH as usize;
 
         let reg2 = instr.bit_range(cur_bit_idx + regidx_bitlen - 1, cur_bit_idx);
         cur_bit_idx += regidx_bitlen;
@@ -190,7 +190,7 @@ impl<W: Word> Instr<W> {
 
         // Check that the rest of the instruction is all 0s. This isn't strictly necessary but it
         // might help catch bugs early
-        let rest: u128 = instr.bit_range(2 * (W::BITLEN as usize) - 1, cur_bit_idx);
+        let rest: u128 = instr.bit_range(2 * (W::BIT_LENGTH as usize) - 1, cur_bit_idx);
         assert_eq!(rest, 0);
 
         // Decode the immediate-or-reg as one or the other
@@ -244,10 +244,10 @@ impl<W: Word> Instr<W> {
 
     // Converts our operation to machine code. Panics if `buf.len() != W::INSTR_BYTELEN`.
     pub fn to_bytes<const NUM_REGS: usize>(&self) -> Vec<u8> {
-        self.to_u128::<NUM_REGS>().to_be_bytes()[16 - W::INSTR_BYTELEN..16].to_vec()
+        self.to_u128::<NUM_REGS>().to_be_bytes()[16 - W::INSTR_BYTE_LENGTH..16].to_vec()
     }
 
-    pub fn to_dword<const NUM_REGS: usize>(&self) -> DWord<W> {
+    pub fn to_double_word<const NUM_REGS: usize>(&self) -> DWord<W> {
         let bytes = self.to_bytes::<NUM_REGS>();
         let w0_bytes = &bytes[0..bytes.len() / 2];
         let w1_bytes = &bytes[bytes.len() / 2..];
@@ -282,11 +282,11 @@ impl<W: Word> Instr<W> {
         cur_bit_idx += OPCODE_BITLEN;
 
         instr.set_bit_range(
-            cur_bit_idx + (W::BITLEN as usize) - 1,
+            cur_bit_idx + (W::BIT_LENGTH as usize) - 1,
             cur_bit_idx,
             u64::from(imm_or_reg),
         );
-        cur_bit_idx += W::BITLEN as usize;
+        cur_bit_idx += W::BIT_LENGTH as usize;
 
         instr.set_bit_range(cur_bit_idx + regidx_bitlen - 1, cur_bit_idx, reg2.0);
         cur_bit_idx += regidx_bitlen;
