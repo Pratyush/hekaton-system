@@ -1,6 +1,6 @@
 use crate::{instructions::Instr, word::Word};
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap};
 
 #[derive(Default, Debug, Clone, PartialEq, Eq)]
 pub struct DataMemory<W: Word>(BTreeMap<W, u8>);
@@ -24,6 +24,10 @@ impl<W: Word> DataMemory<W> {
 
     pub fn get_mut(&mut self, index: W) -> Option<&mut u8> {
         self.0.get_mut(&index)
+    }
+
+    pub fn extend(&mut self, iter: impl IntoIterator<Item = (W, u8)>) {
+        self.0.extend(iter)
     }
 }
 

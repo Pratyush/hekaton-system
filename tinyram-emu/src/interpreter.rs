@@ -184,11 +184,11 @@ pub struct MemoryUnit<W: Word> {
 }
 
 impl<W: Word> Instr<W> {
-    /// Executes the given instruction. without necessarily updating the program counter.
-    /// This method only updates the program counter if `self` is one of `Inst::Jmp`, `Inst::CJmp`,
-    /// or `Inst::CNJmp`.
-    fn execute<const NUM_REGS: usize>(
+
+    /// Executes the given instruction, and updates the program counter accordingly.
+    pub fn execute_and_update_pc<const NUM_REGS: usize>(
         &self,
+        arch: TinyRamArch,
         mut cpu_state: CpuState<NUM_REGS, W>,
         mem: &mut MemoryUnit<W>,
     ) -> (CpuState<NUM_REGS, W>, Option<MemOp<W>>) {
@@ -383,16 +383,17 @@ impl<W: Word> Instr<W> {
                 // Round the byte address down to the nearest word and double word boundary
                 let word_addr: u64 = out.into() - (out.into() % (W::BYTE_LENGTH as u64));
                 let double_word_addr = word_addr - (word_addr % (2 * W::BYTE_LENGTH as u64));
-                // Determine if this word is the low or high word in the double word
-                let is_high = word_addr != double_word_addr;
 
                 // Fetch a double word's worth of bytes from memory, using 0 where undefined
-                let mut bytes: Vec<u8> = (double_word_addr..)
-                    .take(2 * W::BYTE_LENGTH)
+                let index_range = double_word_addr..(double_word_addr + 2 * W::BYTE_LENGTH as u64);
+                let mut bytes: Vec<u8> = index_range.clone()
                     .map(|i| *mem.data_ram.get(W::from_u64(i)).unwrap_or(&0))
                     .collect();
-                // Overwrite whatever is being stored. Overwrite the first word if `is_high = false`.
-                // Otherwise overwrite the second.
+                
+                // Determine if this word is the low or high word in the double word
+                let is_high = word_addr != double_word_addr;
+                // Overwrite whatever is being stored. 
+                // Overwrite the first word if `is_high = false`; else, overwrite the second.
                 let start = (is_high as usize) * W::BYTE_LENGTH;
                 bytes[start..][..W::BYTE_LENGTH].copy_from_slice(&in1.to_le_bytes());
 
@@ -401,9 +402,7 @@ impl<W: Word> Instr<W> {
                 let w1 = W::from_le_bytes(&bytes[W::BYTE_LENGTH..]).unwrap();
 
                 // Update the memory
-                for (i, b) in (double_word_addr..).take(2 * W::BYTE_LENGTH).zip(&bytes) {
-                    mem.data_ram.insert(W::from_u64(i), *b);
-                }
+                mem.data_ram.extend(index_range.zip(&bytes).map(|(i, b)| (W::from_u64(i), *b)));
 
                 // Construct the memory operation
                 let mem_op = MemOp::Store {
@@ -420,14 +419,13 @@ impl<W: Word> Instr<W> {
                 // Round the byte address down to the nearest word and double word boundary
                 let word_addr: u64 = in1.into() - (in1.into() % (W::BYTE_LENGTH as u64));
                 let double_word_addr = word_addr - (word_addr % (2 * W::BYTE_LENGTH as u64));
-                // Determine if this word is the low or high word in the double word
-                let is_high = word_addr != double_word_addr;
 
                 // Fetch a double word's worth of bytes from memory, using 0 where undefined
-                let bytes: Vec<u8> = (double_word_addr..)
-                    .take(2 * W::BYTE_LENGTH)
+                let index_range = double_word_addr..(double_word_addr + 2 * W::BYTE_LENGTH as u64);
+                let bytes: Vec<u8> = index_range.clone()
                     .map(|i| *mem.data_ram.get(W::from_u64(i)).unwrap_or(&0))
                     .collect();
+                
                 // Convert the little-endian encoded bytes into words
                 let w0 = W::from_le_bytes(&bytes[..W::BYTE_LENGTH]).unwrap();
                 let w1 = W::from_le_bytes(&bytes[W::BYTE_LENGTH..]).unwrap();
@@ -438,6 +436,7 @@ impl<W: Word> Instr<W> {
                 };
                 // Set set the register to the first part of the double word if `is_high == false`.
                 // Otherwise use the second word.
+                let is_high = word_addr != double_word_addr;
                 cpu_state.registers[out.0 as usize] = if is_high { w1 } else { w0 };
                 Some(mem_op)
             },
@@ -448,14 +447,14 @@ impl<W: Word> Instr<W> {
                 // the tape head is out of bounds or if the tape doesn't exist (ie if the tape
                 // index is > 1)
                 let (location, val_opt) = match in1.into() {
-                    0u64 => {
+                    0 => {
                         let loc = cpu_state.primary_tape_pos;
                         let val = mem.primary_tape.get(loc as usize).cloned();
                         cpu_state.primary_tape_pos += 1;
 
                         (loc, val)
                     },
-                    1u64 => {
+                    1 => {
                         let loc = cpu_state.aux_tape_pos;
                         let val = mem.aux_tape.get(loc as usize).cloned();
                         cpu_state.aux_tape_pos += 1;
@@ -493,43 +492,23 @@ impl<W: Word> Instr<W> {
             _ => todo!(),
         };
 
-        (cpu_state, mem_op)
-    }
-
-    // FIXME: This function will do the wrong thing on an assembly line like:
-    //     _infinite: jmp _infinite
-    /// Executes the given instruction, and updates the program counter.
-    pub fn execute_and_update_pc<const NUM_REGS: usize>(
-        &self,
-        arch: TinyRamArch,
-        cpu_state: CpuState<NUM_REGS, W>,
-        mem: &mut MemoryUnit<W>,
-    ) -> (CpuState<NUM_REGS, W>, Option<MemOp<W>>) {
-        let old_pc = cpu_state.program_counter;
-        let (mut new_state, mem_op) = self.execute(cpu_state, mem);
-        if new_state.program_counter == old_pc {
+        if !self.is_jump() {
             // The amount we increment the program counter depends on the architecture. In Harvard,
             // it's 1 (since program memory holds double_words). In VonNeumann it's
             // 2 * bytelength of a word (since data memory holds bytes).
-            let pc_incr_amount = match arch {
-                TinyRamArch::Harvard => 1u64,
-                TinyRamArch::VonNeumann => 2 * (W::BIT_LENGTH as u64) / 8,
+            let inc_amount = match arch {
+                TinyRamArch::Harvard => W::ONE,
+                TinyRamArch::VonNeumann => W::from_u64(2 * (W::BIT_LENGTH as u64) / 8),
             };
 
             // Try to increment the program counter
-            let (new_pc, overflow) = new_state
+            cpu_state.program_counter = cpu_state
                 .program_counter
-                .carrying_add(W::from_u64(pc_incr_amount));
-            // If the program counter went out of bounds, panic
-            if overflow {
-                panic!("program counter overflow");
-            }
-
-            // Set the new CPU state's program counter
-            new_state.program_counter = new_pc;
+                .checked_add(inc_amount)
+                // If the program counter went out of bounds, panic
+                .expect("program counter overflow");
         }
-
-        (new_state, mem_op)
+        (cpu_state, mem_op)
     }
 }
 

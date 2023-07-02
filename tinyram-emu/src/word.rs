@@ -2,6 +2,7 @@ use core::{
     fmt::{Debug, Display},
     ops::{BitAnd, BitOr, BitXor, Div, Not, Rem, Sub},
 };
+use std::ops::{AddAssign, Add};
 
 use ark_ff::PrimeField;
 use rand::Rng;
@@ -23,6 +24,9 @@ pub trait Word:
     + BitOr<Output = Self>
     + BitXor<Output = Self>
     + BitAnd<Output = Self>
+    + Add<Output = Self>
+    + Sub<Output = Self>
+    + AddAssign<Self>
     + TryFrom<u64>
     + Into<u64>
     + TryInto<usize>
@@ -36,6 +40,7 @@ pub trait Word:
     const INSTR_BYTE_LENGTH: usize = 2 * Self::BIT_LENGTH / 8;
     const MAX: Self;
     const ZERO: Self;
+    const ONE: Self;
 
     /// Convert from `u64`. Fails if the value exceeds `W::MAX`
     fn try_from_u64(val: u64) -> Option<Self> {
@@ -79,6 +84,13 @@ pub trait Word:
     /// Computes the sum of `self` and `other`, and returns the carry bit (if any).
     fn carrying_add(self, other: Self) -> (Self, bool);
 
+    /// Computes the sum of `self` and `other`, and returning `Some(result)` if the result
+    /// was in bounds, and `None` otherwise.
+    fn checked_add(self, other: Self) -> Option<Self> {
+        let (res, carry) = self.carrying_add(other);
+        (!carry).then(|| res)
+    }
+
     /// Computes `self - other`, and returns the carry bit (if any).
     fn borrowing_sub(self, other: Self) -> (Self, bool);
 
@@ -120,6 +132,7 @@ macro_rules! impl_word {
             const BIT_LENGTH: usize = $bit_size;
             const MAX: Self = <$word>::MAX;
             const ZERO: Self = <$word>::MIN;
+            const ONE: Self = 1;
 
             fn from_be_bytes(bytes: &[u8]) -> Option<Self> {
                 (bytes.len() == Self::BYTE_LENGTH).then(|| {
