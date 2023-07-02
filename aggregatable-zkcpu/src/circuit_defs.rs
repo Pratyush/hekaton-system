@@ -497,12 +497,10 @@ mod test {
         let n = 1;
         let primary_tape = (1..=n)
             .map(W::from_u64)
-            .collect::<Result<Vec<W>, _>>()
-            .unwrap();
+            .collect();
         let aux_tape = (1..=n)
             .map(|x| W::from_u64(100 * x))
-            .collect::<Result<Vec<W>, _>>()
-            .unwrap();
+            .collect();
 
         transcript_tester(
             "\

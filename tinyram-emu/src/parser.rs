@@ -186,16 +186,46 @@ fn lower_ri_instr<W: Word>(ctx: &LoweringCtx, pair: Pair<Rule>) -> Instr<W> {
     let arg2 = lower_imm_or_reg(ctx, imm_or_reg_pair);
 
     match op {
-        Opcode::CmpE => Instr::CmpE { in1: arg1, in2: arg2, },
-        Opcode::CmpA => Instr::CmpA { in1: arg1, in2: arg2, },
-        Opcode::CmpAe => Instr::CmpAE { in1: arg1, in2: arg2, },
-        Opcode::CmpG => Instr::CmpG { in1: arg1, in2: arg2, },
-        Opcode::CmpGe => Instr::CmpGE { in1: arg1, in2: arg2, },
-        Opcode::Mov => Instr::Mov { in1: arg2, out: arg1, },
-        Opcode::CMov => Instr::CMov { in1: arg2, out: arg1 },
-        Opcode::LoadB => Instr::LoadB { out: arg1, in1: arg2, },
-        Opcode::LoadW => Instr::LoadW { out: arg1, in1: arg2, },
-        Opcode::Read => Instr::Read { out: arg1, in1: arg2, },
+        Opcode::CmpE => Instr::CmpE {
+            in1: arg1,
+            in2: arg2,
+        },
+        Opcode::CmpA => Instr::CmpA {
+            in1: arg1,
+            in2: arg2,
+        },
+        Opcode::CmpAe => Instr::CmpAE {
+            in1: arg1,
+            in2: arg2,
+        },
+        Opcode::CmpG => Instr::CmpG {
+            in1: arg1,
+            in2: arg2,
+        },
+        Opcode::CmpGe => Instr::CmpGE {
+            in1: arg1,
+            in2: arg2,
+        },
+        Opcode::Mov => Instr::Mov {
+            in1: arg2,
+            out: arg1,
+        },
+        Opcode::CMov => Instr::CMov {
+            in1: arg2,
+            out: arg1,
+        },
+        Opcode::LoadB => Instr::LoadB {
+            out: arg1,
+            in1: arg2,
+        },
+        Opcode::LoadW => Instr::LoadW {
+            out: arg1,
+            in1: arg2,
+        },
+        Opcode::Read => Instr::Read {
+            out: arg1,
+            in1: arg2,
+        },
         _ => panic!("Unexpected op {op:?}"),
     }
 }
@@ -223,8 +253,14 @@ fn lower_ir_instr<W: Word>(ctx: &LoweringCtx, pair: Pair<Rule>) -> Instr<W> {
     let reg1 = lower_reg(reg1_pair);
 
     match op {
-        Opcode::StoreW => Instr::StoreW { in1: reg1, out: imm_or_reg, },
-        Opcode::StoreB => Instr::StoreB { in1: reg1, out: imm_or_reg, },
+        Opcode::StoreW => Instr::StoreW {
+            in1: reg1,
+            out: imm_or_reg,
+        },
+        Opcode::StoreB => Instr::StoreB {
+            in1: reg1,
+            out: imm_or_reg,
+        },
         _ => panic!("Unexpected op {op:?}"),
     }
 }

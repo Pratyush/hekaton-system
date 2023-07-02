@@ -1,7 +1,7 @@
 use crate::{
     instructions::{Instr, Opcode},
     register::{ImmOrRegister, RegIdx},
-    word::{DWord, Word},
+    word::{DoubleWord, Word},
 };
 
 use bitfield::{Bit, BitMut, BitRange, BitRangeMut};
@@ -176,7 +176,8 @@ impl<W: Word> Instr<W> {
         let opcode = instr_opcode(instr);
         cur_bit_idx += OPCODE_BITLEN;
 
-        let imm_or_reg_val = instr.bit_range(cur_bit_idx + (W::BIT_LENGTH as usize) - 1, cur_bit_idx);
+        let imm_or_reg_val =
+            instr.bit_range(cur_bit_idx + (W::BIT_LENGTH as usize) - 1, cur_bit_idx);
         cur_bit_idx += W::BIT_LENGTH as usize;
 
         let reg2 = instr.bit_range(cur_bit_idx + regidx_bitlen - 1, cur_bit_idx);
@@ -247,7 +248,7 @@ impl<W: Word> Instr<W> {
         self.to_u128::<NUM_REGS>().to_be_bytes()[16 - W::INSTR_BYTE_LENGTH..16].to_vec()
     }
 
-    pub fn to_double_word<const NUM_REGS: usize>(&self) -> DWord<W> {
+    pub fn to_double_word<const NUM_REGS: usize>(&self) -> DoubleWord<W> {
         let bytes = self.to_bytes::<NUM_REGS>();
         let w0_bytes = &bytes[0..bytes.len() / 2];
         let w1_bytes = &bytes[bytes.len() / 2..];

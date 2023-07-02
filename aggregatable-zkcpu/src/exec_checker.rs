@@ -384,7 +384,7 @@ pub(crate) fn check_execution<const NUM_REGS: usize, WV: WordVar<F>, F: PrimeFie
             // Increment PC by 1 double word
             let double_word_bytelen = 2 * (WV::BITLEN / 8) as u64;
             pc.carrying_add(&WV::constant(
-                WV::Native::from_u64(double_word_bytelen).unwrap(),
+                WV::Native::from_u64(double_word_bytelen),
             ))?
         },
     };

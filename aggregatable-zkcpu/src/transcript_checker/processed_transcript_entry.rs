@@ -250,17 +250,17 @@ where
         let val = self.val.value()?;
         let loc = self.location.value()?;
 
-        // Make the mem op from the flattened values. The unwraps below are fine because if the
-        // op_disc doesn't match the location type, this is a malformed value.
+        // Make the mem op from the flattened values. The `from_u64` calls below will not panic
+        // because if the op_disc doesn't match the location type, this is a malformed value.
         let mem_op = if op_disc == MemOpKind::Load as u8 {
             MemOp::Load {
                 val,
-                location: W::from_u64(loc).unwrap(),
+                location: W::from_u64(loc),
             }
         } else if op_disc == MemOpKind::Store as u8 {
             MemOp::Store {
                 val,
-                location: W::from_u64(loc).unwrap(),
+                location: W::from_u64(loc),
             }
         } else if op_disc == MemOpKind::ReadPrimary as u8 {
             // The single-word value of a Read is located in the first word of val. And the

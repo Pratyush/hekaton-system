@@ -5,8 +5,9 @@ use crate::{
 
 use bitfield::BitRangeMut;
 use rand::Rng;
+use strum::Display;
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Display)]
 #[rustfmt::skip]
 #[repr(u8)]
 pub enum Opcode {
@@ -33,15 +34,19 @@ pub enum Opcode {
     Jmp    = 0b10100,
     CJmp   = 0b10101,
     CnJmp  = 0b10110,
+    #[strum(serialize = "store.b")]
     StoreB = 0b11010,
+    #[strum(serialize = "load.b")]
     LoadB  = 0b11011,
+    #[strum(serialize = "store.w")]
     StoreW = 0b11100,
+    #[strum(serialize = "load.w")]
     LoadW  = 0b11101,
     Read   = 0b11110,
     Answer = 0b11111,
 }
 
-const BYTE_TO_OPCODE: phf::Map<u8, Opcode> = phf::phf_map! {
+pub const BYTE_TO_OPCODE: phf::Map<u8, Opcode> = phf::phf_map! {
     0b00000u8 => Opcode::And   ,
     0b00001u8 => Opcode::Or    ,
     0b00010u8 => Opcode::Xor   ,
@@ -73,7 +78,7 @@ const BYTE_TO_OPCODE: phf::Map<u8, Opcode> = phf::phf_map! {
     0b11111u8 => Opcode::Answer,
 };
 
-const STR_TO_OPCODE: phf::Map<&'static str, Opcode> = phf::phf_map! {
+pub const STR_TO_OPCODE: phf::Map<&'static str, Opcode> = phf::phf_map! {
     "and" => 	Opcode::And,
     "or" => 	Opcode::Or,
     "xor" => 	Opcode::Xor,
@@ -118,6 +123,12 @@ impl TryFrom<&str> for Opcode {
 
     fn try_from(input: &str) -> Result<Opcode, ()> {
         STR_TO_OPCODE.get(input).ok_or(()).copied()
+    }
+}
+
+impl<W: Word> From<Instr<W>> for Opcode {
+    fn from(instr: Instr<W>) -> Opcode {
+        instr.opcode()
     }
 }
 
@@ -339,5 +350,63 @@ impl<W: Word> Instr<W> {
         // A u128 is larger than an instruction. Use the bottom bytes as the instruction encoding
         let instr_bytes = instr.to_be_bytes();
         Instr::from_bytes::<NUM_REGS>(&instr_bytes[16 - W::INSTR_BYTE_LENGTH..16])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+
+    use super::Opcode;
+    const OPCODE_ARR: [Opcode; 29] = [
+        Opcode::And,
+        Opcode::Or,
+        Opcode::Xor,
+        Opcode::Not,
+        Opcode::Add,
+        Opcode::Sub,
+        Opcode::MulL,
+        Opcode::UMulH,
+        Opcode::SMulH,
+        Opcode::UDiv,
+        Opcode::UMod,
+        Opcode::Shl,
+        Opcode::Shr,
+        Opcode::CmpE,
+        Opcode::CmpA,
+        Opcode::CmpAe,
+        Opcode::CmpG,
+        Opcode::CmpGe,
+        Opcode::Mov,
+        Opcode::CMov,
+        Opcode::Jmp,
+        Opcode::CJmp,
+        Opcode::CnJmp,
+        Opcode::StoreB,
+        Opcode::LoadB,
+        Opcode::StoreW,
+        Opcode::LoadW,
+        Opcode::Read,
+        Opcode::Answer,
+    ];
+
+    #[test]
+    fn check_byte_to_opcode_map() {
+        use super::BYTE_TO_OPCODE;
+        for opcode in OPCODE_ARR {
+            assert_eq!(opcode, *BYTE_TO_OPCODE.get(&(opcode as u8)).unwrap())
+        }
+    }
+
+    #[test]
+    fn check_str_to_opcode_map() {
+        use super::STR_TO_OPCODE;
+        for opcode in OPCODE_ARR {
+            assert_eq!(
+                opcode,
+                *STR_TO_OPCODE
+                    .get(format!("{opcode}").to_lowercase().as_ref())
+                    .expect(&format!("{opcode} doesn't exist in map"))
+            )
+        }
     }
 }

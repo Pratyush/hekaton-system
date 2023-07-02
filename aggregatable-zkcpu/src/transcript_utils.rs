@@ -48,7 +48,7 @@ pub fn sort_and_pad<const NUM_REGS: usize, W: Word>(
             let mut last_elem = buf.get(buf.len() - 1).unwrap().clone();
             // Get the RAM index of the load/store. This must be a load/store because we
             // filtered out the reads above.
-            let location = W::from_u64(last_elem.mem_op.location()).unwrap();
+            let location = W::from_u64(last_elem.mem_op.location());
             let val = last_elem.mem_op.val();
             last_elem.mem_op = MemOp::Load { location, val };
             last_elem

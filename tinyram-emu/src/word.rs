@@ -7,7 +7,7 @@ use ark_ff::PrimeField;
 use rand::Rng;
 
 /// A double word. The first element is the low word, the second is the high word.
-pub type DWord<W> = (W, W);
+pub type DoubleWord<W> = (W, W);
 
 pub trait Word:
     Debug
@@ -25,6 +25,7 @@ pub trait Word:
     + BitAnd<Output = Self>
     + TryFrom<u64>
     + Into<u64>
+    + TryInto<usize>
 {
     type Signed: Eq + Ord + Copy;
 
@@ -37,14 +38,19 @@ pub trait Word:
     const ZERO: Self;
 
     /// Convert from `u64`. Fails if the value exceeds `W::MAX`
-    fn from_u64(val: u64) -> Result<Self, ()> {
-        Self::try_from(val).map_err(|_| ())
+    fn try_from_u64(val: u64) -> Option<Self> {
+        Self::try_from(val).ok()
+    }
+
+    /// Convert from `u64`. Panics if the value exceeds `W::MAX`
+    fn from_u64(val: u64) -> Self {
+        Self::try_from_u64(val).unwrap()
     }
 
     /// Clears out the bottom bits of the word so that it can be used an index to double word-aligned
     /// memory, i.e., the memory format we use for transcripts
     fn align_to_double_word(&self) -> Self;
-    
+
     /// Convert from big-endian bytes. Fails if `bytes.len() != Self::BYTE_LENGTH`.
     fn from_be_bytes(bytes: &[u8]) -> Option<Self>;
 

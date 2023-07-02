@@ -2,7 +2,7 @@ use crate::{
     instructions::Instr,
     memory::{DataMemory, ProgramMemory},
     program_state::{CpuState, TapePos},
-    word::{DWord, Word},
+    word::{DoubleWord, Word},
     TinyRamArch,
 };
 
@@ -20,14 +20,14 @@ pub enum MemOp<W: Word> {
     /// Load a double word from RAM
     Load {
         /// The double word being loaded
-        val: DWord<W>,
+        val: DoubleWord<W>,
         /// The index the value is being loaded from
         location: W,
     },
     /// Store a double word to RAM
     Store {
         /// The double word being stored
-        val: DWord<W>,
+        val: DoubleWord<W>,
         /// The index the value is being stored to
         location: W,
     },
@@ -98,7 +98,7 @@ impl<W: Word> MemOp<W> {
     /// Gets the double word being loaded or stored. If it's a valid tape op, then returns the word
     /// being read in the low position, and 0 in the high position. If it's an invalid tape op,
     /// then returns (0, 0)
-    pub fn val(&self) -> DWord<W> {
+    pub fn val(&self) -> DoubleWord<W> {
         match self {
             MemOp::Load { val, .. } => val.clone(),
             MemOp::Store { val, .. } => val.clone(),
@@ -387,21 +387,22 @@ impl<W: Word> Instr<W> {
                 let is_high = word_addr != double_word_addr;
 
                 // Fetch a double word's worth of bytes from memory, using 0 where undefined
-                let mut bytes: Vec<u8> = (double_word_addr..double_word_addr + 2 * W::BYTE_LENGTH as u64)
-                    .map(|i| *mem.data_ram.0.get(&W::from_u64(i).unwrap()).unwrap_or(&0))
+                let mut bytes: Vec<u8> = (double_word_addr..)
+                    .take(2 * W::BYTE_LENGTH)
+                    .map(|i| *mem.data_ram.get(W::from_u64(i)).unwrap_or(&0))
                     .collect();
                 // Overwrite whatever is being stored. Overwrite the first word if `is_high = false`.
                 // Otherwise overwrite the second.
-                let start = is_high as usize * W::BYTE_LENGTH;
-                bytes[start..start + W::BYTE_LENGTH].copy_from_slice(&in1.to_le_bytes());
+                let start = (is_high as usize) * W::BYTE_LENGTH;
+                bytes[start..][..W::BYTE_LENGTH].copy_from_slice(&in1.to_le_bytes());
 
                 // Now convert the little-endian encoded bytes into words
                 let w0 = W::from_le_bytes(&bytes[..W::BYTE_LENGTH]).unwrap();
                 let w1 = W::from_le_bytes(&bytes[W::BYTE_LENGTH..]).unwrap();
 
                 // Update the memory
-                for (i, b) in (double_word_addr..double_word_addr + 2 * W::BYTE_LENGTH as u64).zip(bytes.iter()) {
-                    mem.data_ram.0.insert(W::from_u64(i).unwrap(), *b);
+                for (i, b) in (double_word_addr..).take(2 * W::BYTE_LENGTH).zip(&bytes) {
+                    mem.data_ram.insert(W::from_u64(i), *b);
                 }
 
                 // Construct the memory operation
@@ -423,8 +424,9 @@ impl<W: Word> Instr<W> {
                 let is_high = word_addr != double_word_addr;
 
                 // Fetch a double word's worth of bytes from memory, using 0 where undefined
-                let bytes: Vec<u8> = (double_word_addr..double_word_addr + 2 * W::BYTE_LENGTH as u64)
-                    .map(|i| *mem.data_ram.0.get(&W::from_u64(i).unwrap()).unwrap_or(&0))
+                let bytes: Vec<u8> = (double_word_addr..)
+                    .take(2 * W::BYTE_LENGTH)
+                    .map(|i| *mem.data_ram.get(W::from_u64(i)).unwrap_or(&0))
                     .collect();
                 // Convert the little-endian encoded bytes into words
                 let w0 = W::from_le_bytes(&bytes[..W::BYTE_LENGTH]).unwrap();
@@ -507,8 +509,8 @@ impl<W: Word> Instr<W> {
         let (mut new_state, mem_op) = self.execute(cpu_state, mem);
         if new_state.program_counter == old_pc {
             // The amount we increment the program counter depends on the architecture. In Harvard,
-            // it's 1 (since program memory holds double_words). In VonNeumann it's 2 * the
-            // bytelength of a word (since data memory holds bytes).
+            // it's 1 (since program memory holds double_words). In VonNeumann it's
+            // 2 * bytelength of a word (since data memory holds bytes).
             let pc_incr_amount = match arch {
                 TinyRamArch::Harvard => 1u64,
                 TinyRamArch::VonNeumann => 2 * (W::BIT_LENGTH as u64) / 8,
@@ -517,7 +519,7 @@ impl<W: Word> Instr<W> {
             // Try to increment the program counter
             let (new_pc, overflow) = new_state
                 .program_counter
-                .carrying_add(W::from_u64(pc_incr_amount).unwrap());
+                .carrying_add(W::from_u64(pc_incr_amount));
             // If the program counter went out of bounds, panic
             if overflow {
                 panic!("program counter overflow");
@@ -567,12 +569,12 @@ pub fn run_program<W: Word, const NUM_REGS: usize>(
                 .iter()
                 .flat_map(Instr::to_bytes::<NUM_REGS>)
                 .enumerate()
-                .map(|(i, b)| (W::from_u64(i as u64).unwrap(), b))
+                .map(|(i, b)| (W::from_u64(i as u64), b))
                 .collect();
 
             // Return the memory
             (
-                DataMemory(serialized_program),
+                DataMemory::new(serialized_program),
                 ProgramMemory::<W>::default(),
             )
         },
@@ -607,12 +609,13 @@ pub fn run_program<W: Word, const NUM_REGS: usize>(
                 // bytes
                 let pc = cpu_state.program_counter;
                 let pc_u64 = pc.into();
-                let encoded_instr: Vec<u8> = (pc_u64..pc_u64 + W::INSTR_BYTE_LENGTH as u64)
-                    .map(|i| {
+                let encoded_instr: Vec<u8> = (pc_u64..)
+                    .take(W::INSTR_BYTE_LENGTH)
+                    .map(W::from_u64)
+                    .map(|w| {
                         // TODO: Check that `i` didn't overflow W::MAX
                         *mem.data_ram
-                            .0
-                            .get(&W::from_u64(i).unwrap())
+                            .get(w)
                             .unwrap_or_else(|| panic!("illegal jump to 0x{:08x}", pc_u64))
                     })
                     .collect();
@@ -752,14 +755,8 @@ mod test {
         // sum of those sums.
 
         let n = 10;
-        let primary_tape = (1..=n)
-            .map(W::from_u64)
-            .collect::<Result<Vec<W>, _>>()
-            .unwrap();
-        let aux_tape = (1..=n)
-            .map(|x| W::from_u64(100 * x))
-            .collect::<Result<Vec<W>, _>>()
-            .unwrap();
+        let primary_tape = (1..=n).map(W::from_u64).collect::<Vec<W>>();
+        let aux_tape = (1..=n).map(|x| W::from_u64(100 * x)).collect::<Vec<W>>();
 
         let code = "\
         _loop: read r0, 0     ; r0 <- primary tape

@@ -61,7 +61,7 @@ impl<W: Word> ImmOrRegister<W> {
     pub fn raw(&self) -> W {
         match self {
             // This unwrap is ok because reg.0 is a u8, which is always representable as a Word
-            ImmOrRegister::Register(reg) => W::from_u64(reg.0 as u64).unwrap(),
+            ImmOrRegister::Register(reg) => W::from_u64(reg.0 as u64),
             ImmOrRegister::Imm(imm) => *imm,
         }
     }

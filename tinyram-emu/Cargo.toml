@@ -10,3 +10,4 @@ bitfield = "0.14"
 pest = "2.5.1"
 pest_derive = "2.5.1"
 rand = "0.8"
+strum = { version = "0.25", features = ["derive"] } 

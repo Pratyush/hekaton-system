@@ -167,7 +167,7 @@ impl<W: WordVar<F>, F: PrimeField> ImmOrRegisterVar<W, F> {
         let imm_val = self.val.clone();
 
         // Check that, if this is a regsiter index, it is less than NUM_REGS
-        let num_regs = W::constant(W::Native::from_u64(NUM_REGS as u64).unwrap());
+        let num_regs = W::constant(W::Native::from_u64(NUM_REGS as u64));
         imm_val
             .is_lt(&num_regs)?
             .conditional_enforce_equal(&Boolean::TRUE, &!self.is_imm.clone())?;
