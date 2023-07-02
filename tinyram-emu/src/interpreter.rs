@@ -191,6 +191,7 @@ impl<W: Word> Instr<W> {
         mut cpu_state: CpuState<NUM_REGS, W>,
         mem: &mut MemoryUnit<W>,
     ) -> (CpuState<NUM_REGS, W>, Option<MemOp<W>>) {
+        let starting_pc = cpu_state.program_counter;
         let mem_op = match self {
             // Arithmetic instructions
             Instr::And { in1, in2, out } => {
@@ -495,7 +496,8 @@ impl<W: Word> Instr<W> {
             _ => todo!(),
         };
 
-        if !self.is_jump() {
+        // If the program counter was not changed by the instruction (i.e., via a jmp, cjmp, or cnjmp), increment it now.
+        if cpu_state.program_counter == starting_pc {
             // The amount we increment the program counter depends on the architecture. In Harvard,
             // it's 1 (since program memory holds double_words). In VonNeumann it's
             // 2 * bytelength of a word (since data memory holds bytes).
