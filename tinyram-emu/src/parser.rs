@@ -16,7 +16,7 @@ use pest_derive::Parser;
 
 #[derive(Parser)]
 #[grammar = "tinyram.pest"]
-pub struct TinyRamParser<const NUM_REGS: usize, const WORD_BITLENGTH: usize>;
+pub struct TinyRamParser;
 
 /// The context necessary to lower the parsed TinyRAM program, i.e., convert the AST to concrete
 /// types and real memory offsets.
