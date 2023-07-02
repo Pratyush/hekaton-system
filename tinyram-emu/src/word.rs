@@ -2,7 +2,7 @@ use core::{
     fmt::{Debug, Display},
     ops::{BitAnd, BitOr, BitXor, Div, Not, Rem, Sub},
 };
-use std::ops::{AddAssign, Add};
+use std::ops::{Add, AddAssign};
 
 use ark_ff::PrimeField;
 use rand::Rng;

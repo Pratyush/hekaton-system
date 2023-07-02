@@ -300,12 +300,11 @@ pub enum Instr<W: Word> {
 }
 
 impl<W: Word> Instr<W> {
-
     /// Returns whether this instruction is a jump instruction
     pub fn is_jump(&self) -> bool {
         use Instr::*;
         matches!(self, Jmp { .. } | CJmp { .. } | CNJmp { .. })
-    } 
+    }
 
     /// Returns a random, valid instruction. Useful for testing
     pub fn rand<const NUM_REGS: usize>(mut rng: impl Rng) -> Self {

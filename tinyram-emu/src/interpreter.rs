@@ -184,7 +184,6 @@ pub struct MemoryUnit<W: Word> {
 }
 
 impl<W: Word> Instr<W> {
-
     /// Executes the given instruction, and updates the program counter accordingly.
     pub fn execute_and_update_pc<const NUM_REGS: usize>(
         &self,
@@ -386,23 +385,26 @@ impl<W: Word> Instr<W> {
 
                 // Fetch a double word's worth of bytes from memory, using 0 where undefined
                 let index_range = double_word_addr..(double_word_addr + 2 * W::BYTE_LENGTH as u64);
-                let mut bytes: Vec<u8> = index_range.clone()
+                let mut bytes: Vec<u8> = index_range
+                    .clone()
                     .map(|i| *mem.data_ram.get(W::from_u64(i)).unwrap_or(&0))
                     .collect();
-                
+
                 // Determine if this word is the low or high word in the double word
                 let is_high = word_addr != double_word_addr;
-                // Overwrite whatever is being stored. 
+                // Overwrite whatever is being stored.
                 // Overwrite the first word if `is_high = false`; else, overwrite the second.
                 let start = (is_high as usize) * W::BYTE_LENGTH;
                 bytes[start..][..W::BYTE_LENGTH].copy_from_slice(&in1.to_le_bytes());
 
+                // Update the memory
+                for (i, b) in index_range.zip(&bytes).map(|(i, b)| (W::from_u64(i), *b)) {
+                    mem.data_ram.insert(i, b);
+                }
+
                 // Now convert the little-endian encoded bytes into words
                 let w0 = W::from_le_bytes(&bytes[..W::BYTE_LENGTH]).unwrap();
                 let w1 = W::from_le_bytes(&bytes[W::BYTE_LENGTH..]).unwrap();
-
-                // Update the memory
-                mem.data_ram.extend(index_range.zip(&bytes).map(|(i, b)| (W::from_u64(i), *b)));
 
                 // Construct the memory operation
                 let mem_op = MemOp::Store {
@@ -422,10 +424,11 @@ impl<W: Word> Instr<W> {
 
                 // Fetch a double word's worth of bytes from memory, using 0 where undefined
                 let index_range = double_word_addr..(double_word_addr + 2 * W::BYTE_LENGTH as u64);
-                let bytes: Vec<u8> = index_range.clone()
+                let bytes: Vec<u8> = index_range
+                    .clone()
                     .map(|i| *mem.data_ram.get(W::from_u64(i)).unwrap_or(&0))
                     .collect();
-                
+
                 // Convert the little-endian encoded bytes into words
                 let w0 = W::from_le_bytes(&bytes[..W::BYTE_LENGTH]).unwrap();
                 let w1 = W::from_le_bytes(&bytes[W::BYTE_LENGTH..]).unwrap();

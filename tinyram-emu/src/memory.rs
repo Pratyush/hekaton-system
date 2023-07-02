@@ -1,6 +1,6 @@
 use crate::{instructions::Instr, word::Word};
 
-use std::{collections::BTreeMap};
+use std::collections::BTreeMap;
 
 #[derive(Default, Debug, Clone, PartialEq, Eq)]
 pub struct DataMemory<W: Word>(BTreeMap<W, u8>);
