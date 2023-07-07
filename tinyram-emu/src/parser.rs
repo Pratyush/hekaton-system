@@ -42,14 +42,14 @@ pub struct TinyRamHeader {
 
 impl<'a, T: TinyRam> LoweringCtx<'a, T> {
     /// Converts a parse `Pair` to a map from rule -> str
-    pub fn parsed_dict(pair: Pair<Rule>) -> BTreeMap<Rule, &str> {
+    pub fn parsed_dict(pair: Pair<'_, Rule>) -> BTreeMap<Rule, &str> {
         pair.into_inner()
             .map(|p| (p.as_rule(), p.as_str()))
             .collect()
     }
 
     /// Lowers a parsed header into a `TinyRamHeader`
-    pub fn lower_header(pair: Pair<Rule>) -> Option<TinyRamHeader> {
+    pub fn lower_header(pair: Pair<'_, Rule>) -> Option<TinyRamHeader> {
         use crate::Word;
         assert_eq!(pair.as_rule(), Rule::header);
         let dict = Self::parsed_dict(pair);
@@ -71,7 +71,7 @@ impl<'a, T: TinyRam> LoweringCtx<'a, T> {
     }
 
     /// Lowers a parsed register in a `RegIdx`
-    pub fn lower_reg(pair: Pair<Rule>) -> RegIdx {
+    pub fn lower_reg(pair: Pair<'_, Rule>) -> RegIdx {
         assert_eq!(pair.as_rule(), Rule::reg);
         // The first character of a register is 'r'
         let reg_idx_str = &pair.as_str()[1..];
@@ -79,7 +79,7 @@ impl<'a, T: TinyRam> LoweringCtx<'a, T> {
     }
 
     /// Lowers a parsed immediate into a word
-    pub fn lower_imm(&self, pair: Pair<Rule>) -> T::Word {
+    pub fn lower_imm(&self, pair: Pair<'_, Rule>) -> T::Word {
         assert_eq!(pair.as_rule(), Rule::imm);
         let val = pair.into_inner().next().unwrap();
         let val_str = val.as_str().trim();
@@ -104,7 +104,7 @@ impl<'a, T: TinyRam> LoweringCtx<'a, T> {
     }
 
     /// Lowers a parsed immediate-or-register into an `ImmOrRegister`
-    pub fn lower_imm_or_reg(&self, pair: Pair<Rule>) -> ImmOrRegister<T> {
+    pub fn lower_imm_or_reg(&self, pair: Pair<'_, Rule>) -> ImmOrRegister<T> {
         assert_eq!(pair.as_rule(), Rule::imm_or_reg);
         let val = pair.into_inner().next().unwrap();
 
@@ -122,7 +122,7 @@ impl<'a, T: TinyRam> LoweringCtx<'a, T> {
     }
 
     /// Lowers a register-register-immorreg instruction
-    pub fn lower_rri_instr(&self, pair: Pair<Rule>) -> Instr<T> {
+    pub fn lower_rri_instr(&self, pair: Pair<'_, Rule>) -> Instr<T> {
         assert_eq!(pair.as_rule(), Rule::rri_instr);
         let mut it = pair.into_inner();
 
@@ -165,7 +165,7 @@ impl<'a, T: TinyRam> LoweringCtx<'a, T> {
     }
 
     /// Lowers a register-immorreg instruction
-    pub fn lower_ri_instr(&self, pair: Pair<Rule>) -> Instr<T> {
+    pub fn lower_ri_instr(&self, pair: Pair<'_, Rule>) -> Instr<T> {
         assert_eq!(pair.as_rule(), Rule::ri_instr);
         let mut it = pair.into_inner();
 
@@ -232,7 +232,7 @@ impl<'a, T: TinyRam> LoweringCtx<'a, T> {
     }
 
     /// Lowers an immorreg-register instruction
-    pub fn lower_ir_instr(&self, pair: Pair<Rule>) -> Instr<T> {
+    pub fn lower_ir_instr(&self, pair: Pair<'_, Rule>) -> Instr<T> {
         assert_eq!(pair.as_rule(), Rule::ir_instr);
         let mut it = pair.into_inner();
 
@@ -267,7 +267,7 @@ impl<'a, T: TinyRam> LoweringCtx<'a, T> {
     }
 
     /// Lowers an immorreg instruction
-    pub fn lower_i_instr(&self, pair: Pair<Rule>) -> Instr<T> {
+    pub fn lower_i_instr(&self, pair: Pair<'_, Rule>) -> Instr<T> {
         assert_eq!(pair.as_rule(), Rule::i_instr);
         let mut it = pair.into_inner();
 
@@ -294,7 +294,7 @@ impl<'a, T: TinyRam> LoweringCtx<'a, T> {
     }
 
     /// Lowers any instruction
-    pub fn lower_any_instr(&self, pair: Pair<Rule>) -> Instr<T> {
+    pub fn lower_any_instr(&self, pair: Pair<'_, Rule>) -> Instr<T> {
         assert_eq!(pair.as_rule(), Rule::any_instr);
         let val = pair.into_inner().next().unwrap();
 
@@ -308,7 +308,7 @@ impl<'a, T: TinyRam> LoweringCtx<'a, T> {
     }
 
     /// Lowers a full instruction, including label defs
-    pub fn lower_full_instr(&self, pair: Pair<Rule>) -> Instr<T> {
+    pub fn lower_full_instr(&self, pair: Pair<'_, Rule>) -> Instr<T> {
         assert_eq!(pair.as_rule(), Rule::full_instr);
 
         // Skip all the label defs. We already processed them.
@@ -323,7 +323,7 @@ impl<'a, T: TinyRam> LoweringCtx<'a, T> {
     }
 
     /// Lowers a code line, which is an optional full instr plus an optional comment
-    pub fn lower_line(&self, pair: Pair<Rule>) -> Option<Instr<T>> {
+    pub fn lower_line(&self, pair: Pair<'_, Rule>) -> Option<Instr<T>> {
         assert_eq!(pair.as_rule(), Rule::line);
 
         // The first line item may be a full instruction. If so, lower it. Otherwise do nothing.
@@ -380,7 +380,7 @@ impl Parser {
     }
 
     /// Lowers a whole file
-    pub fn lower_file<T: TinyRam>(mut pairs: Pairs<Rule>) -> Vec<Instr<T>> {
+    pub fn lower_file<T: TinyRam>(mut pairs: Pairs<'_, Rule>) -> Vec<Instr<T>> {
         let mut it = pairs.next().unwrap().into_inner();
 
         // Parse the header and make the lowering context

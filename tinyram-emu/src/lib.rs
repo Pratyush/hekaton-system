@@ -1,3 +1,12 @@
+#![warn(
+    unused,
+    future_incompatible,
+    nonstandard_style,
+    rust_2018_idioms,
+    rust_2021_compatibility
+)]
+#![forbid(unsafe_code)]
+
 use strum::Display;
 use word::Word;
 
