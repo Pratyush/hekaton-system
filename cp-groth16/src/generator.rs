@@ -4,7 +4,7 @@ use crate::{
     MultiStageConstraintSystem,
 };
 
-use ark_ec::{pairing::Pairing, scalar_mul::fixed_base::FixedBase, CurveGroup, Group};
+use ark_ec::{pairing::Pairing, scalar_mul::fixed_base::FixedBase, CurveGroup};
 use ark_ff::{Field, PrimeField, UniformRand, Zero};
 use ark_groth16::r1cs_to_qap::R1CSToQAP;
 use ark_poly::{EvaluationDomain, GeneralEvaluationDomain};

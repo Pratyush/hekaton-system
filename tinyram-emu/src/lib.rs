@@ -29,7 +29,7 @@ pub trait TinyRam: Sized + Copy + 'static {
     }
 }
 
-#[derive(Clone, Copy, Debug, Display)]
+#[derive(Clone, Copy, Debug, Display, PartialEq, Eq)]
 pub enum TinyRamArch {
     #[strum(serialize = "hv")]
     Harvard,

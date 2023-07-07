@@ -19,10 +19,6 @@ pub struct Parser;
 /// The context necessary to lower the parsed TinyRAM program, i.e., convert the AST to concrete
 /// types and real memory offsets.
 pub struct LoweringCtx<'a, T: TinyRam> {
-    // This is the line number in the file, ignoring whitespace and header
-    // instr_count: usize,
-    /// This contains arch information we need in lowering
-    header: TinyRamHeader,
     /// A map of all the labels we've seen so far and their corresponding word idx
     label_addrs: BTreeMap<&'a str, u64>,
     _phantom: std::marker::PhantomData<T>,
@@ -41,7 +37,7 @@ impl<'a, T: TinyRam> LoweringCtx<'a, T> {
 pub struct TinyRamHeader {
     arch: TinyRamArch,
     word_bitlen: u32,
-    num_regs: u32,
+    num_regs: u8,
 }
 
 impl<'a, T: TinyRam> LoweringCtx<'a, T> {
@@ -53,7 +49,8 @@ impl<'a, T: TinyRam> LoweringCtx<'a, T> {
     }
 
     /// Lowers a parsed header into a `TinyRamHeader`
-    pub fn lower_header(pair: Pair<Rule>) -> TinyRamHeader {
+    pub fn lower_header(pair: Pair<Rule>) -> Option<TinyRamHeader> {
+        use crate::Word;
         assert_eq!(pair.as_rule(), Rule::header);
         let dict = Self::parsed_dict(pair);
 
@@ -62,11 +59,15 @@ impl<'a, T: TinyRam> LoweringCtx<'a, T> {
             "vn" => TinyRamArch::VonNeumann,
             a => panic!("unknown arch: {a}"),
         };
-        TinyRamHeader {
+        let header = TinyRamHeader {
             arch,
             word_bitlen: u32::from_str(dict[&Rule::word_bitlen]).unwrap(),
-            num_regs: u32::from_str(dict[&Rule::num_regs]).unwrap(),
-        }
+            num_regs: u8::from_str(dict[&Rule::num_regs]).unwrap(),
+        };
+        (header.arch == T::ARCH
+            && header.word_bitlen == T::Word::BIT_LENGTH as u32
+            && header.num_regs == T::NUM_REGS)
+            .then_some(header)
     }
 
     /// Lowers a parsed register in a `RegIdx`
@@ -383,11 +384,10 @@ impl Parser {
         let mut it = pairs.next().unwrap().into_inner();
 
         // Parse the header and make the lowering context
-        let header = LoweringCtx::<T>::lower_header(it.next().unwrap());
+        let header = LoweringCtx::<T>::lower_header(it.next().unwrap()).unwrap();
         let rest_of_file = it.clone();
         let label_addrs = LoweringCtx::<T>::build_label_table(&header, rest_of_file);
         let ctx = LoweringCtx {
-            header,
             label_addrs,
             _phantom: PhantomData,
         };
@@ -452,7 +452,7 @@ mod test {
             let mut p = sample_parsing;
             let mut file = p.next().unwrap().into_inner();
             let header_parse = file.next().unwrap();
-            let header = LoweringCtx::<T>::lower_header(header_parse);
+            let header = LoweringCtx::<T>::lower_header(header_parse).unwrap();
             println!("header parse == {:#?}", header,);
 
             let rest_of_file = file;
