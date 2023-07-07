@@ -2,6 +2,7 @@ use crate::{
     instructions::{Instr, Opcode},
     register::{ImmOrRegister, RegIdx},
     word::{DoubleWord, Word},
+    TinyRam,
 };
 
 use bitfield::{Bit, BitMut, BitRange, BitRangeMut};
@@ -16,7 +17,7 @@ pub(crate) fn instr_opcode(instr: u128) -> Opcode {
     }
 }
 
-impl<W: Word> Instr<W> {
+impl<T: TinyRam> Instr<T> {
     //  The machine code of an assembly command is encoded as follows.
     //  | unused space | is_immediate | var1 | var2 | var3 | op |
     //
@@ -27,9 +28,9 @@ impl<W: Word> Instr<W> {
 
     /// Creates an Op out of machine code. Panics if `bytes.len() != W::INSTR_BYTELEN` or if the
     /// instruction is invalid.
-    pub fn from_bytes<const NUM_REGS: usize>(bytes: &[u8]) -> Self {
+    pub fn from_bytes(bytes: &[u8]) -> Self {
         use Opcode::*;
-        assert!(bytes.len() == W::INSTR_BYTE_LENGTH);
+        assert!(bytes.len() == T::SERIALIZED_INSTR_BYTE_LENGTH);
 
         let instr = {
             let mut buf = [0u8; 16];
@@ -39,7 +40,7 @@ impl<W: Word> Instr<W> {
 
         // Decode the instruction. reg1 is the register (if any) that is modified, and reg2 is the
         // register (if any) that is not modified.
-        let (opcode, reg1, reg2, imm_or_reg) = Self::decode::<NUM_REGS>(instr);
+        let (opcode, reg1, reg2, imm_or_reg) = Self::decode(instr);
 
         match opcode {
             And => Instr::And {
@@ -162,10 +163,8 @@ impl<W: Word> Instr<W> {
     }
 
     // Decodes an instruction
-    pub fn decode<const NUM_REGS: usize>(
-        instr: u128,
-    ) -> (Opcode, RegIdx, RegIdx, ImmOrRegister<W>) {
-        let regidx_bitlen = f32::from(NUM_REGS as u8).log2().ceil() as usize;
+    pub fn decode(instr: u128) -> (Opcode, RegIdx, RegIdx, ImmOrRegister<T>) {
+        let regidx_bitlen = f32::from(T::NUM_REGS as u8).log2().ceil() as usize;
 
         let mut cur_bit_idx = 0;
 
@@ -176,9 +175,11 @@ impl<W: Word> Instr<W> {
         let opcode = instr_opcode(instr);
         cur_bit_idx += OPCODE_BITLEN;
 
-        let imm_or_reg_val =
-            instr.bit_range(cur_bit_idx + (W::BIT_LENGTH as usize) - 1, cur_bit_idx);
-        cur_bit_idx += W::BIT_LENGTH as usize;
+        let imm_or_reg_val = instr.bit_range(
+            cur_bit_idx + (T::Word::BIT_LENGTH as usize) - 1,
+            cur_bit_idx,
+        );
+        cur_bit_idx += T::Word::BIT_LENGTH as usize;
 
         let reg2 = instr.bit_range(cur_bit_idx + regidx_bitlen - 1, cur_bit_idx);
         cur_bit_idx += regidx_bitlen;
@@ -191,86 +192,81 @@ impl<W: Word> Instr<W> {
 
         // Check that the rest of the instruction is all 0s. This isn't strictly necessary but it
         // might help catch bugs early
-        let rest: u128 = instr.bit_range(2 * (W::BIT_LENGTH as usize) - 1, cur_bit_idx);
+        let rest: u128 = instr.bit_range(2 * (T::Word::BIT_LENGTH as usize) - 1, cur_bit_idx);
         assert_eq!(rest, 0);
 
         // Decode the immediate-or-reg as one or the other
         let imm_or_reg = ImmOrRegister::new(imm_or_reg_val, bool::from(is_imm)).unwrap();
 
         // Validate the register values
-        Self::regidx_valid::<NUM_REGS>(reg1);
-        Self::regidx_valid::<NUM_REGS>(reg2);
+        assert!(RegIdx(reg1).is_valid::<T>());
+        assert!(RegIdx(reg2).is_valid::<T>());
 
         (opcode, RegIdx(reg1), RegIdx(reg2), imm_or_reg)
     }
 
     // Converts our operation to `u128`
     #[rustfmt::skip]
-    pub fn to_u128<const NUM_REGS: usize>(&self) -> u128 {
+    pub fn to_u128(&self) -> u128 {
         let op = self.opcode() as u8;
         let rg0 = RegIdx(0);
 
         match *self {
-            Instr::And { in1, in2, out }   => Self::encode::<NUM_REGS>(op, out, in1, in2),
-            Instr::Or { in1, in2, out }    => Self::encode::<NUM_REGS>(op, out, in1, in2),
-            Instr::Xor { in1, in2, out }   => Self::encode::<NUM_REGS>(op, out, in1, in2),
-            Instr::Not { in1, out }        => Self::encode::<NUM_REGS>(op, out, rg0, in1),
-            Instr::Add { in1, in2, out }   => Self::encode::<NUM_REGS>(op, out, in1, in2),
-            Instr::Sub { in1, in2, out }   => Self::encode::<NUM_REGS>(op, out, in1, in2),
-            Instr::MulL { in1, in2, out }  => Self::encode::<NUM_REGS>(op, out, in1, in2),
-            Instr::UMulH { in1, in2, out } => Self::encode::<NUM_REGS>(op, out, in1, in2),
-            Instr::SMulH { in1, in2, out } => Self::encode::<NUM_REGS>(op, out, in1, in2),
-            Instr::UDiv { in1, in2, out }  => Self::encode::<NUM_REGS>(op, out, in1, in2),
-            Instr::UMod { in1, in2, out }  => Self::encode::<NUM_REGS>(op, out, in1, in2),
-            Instr::Shl { in1, in2, out }   => Self::encode::<NUM_REGS>(op, out, in1, in2),
-            Instr::Shr { in1, in2, out }   => Self::encode::<NUM_REGS>(op, out, in1, in2),
-            Instr::CmpE { in1, in2 }       => Self::encode::<NUM_REGS>(op, rg0, in1, in2),
-            Instr::CmpA { in1, in2 }       => Self::encode::<NUM_REGS>(op, rg0, in1, in2),
-            Instr::CmpAE { in1, in2 }      => Self::encode::<NUM_REGS>(op, rg0, in1, in2),
-            Instr::CmpG { in1, in2 }       => Self::encode::<NUM_REGS>(op, rg0, in1, in2),
-            Instr::CmpGE { in1, in2 }      => Self::encode::<NUM_REGS>(op, rg0, in1, in2),
-            Instr::Mov { in1, out }        => Self::encode::<NUM_REGS>(op, out, rg0, in1),
-            Instr::CMov { in1, out }       => Self::encode::<NUM_REGS>(op, out, rg0, in1),
-            Instr::Jmp { in1 }             => Self::encode::<NUM_REGS>(op, rg0, rg0, in1),
-            Instr::CJmp { in1 }            => Self::encode::<NUM_REGS>(op, rg0, rg0, in1),
-            Instr::CNJmp { in1 }           => Self::encode::<NUM_REGS>(op, rg0, rg0, in1),
-            Instr::StoreB { in1, out }     => Self::encode::<NUM_REGS>(op, rg0, in1, out),
-            Instr::LoadB { in1, out }      => Self::encode::<NUM_REGS>(op, out, rg0, in1),
-            Instr::StoreW { in1, out }     => Self::encode::<NUM_REGS>(op, rg0, in1, out),
-            Instr::LoadW { in1, out }      => Self::encode::<NUM_REGS>(op, out, rg0, in1),
-            Instr::Read { in1, out }       => Self::encode::<NUM_REGS>(op, out, rg0, in1),
-            Instr::Answer { in1 }          => Self::encode::<NUM_REGS>(op, rg0, rg0, in1),
+            Instr::And { in1, in2, out }   => Self::encode(op, out, in1, in2),
+            Instr::Or { in1, in2, out }    => Self::encode(op, out, in1, in2),
+            Instr::Xor { in1, in2, out }   => Self::encode(op, out, in1, in2),
+            Instr::Not { in1, out }        => Self::encode(op, out, rg0, in1),
+            Instr::Add { in1, in2, out }   => Self::encode(op, out, in1, in2),
+            Instr::Sub { in1, in2, out }   => Self::encode(op, out, in1, in2),
+            Instr::MulL { in1, in2, out }  => Self::encode(op, out, in1, in2),
+            Instr::UMulH { in1, in2, out } => Self::encode(op, out, in1, in2),
+            Instr::SMulH { in1, in2, out } => Self::encode(op, out, in1, in2),
+            Instr::UDiv { in1, in2, out }  => Self::encode(op, out, in1, in2),
+            Instr::UMod { in1, in2, out }  => Self::encode(op, out, in1, in2),
+            Instr::Shl { in1, in2, out }   => Self::encode(op, out, in1, in2),
+            Instr::Shr { in1, in2, out }   => Self::encode(op, out, in1, in2),
+            Instr::CmpE { in1, in2 }       => Self::encode(op, rg0, in1, in2),
+            Instr::CmpA { in1, in2 }       => Self::encode(op, rg0, in1, in2),
+            Instr::CmpAE { in1, in2 }      => Self::encode(op, rg0, in1, in2),
+            Instr::CmpG { in1, in2 }       => Self::encode(op, rg0, in1, in2),
+            Instr::CmpGE { in1, in2 }      => Self::encode(op, rg0, in1, in2),
+            Instr::Mov { in1, out }        => Self::encode(op, out, rg0, in1),
+            Instr::CMov { in1, out }       => Self::encode(op, out, rg0, in1),
+            Instr::Jmp { in1 }             => Self::encode(op, rg0, rg0, in1),
+            Instr::CJmp { in1 }            => Self::encode(op, rg0, rg0, in1),
+            Instr::CNJmp { in1 }           => Self::encode(op, rg0, rg0, in1),
+            Instr::StoreB { in1, out }     => Self::encode(op, rg0, in1, out),
+            Instr::LoadB { in1, out }      => Self::encode(op, out, rg0, in1),
+            Instr::StoreW { in1, out }     => Self::encode(op, rg0, in1, out),
+            Instr::LoadW { in1, out }      => Self::encode(op, out, rg0, in1),
+            Instr::Read { in1, out }       => Self::encode(op, out, rg0, in1),
+            Instr::Answer { in1 }          => Self::encode(op, rg0, rg0, in1),
         }
     }
 
     // Converts our operation to machine code. Panics if `buf.len() != W::INSTR_BYTELEN`.
-    pub fn to_bytes<const NUM_REGS: usize>(&self) -> Vec<u8> {
-        self.to_u128::<NUM_REGS>().to_be_bytes()[16 - W::INSTR_BYTE_LENGTH..16].to_vec()
+    pub fn to_bytes(&self) -> Vec<u8> {
+        self.to_u128().to_be_bytes()[16 - T::Word::INSTR_BYTE_LENGTH..16].to_vec()
     }
 
-    pub fn to_double_word<const NUM_REGS: usize>(&self) -> DoubleWord<W> {
-        let bytes = self.to_bytes::<NUM_REGS>();
+    pub fn to_double_word(&self) -> DoubleWord<T::Word> {
+        let bytes = self.to_bytes();
         let w0_bytes = &bytes[0..bytes.len() / 2];
         let w1_bytes = &bytes[bytes.len() / 2..];
 
         (
-            W::from_be_bytes(w0_bytes).unwrap(),
-            W::from_be_bytes(w1_bytes).unwrap(),
+            T::Word::from_be_bytes(w0_bytes).unwrap(),
+            T::Word::from_be_bytes(w1_bytes).unwrap(),
         )
     }
 
     // Encodes an instruction
-    fn encode<const NUM_REGS: usize>(
-        opcode: u8,
-        reg1: RegIdx,
-        reg2: RegIdx,
-        imm_or_reg: ImmOrRegister<W>,
-    ) -> u128 {
+    fn encode(opcode: u8, reg1: RegIdx, reg2: RegIdx, imm_or_reg: ImmOrRegister<T>) -> u128 {
         // Validate the register values
-        Self::regidx_valid::<NUM_REGS>(reg1.0);
-        Self::regidx_valid::<NUM_REGS>(reg2.0);
+        assert!(reg1.is_valid::<T>());
+        assert!(reg2.is_valid::<T>());
 
-        let regidx_bitlen = f32::from(NUM_REGS as u8).log2().ceil() as usize;
+        let regidx_bitlen = f32::from(T::NUM_REGS as u8).log2().ceil() as usize;
 
         let mut cur_bit_idx = 0;
         let mut instr: u128 = 0;
@@ -283,11 +279,11 @@ impl<W: Word> Instr<W> {
         cur_bit_idx += OPCODE_BITLEN;
 
         instr.set_bit_range(
-            cur_bit_idx + (W::BIT_LENGTH as usize) - 1,
+            cur_bit_idx + (T::Word::BIT_LENGTH as usize) - 1,
             cur_bit_idx,
             u64::from(imm_or_reg),
         );
-        cur_bit_idx += W::BIT_LENGTH as usize;
+        cur_bit_idx += T::Word::BIT_LENGTH as usize;
 
         instr.set_bit_range(cur_bit_idx + regidx_bitlen - 1, cur_bit_idx, reg2.0);
         cur_bit_idx += regidx_bitlen;
@@ -299,34 +295,24 @@ impl<W: Word> Instr<W> {
 
         instr
     }
-
-    // Panics if a Register Index overflows its allocated space in machine code
-    fn regidx_valid<const NUM_REGS: usize>(regidx: u8) {
-        // Note we enumerate our registers [0,...,NUM_REGS-1]
-        if regidx as usize >= NUM_REGS {
-            panic!("Register Index exceeds our number of registers");
-        }
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    const NUM_REGS: usize = 16;
-    type W = u32;
-
     // Tests that Instr::from_mc(op.to_mc()) is the identity on `op`
     #[test]
     fn encoding_round_trip() {
-        let mut rng = rand::thread_rng();
-
-        // Test 200 random instructions
-        for _ in 0..200 {
-            let instr = Instr::rand::<NUM_REGS>(&mut rng);
-            let bytes = instr.to_bytes::<NUM_REGS>();
-            let new_i = Instr::<W>::from_bytes::<NUM_REGS>(&bytes);
-            assert_eq!(instr, new_i);
+        fn encode_decode<T: TinyRam>() {
+            let mut rng = rand::thread_rng();
+            for _ in 0..200 {
+                let instr = Instr::<T>::rand(&mut rng);
+                let bytes = instr.to_bytes();
+                let new_i = Instr::from_bytes(&bytes);
+                assert_eq!(instr, new_i);
+            }
         }
+        crate::iter_over_tinyram_configs!(encode_decode);
     }
 }

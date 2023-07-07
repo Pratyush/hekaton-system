@@ -1,15 +1,39 @@
-pub mod encoding;
+use strum::Display;
+use word::Word;
+
 pub mod instructions;
-pub mod interpreter;
-pub mod memory;
 pub mod parser;
-pub mod program_state;
 pub mod register;
 pub mod word;
 
-#[derive(Clone, Copy, Debug)]
+pub mod cpu;
+pub mod mmu;
+pub mod tape;
+
+pub mod test_utils;
+
+pub trait TinyRam: Sized + Copy + 'static {
+    type Word: word::Word;
+    const ARCH: TinyRamArch;
+    const NUM_REGS: u8;
+    const DOUBLE_WORD_BYTE_LENGTH: usize = 2 * Self::Word::BYTE_LENGTH;
+    const SERIALIZED_INSTR_BYTE_LENGTH: usize = Self::DOUBLE_WORD_BYTE_LENGTH;
+
+    fn header() -> String {
+        format!(
+            "; TinyRAM V=2.000 M={} W={} K={}\n",
+            Self::ARCH,
+            Self::Word::BIT_LENGTH,
+            Self::NUM_REGS,
+        )
+    }
+}
+
+#[derive(Clone, Copy, Debug, Display)]
 pub enum TinyRamArch {
+    #[strum(serialize = "hv")]
     Harvard,
+    #[strum(serialize = "vn")]
     VonNeumann,
 }
 

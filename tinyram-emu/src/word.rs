@@ -11,7 +11,8 @@ use rand::Rng;
 pub type DoubleWord<W> = (W, W);
 
 pub trait Word:
-    Debug
+    'static
+    + Debug
     + Display
     + Default
     + Eq
@@ -90,6 +91,12 @@ pub trait Word:
         let (res, carry) = self.carrying_add(other);
         (!carry).then(|| res)
     }
+
+    /// Computes the sum of `self` and `other`, wrapping around the `MAX` value on overflow.
+    fn wrapping_add(self, other: Self) -> Self;
+
+    /// Computes the sum of `self` and `1`, wrapping around the `MAX` value on overflow.
+    fn wrapping_increment(self) -> Self;
 
     /// Computes `self - other`, and returns the carry bit (if any).
     fn borrowing_sub(self, other: Self) -> (Self, bool);
@@ -174,6 +181,14 @@ macro_rules! impl_word {
                 self.checked_add(1)
             }
 
+            fn wrapping_add(self, other: Self) -> Self {
+                self.wrapping_add(other)
+            }
+
+            fn wrapping_increment(self) -> Self {
+                self.wrapping_add(1)
+            }
+
             fn carrying_add(self, other: Self) -> (Self, bool) {
                 let result = self as $double_word + other as $double_word;
                 (result as Self, (result >> $bit_size) != 0)
@@ -216,12 +231,12 @@ macro_rules! impl_word {
             }
 
             fn shl(self, other: Self) -> (Self, bool) {
-                let result = self << (other as u32);
+                let result = self.checked_shl(other as u32).unwrap_or(0);
                 (result, (result >> ($bit_size - 1)) == 1)
             }
 
             fn shr(self, other: Self) -> (Self, bool) {
-                let result = self >> (other as u32);
+                let result = self.checked_shr(other as u32).unwrap_or(0);
                 (result, (result & 1) == 1)
             }
         }
@@ -235,5 +250,5 @@ impl_word!(u64, u128, i64, i128, 64);
 
 /// A log2 function for small `usize` values
 pub(crate) fn log2(x: usize) -> usize {
-    (x as f32).log2().ceil() as usize
+    (x as f64).log2().ceil() as usize
 }
