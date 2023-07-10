@@ -1,25 +1,23 @@
 use crate::{
     exec_checker::{check_execution, CpuStateVar},
     word::{DoubleWordVar, WordVar},
+    TinyRamExt,
 };
 
 use core::borrow::Borrow;
 
-use tinyram_emu::{
-    interpreter::{MemOp, MemOpKind, TranscriptEntry},
-    word::Word,
-    ProgramMetadata,
-};
+use tinyram_emu::{word::Word, MemOp, MemOpKind, ProgramMetadata, TranscriptEntry};
 
 use ark_ff::PrimeField;
 use ark_r1cs_std::{
     alloc::{AllocVar, AllocationMode},
     boolean::Boolean,
+    cmp::CmpGadget,
     eq::EqGadget,
     fields::{fp::FpVar, FieldVar},
     select::CondSelectGadget,
     uint64::UInt64,
-    R1CSVar, cmp::CmpGadget,
+    R1CSVar,
 };
 use ark_relations::{
     ns,
@@ -37,13 +35,13 @@ pub type TimestampVar<F> = UInt64<F>;
 /// the beginning. We only really need 1 padding element.
 const TIMESTAMP_OFFSET: u64 = 1;
 
+mod processed_transcript_entry;
 mod running_evaluation;
 mod transcript_eval;
-mod processed_transcript_entry;
 
+pub use processed_transcript_entry::*;
 pub use running_evaluation::RunningEvalVar;
 pub use transcript_eval::*;
-pub use processed_transcript_entry::*;
 
 /// The kind of memory operation: load, store, read primary tape or read aux tape, in ZK land
 pub type MemOpKindVar<F> = FpVar<F>;
@@ -54,15 +52,15 @@ pub type MemOpKindVar<F> = FpVar<F>;
 /// # Requires
 ///
 /// `mem_tr_adj_seq` MUST have length 3;
-pub fn check_transcript<const NUM_REGS: usize, WV: WordVar<F>, F: PrimeField>(
+pub fn check_transcript<T: TinyRamExt>(
     meta: ProgramMetadata,
-    cpu_state: &CpuStateVar<WV, F>,
-    chal: &FpVar<F>,
+    cpu_state: &CpuStateVar<T>,
+    chal: &FpVar<T::F>,
     instr_load: &ProcessedTranscriptEntryVar<WV, F>,
     mem_op: &ProcessedTranscriptEntryVar<WV, F>,
     mem_tr_adj_seq: &[ProcessedTranscriptEntryVar<WV, F>],
     evals: &TranscriptCheckerEvalsVar<F>,
-) -> Result<(CpuStateVar<WV, F>, TranscriptCheckerEvalsVar<F>), SynthesisError> {
+) -> Result<(CpuStateVar<T>, TranscriptCheckerEvalsVar<F>), SynthesisError> {
     assert_eq!(mem_tr_adj_seq.len(), 3);
     let cs = cpu_state.cs();
 
@@ -389,12 +387,8 @@ mod test {
         // sum of those sums.
 
         let n = 1;
-        let primary_tape = (1..=n)
-            .map(W::from_u64)
-            .collect();
-        let aux_tape = (1..=n)
-            .map(|x| W::from_u64(100 * x))
-            .collect();
+        let primary_tape = (1..=n).map(W::from_u64).collect();
+        let aux_tape = (1..=n).map(|x| W::from_u64(100 * x)).collect();
 
         transcript_tester(
             "\

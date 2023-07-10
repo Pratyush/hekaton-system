@@ -3,10 +3,10 @@ use crate::{
     transcript_checker::ProcessedTranscriptEntryVar,
     util::{arr_set, pack_to_fps, uint32_to_uint64},
     word::{DoubleWordVar, WordVar},
+    TinyRamExt,
 };
 use tinyram_emu::{
-    instructions::Opcode, interpreter::MemOpKind, program_state::CpuState, word::Word,
-    ProgramMetadata, TinyRamArch,
+    instructions::opcode::Opcode, word::Word, CpuState, MemOpKind, ProgramMetadata, TinyRamArch,
 };
 
 use core::borrow::Borrow;
@@ -14,13 +14,15 @@ use core::borrow::Borrow;
 use ark_ff::PrimeField;
 use ark_r1cs_std::{
     alloc::{AllocVar, AllocationMode},
-    convert::ToBitsGadget,
     boolean::Boolean,
+    cmp::CmpGadget,
+    convert::ToBitsGadget,
     eq::EqGadget,
     fields::{fp::FpVar, FieldVar},
     select::CondSelectGadget,
     uint32::UInt32,
-    uint8::UInt8, R1CSVar, cmp::CmpGadget,
+    uint8::UInt8,
+    R1CSVar,
 };
 use ark_relations::{
     ns,
@@ -31,34 +33,32 @@ use ark_std::log2;
 /// The position of a tape head
 type TapeHeadPosVar<F> = UInt32<F>;
 
-mod cpu_state;
 mod cpu_answer;
+mod cpu_state;
 mod exec_tick_mem_data;
 mod instruction_result;
 
-pub use cpu_state::CpuStateVar;
-pub(crate) use instruction_result::InstrResult;
 pub(crate) use cpu_answer::CpuAnswerVar;
+pub use cpu_state::CpuStateVar;
 pub(crate) use exec_tick_mem_data::{ExecTickMemData, ExecTickMemDataKind};
-
-
+pub(crate) use instruction_result::InstrResult;
 
 /// Decodes an encoded instruction into an opcode, 2 registers, and an immediate-or-register. The
 /// registers (including the imm-or-reg if applicable) are guaranteed to be less than `NUM_REGS`.
-fn decode_instruction<const NUM_REGS: usize, WV: WordVar<F>, F: PrimeField>(
-    encoded_instr: &DoubleWordVar<WV, F>,
+fn decode_instruction<T: TinyRamExt>(
+    encoded_instr: &DoubleWordVar<T::WordVar, T::F>,
 ) -> Result<
     (
-        OpcodeVar<F>,
-        RegIdxVar<F>,
-        RegIdxVar<F>,
-        ImmOrRegisterVar<WV, F>,
+        OpcodeVar<T::F>,
+        RegIdxVar<T::F>,
+        RegIdxVar<T::F>,
+        ImmOrRegisterVar<T>,
     ),
     SynthesisError,
 > {
-    let num_regs = UInt8::constant(NUM_REGS as u8);
-    let regidx_bitlen = log2(NUM_REGS) as usize;
-    let instr_bits: Vec<Boolean<F>> = encoded_instr.as_le_bits();
+    let num_regs = UInt8::constant(T::NUM_REGS as u8);
+    let regidx_bitlen = log2(T::NUM_REGS) as usize;
+    let instr_bits: Vec<Boolean<T::F>> = encoded_instr.as_le_bits();
 
     let mut cur_bit_idx: usize = 0;
 
@@ -68,28 +68,26 @@ fn decode_instruction<const NUM_REGS: usize, WV: WordVar<F>, F: PrimeField>(
 
     // Extract all the components
 
-    let opcode: OpcodeVar<F> = OpcodeVar::<F>::from_bits_le(
-        &instr_bits[cur_bit_idx..cur_bit_idx + OpcodeVar::<F>::BITLEN],
+    let opcode = OpcodeVar::from_bits_le(
+        &instr_bits[cur_bit_idx..cur_bit_idx + OpcodeVar::<T::F>::BIT_LENGTH],
     );
-    cur_bit_idx += OpcodeVar::<F>::BITLEN;
+    cur_bit_idx += OpcodeVar::<T::F>::BIT_LENGTH;
 
-    let imm_or_reg_bits = &instr_bits[cur_bit_idx..cur_bit_idx + WV::BITLEN];
-    cur_bit_idx += WV::BITLEN;
+    let imm_or_reg_bits = &instr_bits[cur_bit_idx..cur_bit_idx + T::Word::BIT_LENGTH];
+    cur_bit_idx += T::Word::BIT_LENGTH;
 
-    let reg2: RegIdxVar<F> =
-        RegIdxVar::<F>::from_le_bits(&instr_bits[cur_bit_idx..cur_bit_idx + regidx_bitlen]);
+    let reg2 = RegIdxVar::from_le_bits(&instr_bits[cur_bit_idx..cur_bit_idx + regidx_bitlen]);
     cur_bit_idx += regidx_bitlen;
 
-    let reg1: RegIdxVar<F> =
-        RegIdxVar::<F>::from_le_bits(&instr_bits[cur_bit_idx..cur_bit_idx + regidx_bitlen]);
+    let reg1 = RegIdxVar::from_le_bits(&instr_bits[cur_bit_idx..cur_bit_idx + regidx_bitlen]);
     cur_bit_idx += regidx_bitlen;
 
-    let is_imm: Boolean<F> = instr_bits[cur_bit_idx].clone();
+    let is_imm: Boolean<T::F> = instr_bits[cur_bit_idx].clone();
 
     // Make the imm-or-reg from the component bits and type flag
-    let imm_or_reg: ImmOrRegisterVar<WV, F> = ImmOrRegisterVar::<WV, F> {
+    let imm_or_reg = ImmOrRegisterVar {
         is_imm,
-        val: WV::from_le_bits(imm_or_reg_bits),
+        val: T::WordVar::from_le_bits(imm_or_reg_bits),
     };
 
     // Check that the registers are within range
@@ -101,23 +99,21 @@ fn decode_instruction<const NUM_REGS: usize, WV: WordVar<F>, F: PrimeField>(
     return Ok((opcode, reg1, reg2, imm_or_reg));
 }
 
-
-
 /// A helper to `exec_checker`. This takes a native opcode and its zk parameters, executes it, and
 /// returns `(new_state, err)`. `err` is set if the contents of `mem_op` do not match the
 /// instruction.
-fn run_instruction<WV: WordVar<F>, F: PrimeField>(
+fn run_instruction<T: TinyRamExt>(
     meta: ProgramMetadata,
     op: Opcode,
-    cpu_state: &CpuStateVar<WV, F>,
-    mem_op: &ProcessedTranscriptEntryVar<WV, F>,
-    reg1: &RegIdxVar<F>,
-    reg1_val: &WV,
-    reg2_val: &WV,
-    imm_or_reg_val: &WV,
-    incrd_pc: &WV,
+    cpu_state: &CpuStateVar<T>,
+    mem_op: &ProcessedTranscriptEntryVar<T>,
+    reg1: &RegIdxVar<T::F>,
+    reg1_val: &T::WordVar,
+    reg2_val: &T::WordVar,
+    imm_or_reg_val: &T::WordVar,
+    incrd_pc: &T::WordVar,
     pc_overflow: &Boolean<F>,
-) -> Result<InstrResult<WV, F>, SynthesisError> {
+) -> Result<InstrResult<T::WordVar, F>, SynthesisError> {
     let CpuStateVar {
         pc: _,
         flag,
@@ -333,7 +329,7 @@ fn run_instruction<WV: WordVar<F>, F: PrimeField>(
             let new_flag = is_invalid_tape | is_out_of_bounds;
 
             // Make sure that the val is 0 when the flag is set
-            err |= &new_flag & reg_val.is_neq(&WV::zero())?;
+            err |= &new_flag & reg_val.is_neq(&T::WordVar::zero())?;
             // The PC is incremented (need to check overflow), the registers are new, and so is one
             // of the tape heads.
             err |= pc_overflow;
@@ -357,12 +353,12 @@ fn run_instruction<WV: WordVar<F>, F: PrimeField>(
 
 /// Runs a single CPU tick with the given program counter, instruction, registers, and (optional)
 /// associated memory operation. Returns the updated CPU state.
-pub(crate) fn check_execution<const NUM_REGS: usize, WV: WordVar<F>, F: PrimeField>(
+pub(crate) fn check_execution<T: TinyRamExt>(
     meta: ProgramMetadata,
-    mem_op: &ProcessedTranscriptEntryVar<WV, F>,
-    cpu_state: &CpuStateVar<WV, F>,
-    instr: &DoubleWordVar<WV, F>,
-) -> Result<CpuStateVar<WV, F>, SynthesisError> {
+    mem_op: &ProcessedTranscriptEntryVar<T>,
+    cpu_state: &CpuStateVar<T>,
+    instr: &DoubleWordVar<T::WordVar, T::F>,
+) -> Result<CpuStateVar<T>, SynthesisError> {
     // Prepare to run all the instructions. This will hold new_state for all possible instructions,
     // and all_errors will hold the corresponding errors flags. At the end, we'll use the opcode to
     // select the output state we want to return, and assert that err == false.
@@ -382,10 +378,10 @@ pub(crate) fn check_execution<const NUM_REGS: usize, WV: WordVar<F>, F: PrimeFie
         TinyRamArch::Harvard => pc.checked_increment()?,
         TinyRamArch::VonNeumann => {
             // Increment PC by 1 double word
-            let double_word_bytelen = 2 * (WV::BITLEN / 8) as u64;
-            pc.carrying_add(&WV::constant(
-                WV::Native::from_u64(double_word_bytelen),
-            ))?
+            let double_word_bytelen = 2 * (T::WordVar::BIT_LENGTH / 8) as u64;
+            pc.carrying_add(&T::WordVar::constant(T::WordVar::Native::from_u64(
+                double_word_bytelen,
+            )))?
         },
     };
 
@@ -405,13 +401,13 @@ pub(crate) fn check_execution<const NUM_REGS: usize, WV: WordVar<F>, F: PrimeFie
     let reg2_val = reg2.value::<NUM_REGS, _>(&regs)?;
     // imm_or_reg is always present
     let imm_or_reg_val = {
-        let reg_val = WV::conditionally_select_power_of_two_vector(
+        let reg_val = T::WordVar::conditionally_select_power_of_two_vector(
             &imm_or_reg.as_selector::<NUM_REGS>()?,
             regs,
         )?;
         let imm_val = imm_or_reg.val.clone();
 
-        WV::conditionally_select(&imm_or_reg.is_imm, &imm_val, &reg_val)?
+        T::WordVar::conditionally_select(&imm_or_reg.is_imm, &imm_val, &reg_val)?
     };
 
     let cs = cpu_state.cs();
@@ -472,7 +468,7 @@ pub(crate) fn check_execution<const NUM_REGS: usize, WV: WordVar<F>, F: PrimeFie
         .enumerate()
         .map(|(i, existing_val)| {
             let idx_is_eq = reg_to_write.is_eq(&FpVar::constant(F::from(i as u8)))?;
-            WV::conditionally_select(&idx_is_eq, &chosen_output.reg_val, existing_val)
+            T::WordVar::conditionally_select(&idx_is_eq, &chosen_output.reg_val, existing_val)
         })
         .collect::<Result<Vec<_>, _>>()?;
 
@@ -502,7 +498,7 @@ mod test {
     const NUM_REGS: usize = 16;
     type F = Fr;
     type WV = UInt32<F>;
-    type W = <WV as WordVar<F>>::Native;
+    type W = <T::WordVar as WordVar<F>>::Native;
 
     // Tests that instructions decode to the same thing under the native and ZK decoders
     #[test]
@@ -517,7 +513,10 @@ mod test {
             // Encode the instruction and witness it
             let encoded_instr = instr.to_double_word::<NUM_REGS>();
             let encoded_instr_var =
-                DoubleWordVar::<WV, _>::new_witness(ns!(cs, "double word"), || Ok(encoded_instr)).unwrap();
+                DoubleWordVar::<T::WordVar, _>::new_witness(ns!(cs, "double word"), || {
+                    Ok(encoded_instr)
+                })
+                .unwrap();
 
             // Decode in ZK
             let (opcode_var, reg1_var, reg2_var, imm_or_reg_var) =
@@ -586,16 +585,18 @@ mod test {
             // Encode the instruction and witness it
             let encoded_instr = instr.to_double_word::<NUM_REGS>();
             let encoded_instr_var =
-                DoubleWordVar::<WV, _>::new_witness(ns!(cs, "double word"), || Ok(encoded_instr)).unwrap();
+                DoubleWordVar::<T::WordVar, _>::new_witness(ns!(cs, "double word"), || {
+                    Ok(encoded_instr)
+                })
+                .unwrap();
 
             println!("iteration {i}. Instr == {:?}", instr);
             cpu_state =
-                check_execution::<NUM_REGS, _, _>(meta, &non_mem_op, &cpu_state, &encoded_instr_var)
-                    .unwrap();
+                check_execution::<T>(meta, &non_mem_op, &cpu_state, &encoded_instr_var).unwrap();
 
             // Check that packing/unpacking is a no-op
             assert_eq!(
-                CpuStateVar::<WV, _>::unpack_from_fps::<NUM_REGS>(&pack_to_fps(&cpu_state)).value(),
+                CpuStateVar::<T>::unpack_from_fps::<NUM_REGS>(&pack_to_fps(&cpu_state)).value(),
                 cpu_state.value()
             );
         }

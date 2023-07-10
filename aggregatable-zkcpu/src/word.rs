@@ -1,17 +1,22 @@
-use core::{borrow::Borrow, fmt::Debug, marker::PhantomData};
-use std::ops::{BitXor, BitAnd, BitOr};
+use core::{borrow::Borrow, fmt::Debug};
+use std::ops::{BitAnd, BitOr, BitXor};
 
 use tinyram_emu::word::Word;
 
 use ark_ff::PrimeField;
 use ark_r1cs_std::{
     alloc::{AllocVar, AllocationMode},
-    uint16::UInt16, uint32::UInt32, uint64::UInt64, uint8::UInt8, convert::ToBitsGadget,
     boolean::Boolean,
+    cmp::CmpGadget,
+    convert::ToBitsGadget,
     eq::EqGadget,
     fields::fp::FpVar,
     select::CondSelectGadget,
-    R1CSVar, cmp::CmpGadget,
+    uint16::UInt16,
+    uint32::UInt32,
+    uint64::UInt64,
+    uint8::UInt8,
+    R1CSVar,
 };
 use ark_relations::{
     ns,
@@ -21,15 +26,11 @@ use ark_relations::{
 pub(crate) type DoubleWord<W> = (W, W);
 
 #[derive(Clone)]
-pub struct DoubleWordVar<W: WordVar<F>, F: PrimeField> {
-    pub(crate) w0: W,
-    pub(crate) w1: W,
-    _marker: PhantomData<F>,
-}
+pub struct DoubleWordVar<W: WordVar<F>, F: PrimeField>(pub(crate) W, pub(crate) W);
 
 impl<W: WordVar<F>, F: PrimeField> EqGadget<F> for DoubleWordVar<W, F> {
     fn is_eq(&self, other: &Self) -> Result<Boolean<F>, SynthesisError> {
-        Ok(self.w0.is_eq(&other.w0)? & self.w1.is_eq(&other.w1)?)
+        Ok(self.0.is_eq(&other.0)? & self.w1.is_eq(&other.w1)?)
     }
 }
 
@@ -45,11 +46,8 @@ impl<W: WordVar<F>, F: PrimeField> AllocVar<DoubleWord<W::Native>, F> for Double
         f().and_then(|double_word| {
             let double_word = double_word.borrow();
             W::new_variable(ns!(cs, "w0"), || Ok(double_word.0), mode).and_then(|w0| {
-                W::new_variable(ns!(cs, "w1"), || Ok(double_word.1), mode).map(|w1| DoubleWordVar {
-                    w0,
-                    w1,
-                    _marker: PhantomData,
-                })
+                W::new_variable(ns!(cs, "w1"), || Ok(double_word.1), mode)
+                    .map(|w1| DoubleWordVar(w0, w1))
             })
         })
     }
@@ -69,23 +67,21 @@ impl<W: WordVar<F>, F: PrimeField> R1CSVar<F> for DoubleWordVar<W, F> {
 
 impl<W: WordVar<F>, F: PrimeField> DoubleWordVar<W, F> {
     pub(crate) fn zero() -> Self {
-        Self {
-            w0: W::zero(),
-            w1: W::zero(),
-            _marker: PhantomData,
-        }
+        Self(W::zero(), W::zero())
     }
 
     /// Returns the bits of this double word in little-endian order
+
     pub(crate) fn as_le_bits(&self) -> Vec<Boolean<F>> {
-        [self.w1.as_le_bits(), self.w0.as_le_bits()].concat()
+        todo!()
+        // [self.1.as_le_bits(), self.0.as_le_bits()].concat()
     }
 
     /// Stuffs the two words in this double word into a single field element
     pub(crate) fn as_fpvar(&self) -> Result<FpVar<F>, SynthesisError> {
         // Return w0 || w1
-        let shifted_w0 = self.w0.as_fpvar()? * F::from(1u64 << W::Native::BIT_LENGTH);
-        Ok(shifted_w0 + self.w1.as_fpvar()?)
+        let shifted_w0 = self.0.as_fpvar()? * F::from(1u64 << W::Native::BIT_LENGTH);
+        Ok(shifted_w0 + self.1.as_fpvar()?)
     }
 }
 
@@ -102,7 +98,7 @@ pub trait WordVar<F: PrimeField>:
 {
     type Native: tinyram_emu::word::Word;
 
-    const BITLEN: usize = Self::Native::BIT_LENGTH;
+    const BIT_LENGTH: usize = Self::Native::BIT_LENGTH;
 
     /// Returns the 0 word
     fn zero() -> Self;
@@ -140,7 +136,7 @@ pub trait WordVar<F: PrimeField>:
 
     // Packs the given byte sequence into this Word. `bytes.len()` MUST equal `Self::Bitlen / 8`
     fn pack(&self, bytes: &[UInt8<F>]) -> Self {
-        assert_eq!(bytes.len(), Self::BITLEN / 8);
+        assert_eq!(bytes.len(), Self::BIT_LENGTH / 8);
         // Pack simply puts the bytes into the word in little-endian order
         let bits: Vec<_> = bytes.iter().flat_map(|b| b.to_bits_le().unwrap()).collect();
         Self::from_le_bits(&bits)

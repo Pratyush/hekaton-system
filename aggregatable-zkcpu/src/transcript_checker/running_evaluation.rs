@@ -16,10 +16,10 @@ impl<F: PrimeField> RunningEvalVar<F> {
     /// Updates the running eval with the given memory operation and challenge point if `bit ==
     /// true`. This is a no-op if `bit == false`. If the memory operation is a tape op or is
     /// padding, then it is encoded as a 0.
-    pub(super) fn conditionally_update_with_ram_op<WV: WordVar<F>>(
+    pub(super) fn conditionally_update_with_ram_op<T: TinyRamExt<F = F>>(
         &mut self,
         bit: &Boolean<F>,
-        mem_op: &ProcessedTranscriptEntryVar<WV, F>,
+        mem_op: &ProcessedTranscriptEntryVar<T>,
         chal: &FpVar<F>,
     ) -> Result<(), SynthesisError> {
         // The field repr of mem_op is 0 iff it's a tape op or padding
@@ -38,9 +38,9 @@ impl<F: PrimeField> RunningEvalVar<F> {
     }
 
     /// Updates the running eval with the given entry and challenge point
-    pub(super) fn update_with_ram_op<WV: WordVar<F>>(
+    pub(super) fn update_with_ram_op<T: TinyRamExt<F = F>>(
         &mut self,
-        mem_op: &ProcessedTranscriptEntryVar<WV, F>,
+        mem_op: &ProcessedTranscriptEntryVar<T>,
         chal: &FpVar<F>,
     ) -> Result<(), SynthesisError> {
         self.conditionally_update_with_ram_op(&Boolean::TRUE, mem_op, chal)
@@ -49,10 +49,10 @@ impl<F: PrimeField> RunningEvalVar<F> {
     /// Updates the running eval with the given memory operation (excluding timestamp) and
     /// challenge point if `bit == true`. This is a no-op if `bit == false`. If the memory
     /// operation is a tape op or is padding, then it is encoded as a 0.
-    pub(super) fn conditionally_update_with_ram_op_notime<WV: WordVar<F>>(
+    pub(super) fn conditionally_update_with_ram_op_notime<T: TinyRamExt<F = F>>(
         &mut self,
         bit: &Boolean<F>,
-        mem_op: &ProcessedTranscriptEntryVar<WV, F>,
+        mem_op: &ProcessedTranscriptEntryVar<T>,
         chal: &FpVar<F>,
     ) -> Result<(), SynthesisError> {
         // The field repr of mem_op is 0 iff it's a tape op or padding

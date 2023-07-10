@@ -8,7 +8,7 @@
 #![forbid(unsafe_code)]
 
 use strum::Display;
-use word::Word;
+pub use word::Word;
 
 pub mod instructions;
 pub mod parser;
@@ -20,6 +20,10 @@ pub mod mmu;
 pub mod tape;
 
 pub mod test_utils;
+
+pub use cpu::{state::CpuState, Cpu, TranscriptEntry};
+pub use mmu::{DataMemory, MemOp, MemOpKind, MemoryUnit, ProgramMemory};
+pub use tape::{TapeHead, TapeHeads, Tapes};
 
 pub trait TinyRam: Sized + Copy + 'static {
     type Word: word::Word;

@@ -8,7 +8,7 @@ use bitfield::BitRangeMut;
 use derivative::Derivative;
 use rand::Rng;
 
-use opcode::Opcode;
+pub use opcode::Opcode;
 
 pub mod encoding;
 pub mod opcode;

@@ -1,12 +1,14 @@
-use ark_ff::{PrimeField};
+use ark_ff::PrimeField;
 use ark_r1cs_std::{
-    uint32::UInt32, uint64::UInt64, convert::ToBitsGadget,
     boolean::Boolean,
+    convert::ToBitsGadget,
     eq::EqGadget,
     fields::{fp::FpVar, FieldVar},
     select::CondSelectGadget,
+    uint32::UInt32,
+    uint64::UInt64,
 };
-use ark_relations::{r1cs::SynthesisError};
+use ark_relations::r1cs::SynthesisError;
 
 pub(crate) fn uint32_to_uint64<F: PrimeField>(v: &UInt32<F>) -> UInt64<F> {
     let all_bits = [v.to_bits_le().unwrap(), vec![Boolean::FALSE; 32]].concat();

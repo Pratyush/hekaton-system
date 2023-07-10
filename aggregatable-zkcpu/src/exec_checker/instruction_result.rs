@@ -3,27 +3,19 @@ use super::*;
 /// The output of a `run_instr()` invocation. This has the resulting CPU state, and a flag for if
 /// an error occured
 #[derive(Clone)]
-pub(crate) struct InstrResult<WV, F>
-where
-    WV: WordVar<F>,
-    F: PrimeField,
-{
-    pub(crate) pc: PcVar<WV>,
-    pub(crate) flag: Boolean<F>,
-    pub(crate) reg_to_write: RegIdxVar<F>,
-    pub(crate) reg_val: WV,
-    pub(crate) answer: CpuAnswerVar<WV, F>,
-    pub(crate) primary_tape_pos: TapeHeadPosVar<F>,
-    pub(crate) aux_tape_pos: TapeHeadPosVar<F>,
-    pub(super) err: Boolean<F>,
+pub(crate) struct InstrResult<T: TinyRamExt> {
+    pub(crate) pc: PcVar<T::WordVar>,
+    pub(crate) flag: Boolean<T::F>,
+    pub(crate) reg_to_write: RegIdxVar<T::F>,
+    pub(crate) reg_val: T::WordVar,
+    pub(crate) answer: Option<T::WordVar, T::F>,
+    pub(crate) primary_tape_pos: TapeHeadPosVar<T::F>,
+    pub(crate) aux_tape_pos: TapeHeadPosVar<T::F>,
+    pub(super) err: Boolean<T::F>,
 }
 
-impl<'a, WV, F> ToBitsGadget<F> for &'a InstrResult<WV, F>
-where
-    WV: WordVar<F>,
-    F: PrimeField,
-{
-    fn to_bits_le(&self) -> Result<Vec<Boolean<F>>, SynthesisError> {
+impl<'a, T: TinyRamExt> ToBitsGadget<F> for &'a InstrResult<T> {
+    fn to_bits_le(&self) -> Result<Vec<Boolean<T::F>>, SynthesisError> {
         Ok([
             self.pc.as_le_bits(),
             vec![self.flag.clone()],
@@ -38,17 +30,17 @@ where
     }
 }
 
-impl<WV: WordVar<F>, F: PrimeField> InstrResult<WV, F> {
+impl<T: TinyRamExt> InstrResult<T> {
     // The default is an error. This is appropriate because it's used as padding in the CPU output
     // selector. Anything that isn't defined is an error by default.
     // TODO: Figure out whether invalid instructions are necessarily errors
-    pub(super) fn default<const NUM_REGS: usize>() -> Self {
+    pub(super) fn default() -> Self {
         InstrResult {
-            pc: WV::zero(),
+            pc: T::WordVar::zero(),
             flag: Boolean::FALSE,
             reg_to_write: RegIdxVar::zero(),
-            reg_val: WV::zero(),
-            answer: CpuAnswerVar::default(),
+            reg_val: T::WordVar::zero(),
+            answer: OptionVar::default(),
             primary_tape_pos: TapeHeadPosVar::zero(),
             aux_tape_pos: TapeHeadPosVar::zero(),
             err: Boolean::TRUE,
@@ -56,14 +48,14 @@ impl<WV: WordVar<F>, F: PrimeField> InstrResult<WV, F> {
     }
 
     /// Returns the size of this CpuStateVar when serialized to bits
-    pub(super) fn bitlen<const NUM_REGS: usize>() -> usize {
-        let pc_len = WV::BITLEN;
+    pub(super) fn bit_length() -> usize {
+        let pc_len = T::WordVar::BIT_LENGTH;
         let flag_len = 1;
-        let reg_to_write_len = RegIdxVar::<F>::BITLEN;
-        let reg_val_len = WV::BITLEN;
-        let answer_len = WV::BITLEN + 1;
-        let primary_tape_pos_len = <TapeHeadPosVar<F> as WordVar<F>>::BITLEN;
-        let aux_tape_pos_len = <TapeHeadPosVar<F> as WordVar<F>>::BITLEN;
+        let reg_to_write_len = RegIdxVar::<T::F>::BIT_LENGTH;
+        let reg_val_len = T::WordVar::BIT_LENGTH;
+        let answer_len = T::WordVar::BIT_LENGTH + 1;
+        let primary_tape_pos_len = T::WordVar::BIT_LENGTH;
+        let aux_tape_pos_len = T::WordVar::BIT_LENGTH;
         let err_len = 1;
         pc_len
             + flag_len
@@ -81,9 +73,9 @@ impl<WV: WordVar<F>, F: PrimeField> InstrResult<WV, F> {
     pub(super) fn from_bits_le<const NUM_REGS: usize>(bits: &[Boolean<F>]) -> Self {
         assert_eq!(bits.len(), Self::bitlen::<NUM_REGS>());
 
-        let pc_len = WV::BITLEN;
-        let answer_len = WV::BITLEN + 1;
-        let tape_pos_len = <TapeHeadPosVar<F> as WordVar<F>>::BITLEN;
+        let pc_len = WV::BIT_LENGTH;
+        let answer_len = WV::BIT_LENGTH + 1;
+        let tape_pos_len = <TapeHeadPosVar<F> as WordVar<F>>::BIT_LENGTH;
 
         // Keep a cursor into the bits array
         let mut idx = 0;
@@ -94,11 +86,11 @@ impl<WV: WordVar<F>, F: PrimeField> InstrResult<WV, F> {
         let flag = bits[idx].clone();
         idx += 1;
 
-        let reg_to_write = RegIdxVar::from_le_bits(&bits[idx..idx + RegIdxVar::<F>::BITLEN]);
-        idx += RegIdxVar::<F>::BITLEN;
+        let reg_to_write = RegIdxVar::from_le_bits(&bits[idx..idx + RegIdxVar::<F>::BIT_LENGTH]);
+        idx += RegIdxVar::<F>::BIT_LENGTH;
 
-        let reg_val = WV::from_le_bits(&bits[idx..idx + WV::BITLEN]);
-        idx += WV::BITLEN;
+        let reg_val = WV::from_le_bits(&bits[idx..idx + WV::BIT_LENGTH]);
+        idx += WV::BIT_LENGTH;
 
         let answer = CpuAnswerVar::from_bits_le(&bits[idx..idx + answer_len]);
         idx += answer_len;

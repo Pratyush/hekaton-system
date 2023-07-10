@@ -1,6 +1,6 @@
 use super::*;
 
-/// An `ExecTickMemData` can be a LOAD (=0), a STORE (=1), or no-mem (=2)
+/// An `ExecTickMemData` can be a LOAD (=0) or a STORE (=1), or no-mem (=2)
 #[derive(Clone)]
 pub(crate) struct ExecTickMemDataKind<F: PrimeField>(FpVar<F>);
 
@@ -63,17 +63,9 @@ impl<WV: WordVar<F>, F: PrimeField> CondSelectGadget<F> for ExecTickMemData<WV, 
         true_value: &Self,
         false_value: &Self,
     ) -> Result<Self, SynthesisError> {
-        let kind = ExecTickMemDataKind(FpVar::conditionally_select(
-            cond,
-            &true_value.kind.0,
-            &false_value.kind.0,
-        )?);
-        let idx = RamIdxVar::conditionally_select(cond, &true_value.idx, &false_value.idx)?;
-        let stored_word = RamIdxVar::conditionally_select(
-            cond,
-            &true_value.stored_word,
-            &false_value.stored_word,
-        )?;
+        let kind = ExecTickMemDataKind(cond.select(&true_value.kind.0, &false_value.kind.0)?);
+        let idx = cond.select(&true_value.idx, &false_value.idx)?;
+        let stored_word = cond.select(&true_value.stored_word, &false_value.stored_word)?;
 
         Ok(ExecTickMemData {
             kind,

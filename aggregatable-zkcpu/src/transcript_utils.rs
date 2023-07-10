@@ -1,20 +1,20 @@
 //! This module contains utilities for building, committing to, and splitting execution transcripts
 
-use crate::transcript_checker::{ProcessedTranscriptEntry, TranscriptCheckerEvals};
+use crate::{
+    transcript_checker::{ProcessedTranscriptEntry, TranscriptCheckerEvals},
+    TinyRamExt,
+};
 use ark_ff::{FftField, PrimeField};
 use ark_poly::polynomial::univariate::DensePolynomial;
-use tinyram_emu::{
-    interpreter::{MemOp, MemOpKind, TranscriptEntry},
-    word::Word,
-};
+use tinyram_emu::{word::Word, MemOp, MemOpKind, TranscriptEntry};
 
 /// Given a TinyRAM transcript, constructs the corresponding time- and memory-sorted processed
 /// transcripts, in that order, padded such that `time_tx.len() = 2 * mem_tx.len() + 1`.
-pub fn sort_and_pad<const NUM_REGS: usize, W: Word>(
-    transcript: &[TranscriptEntry<NUM_REGS, W>],
+pub fn sort_and_pad<T: TinyRamExt>(
+    transcript: &[TranscriptEntry<T>],
 ) -> (
-    Vec<ProcessedTranscriptEntry<W>>,
-    Vec<ProcessedTranscriptEntry<W>>,
+    Vec<ProcessedTranscriptEntry<T>>,
+    Vec<ProcessedTranscriptEntry<T>>,
 ) {
     // Create the time-sorted transcript, complete with padding memory ops. This has length 2T,
     // where T is the number of CPU ticks.
@@ -25,8 +25,8 @@ pub fn sort_and_pad<const NUM_REGS: usize, W: Word>(
 
     // Make the mem-sorted trace with `read` ops removed. We have to pad the result out to be
     // sufficiently long. The required length is 2T + 1. The +1 is the initial padding.
-    let mem_sorted_transcript: Vec<ProcessedTranscriptEntry<W>> = {
-        let mut buf: Vec<ProcessedTranscriptEntry<W>> = time_sorted_transcript
+    let mem_sorted_transcript: Vec<ProcessedTranscriptEntry<T>> = {
+        let mut buf: Vec<ProcessedTranscriptEntry<T>> = time_sorted_transcript
             .iter()
             .filter(|item| item.mem_op.is_ram_op())
             .cloned()
@@ -48,7 +48,7 @@ pub fn sort_and_pad<const NUM_REGS: usize, W: Word>(
             let mut last_elem = buf.get(buf.len() - 1).unwrap().clone();
             // Get the RAM index of the load/store. This must be a load/store because we
             // filtered out the reads above.
-            let location = W::from_u64(last_elem.mem_op.location());
+            let location = T::Word::from_u64(last_elem.mem_op.location());
             let val = last_elem.mem_op.val();
             last_elem.mem_op = MemOp::Load { location, val };
             last_elem

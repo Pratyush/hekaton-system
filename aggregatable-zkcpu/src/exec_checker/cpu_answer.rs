@@ -118,9 +118,9 @@ where
 {
     /// Create a `CpuAnswerVar` from a bitstring. Panics if `bits.len() != WV::BITLEN + 1`.
     pub(crate) fn from_bits_le(bits: &[Boolean<F>]) -> Self {
-        assert_eq!(bits.len(), WV::BITLEN + 1);
+        assert_eq!(bits.len(), WV::BIT_LENGTH + 1);
         let is_set = bits[0].clone();
-        let val = WV::from_le_bits(&bits[1..WV::BITLEN + 1]);
+        let val = WV::from_le_bits(&bits[1..WV::BIT_LENGTH + 1]);
 
         CpuAnswerVar { is_set, val }
     }

@@ -4,80 +4,69 @@ use crate::{
         check_transcript, ProcessedTranscriptEntry, ProcessedTranscriptEntryVar,
         TranscriptCheckerEvals, TranscriptCheckerEvalsVar,
     },
-    word::WordVar,
+    TinyRamExt,
 };
 
-use ark_ff::PrimeField;
 use ark_r1cs_std::{alloc::AllocVar, eq::EqGadget, fields::fp::FpVar};
 use ark_relations::{
     ns,
     r1cs::{ConstraintSystemRef, SynthesisError},
 };
 use cp_groth16::{MultiStageConstraintSynthesizer, MultiStageConstraintSystem};
-use tinyram_emu::{program_state::CpuState, word::Word, ProgramMetadata};
+use tinyram_emu::{word::Word, CpuState, ProgramMetadata};
 
 #[derive(Clone)]
-pub struct TranscriptCheckerCircuit<const NUM_REGS: usize, W, WV, F>
-where
-    W: Word,
-    WV: WordVar<F, Native = W>,
-    F: PrimeField,
-{
+pub struct TranscriptCheckerCircuit<T: TinyRamExt> {
     meta: ProgramMetadata,
 
     // Stage 0 values. Inputs that equal the output of the last tick.
-    pub in_cpu_state: CpuState<NUM_REGS, W>,
-    pub in_mem_tr_adj: ProcessedTranscriptEntry<W>,
-    in_cpu_state_var: CpuStateVar<WV, F>,
-    in_mem_tr_adj_var: ProcessedTranscriptEntryVar<WV, F>,
+    pub in_cpu_state: CpuState<T>,
+    pub in_mem_tr_adj: ProcessedTranscriptEntry<T>,
+    in_cpu_state_var: CpuStateVar<T>,
+    in_mem_tr_adj_var: ProcessedTranscriptEntryVar<T>,
 
     // Stage 1 values. Outputs that equal the input of the next tick.
-    pub out_cpu_state: CpuState<NUM_REGS, W>,
-    pub out_mem_tr_adj: ProcessedTranscriptEntry<W>,
-    out_cpu_state_var: CpuStateVar<WV, F>,
-    out_mem_tr_adj_var: ProcessedTranscriptEntryVar<WV, F>,
+    pub out_cpu_state: CpuState<T>,
+    pub out_mem_tr_adj: ProcessedTranscriptEntry<T>,
+    out_cpu_state_var: CpuStateVar<T>,
+    out_mem_tr_adj_var: ProcessedTranscriptEntryVar<T>,
 
     // Stage 2 values. Intermediate values not repeated anywhere.
-    pub instr_loads: Vec<ProcessedTranscriptEntry<W>>,
-    pub mem_ops: Vec<ProcessedTranscriptEntry<W>>,
-    pub middle_mem_tr_adjs: Vec<ProcessedTranscriptEntry<W>>,
-    instr_loads_var: Vec<ProcessedTranscriptEntryVar<WV, F>>,
-    mem_ops_var: Vec<ProcessedTranscriptEntryVar<WV, F>>,
-    middle_mem_tr_adjs_var: Vec<ProcessedTranscriptEntryVar<WV, F>>,
+    pub instr_loads: Vec<ProcessedTranscriptEntry<T>>,
+    pub mem_ops: Vec<ProcessedTranscriptEntry<T>>,
+    pub middle_mem_tr_adjs: Vec<ProcessedTranscriptEntry<T>>,
+    instr_loads_var: Vec<ProcessedTranscriptEntryVar<T>>,
+    mem_ops_var: Vec<ProcessedTranscriptEntryVar<T>>,
+    middle_mem_tr_adjs_var: Vec<ProcessedTranscriptEntryVar<T>>,
 
     // Stage 3 values. Inputs whose value depend on the commitments of all the above stages. This
     // is all the polynomial evals.
-    pub in_evals: TranscriptCheckerEvals<F>,
-    in_evals_var: TranscriptCheckerEvalsVar<F>,
+    pub in_evals: TranscriptCheckerEvals<T::F>,
+    in_evals_var: TranscriptCheckerEvalsVar<T::F>,
 
     // Stage 4 values. Outputs whose value depend on the commitments of all the above stages. This
     // is all the polynomial evals.
-    pub out_evals: TranscriptCheckerEvals<F>,
-    out_evals_var: TranscriptCheckerEvalsVar<F>,
+    pub out_evals: TranscriptCheckerEvals<T::F>,
+    out_evals_var: TranscriptCheckerEvalsVar<T::F>,
 
     // Stage 5 values. Repeated everywhere.
-    pub chal: F,
-    chal_var: FpVar<F>,
+    pub chal: T::F,
+    chal_var: FpVar<T::F>,
 }
 
-impl<const NUM_REGS: usize, W, WV, F> TranscriptCheckerCircuit<NUM_REGS, W, WV, F>
-where
-    W: Word,
-    WV: WordVar<F, Native = W>,
-    F: PrimeField,
-{
+impl<T: TinyRamExt> TranscriptCheckerCircuit<T> {
     /// Makes a new circuit with all placeholder values
     pub fn new(meta: ProgramMetadata, num_ticks: usize) -> Self {
         TranscriptCheckerCircuit {
             meta,
             in_cpu_state: Default::default(),
             in_mem_tr_adj: Default::default(),
-            in_cpu_state_var: CpuStateVar::default::<NUM_REGS>(),
+            in_cpu_state_var: CpuStateVar::default(),
             in_mem_tr_adj_var: Default::default(),
 
             out_cpu_state: Default::default(),
             out_mem_tr_adj: Default::default(),
-            out_cpu_state_var: CpuStateVar::default::<NUM_REGS>(),
+            out_cpu_state_var: CpuStateVar::default(),
             out_mem_tr_adj_var: Default::default(),
 
             instr_loads: vec![Default::default(); num_ticks],
@@ -94,20 +83,15 @@ where
             out_evals_var: Default::default(),
 
             chal: Default::default(),
-            chal_var: FpVar::Constant(F::ZERO),
+            chal_var: FpVar::Constant(T::F::ZERO),
         }
     }
 }
 
-impl<const NUM_REGS: usize, W, WV, F> TranscriptCheckerCircuit<NUM_REGS, W, WV, F>
-where
-    W: Word,
-    WV: WordVar<F, Native = W>,
-    F: PrimeField,
-{
+impl<T: TinyRamExt> TranscriptCheckerCircuit<T> {
     /// Commit to the input state, i.e., the given CPU state and first item in the mem-sorted trace
     /// window
-    fn stage0(&mut self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
+    fn stage0(&mut self, cs: ConstraintSystemRef<T::F>) -> Result<(), SynthesisError> {
         println!("Num constraints pre-stage0 {}", cs.num_constraints());
 
         self.in_cpu_state_var =
@@ -124,7 +108,7 @@ where
 
     /// Commit to the output state, i.e., the given CPU state and last item in the mem-sorted trace
     /// window
-    fn stage1(&mut self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
+    fn stage1(&mut self, cs: ConstraintSystemRef<T::F>) -> Result<(), SynthesisError> {
         println!("Num constraints pre-stage1 {}", cs.num_constraints());
 
         self.out_cpu_state_var =
@@ -140,7 +124,7 @@ where
     }
 
     /// Commit to the time-sorted memory operations, i.e., the instr load and CPU mem op
-    fn stage2(&mut self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
+    fn stage2(&mut self, cs: ConstraintSystemRef<T::F>) -> Result<(), SynthesisError> {
         println!("Num constraints pre-stage2 {}", cs.num_constraints());
 
         self.instr_loads_var = self
@@ -165,7 +149,7 @@ where
     }
 
     /// Commit to the input evals
-    fn stage3(&mut self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
+    fn stage3(&mut self, cs: ConstraintSystemRef<T::F>) -> Result<(), SynthesisError> {
         println!("Num constraints pre-stage3 {}", cs.num_constraints());
 
         self.in_evals_var =
@@ -177,7 +161,7 @@ where
     }
 
     /// Commit to the output evals
-    fn stage4(&mut self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
+    fn stage4(&mut self, cs: ConstraintSystemRef<T::F>) -> Result<(), SynthesisError> {
         println!("Num constraints pre-stage4 {}", cs.num_constraints());
 
         self.out_evals_var =
@@ -188,7 +172,7 @@ where
         Ok(())
     }
 
-    fn stage5(&mut self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
+    fn stage5(&mut self, cs: ConstraintSystemRef<T::F>) -> Result<(), SynthesisError> {
         println!("Num constraints pre-stage5 {}", cs.num_constraints());
 
         self.chal_var = FpVar::new_witness(ns!(cs, "chal"), || Ok(self.chal))?;
@@ -199,7 +183,7 @@ where
     }
 
     /// Do the transcript check
-    fn stage6(&mut self, _cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
+    fn stage6(&mut self, _cs: ConstraintSystemRef<T::F>) -> Result<(), SynthesisError> {
         println!("Num constraints pre-stage6 {}", _cs.num_constraints());
 
         // Concat the memory-sorted trace elements into the a contiguous chunk. We will iterate
@@ -219,7 +203,7 @@ where
             .zip(self.mem_ops_var.iter())
             .zip(mem_tr_adj_seq_var.windows(3).step_by(2))
         {
-            (next_cpu_state, next_evals) = check_transcript::<NUM_REGS, _, _>(
+            (next_cpu_state, next_evals) = check_transcript::<T>(
                 self.meta,
                 &next_cpu_state,
                 &self.chal_var,
@@ -239,13 +223,7 @@ where
     }
 }
 
-impl<const NUM_REGS: usize, W, WV, F> MultiStageConstraintSynthesizer<F>
-    for TranscriptCheckerCircuit<NUM_REGS, W, WV, F>
-where
-    W: Word,
-    WV: WordVar<F, Native = W>,
-    F: PrimeField,
-{
+impl<T: TinyRamExt> MultiStageConstraintSynthesizer<T::F> for TranscriptCheckerCircuit<T> {
     fn total_num_stages(&self) -> usize {
         7
     }
@@ -253,7 +231,7 @@ where
     fn generate_constraints(
         &mut self,
         stage: usize,
-        cs: &mut MultiStageConstraintSystem<F>,
+        cs: &mut MultiStageConstraintSystem<T::F>,
     ) -> Result<(), SynthesisError> {
         match stage {
             0 => cs.synthesize_with(|c| self.stage0(c)),
@@ -495,12 +473,8 @@ mod test {
         // sum of those sums.
 
         let n = 1;
-        let primary_tape = (1..=n)
-            .map(W::from_u64)
-            .collect();
-        let aux_tape = (1..=n)
-            .map(|x| W::from_u64(100 * x))
-            .collect();
+        let primary_tape = (1..=n).map(W::from_u64).collect();
+        let aux_tape = (1..=n).map(|x| W::from_u64(100 * x)).collect();
 
         transcript_tester(
             "\
