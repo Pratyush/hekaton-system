@@ -1,4 +1,4 @@
-use crate::{option::OptionVar, TinyRamExt};
+use crate::TinyRamExt;
 use ark_r1cs_std::R1CSVar;
 use tinyram_emu::TinyRam;
 
@@ -10,7 +10,7 @@ pub struct CpuStateVar<T: TinyRamExt> {
     pub(crate) pc: PcVar<T::WordVar>,
     pub(crate) flag: Boolean<T::F>,
     pub(crate) regs: RegistersVar<T::WordVar>,
-    pub(crate) answer: OptionVar<T::WordVar, T::F>,
+    pub(crate) answer: CpuAnswerVar<T>,
     pub(crate) primary_tape_pos: TapeHeadPosVar<T::F>,
     pub(crate) aux_tape_pos: TapeHeadPosVar<T::F>,
 }
@@ -220,7 +220,7 @@ impl<T: TinyRamExt> AllocVar<CpuState<T>, T::F> for CpuStateVar<T> {
         let flag =
             Boolean::new_variable(ns!(cs, "flag"), || state.map(|s| s.condition_flag()), mode)?;
         let regs =
-            RegistersVar::new_variable(ns!(cs, "regs"), || state.map(|s| s.registers), mode)?;
+            RegistersVar::new_variable(ns!(cs, "regs"), || state.map(|s| s.registers()), mode)?;
         let answer =
             CpuAnswerVar::new_variable(ns!(cs, "answer"), || state.map(|s| s.answer()), mode)?;
         let primary_tape_pos = TapeHeadPosVar::new_variable(

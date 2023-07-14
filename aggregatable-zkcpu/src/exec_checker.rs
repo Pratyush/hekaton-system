@@ -112,8 +112,8 @@ fn run_instruction<T: TinyRamExt>(
     reg2_val: &T::WordVar,
     imm_or_reg_val: &T::WordVar,
     incrd_pc: &T::WordVar,
-    pc_overflow: &Boolean<F>,
-) -> Result<InstrResult<T::WordVar, F>, SynthesisError> {
+    pc_overflow: &Boolean<T::F>,
+) -> Result<InstrResult<T>, SynthesisError> {
     let CpuStateVar {
         pc: _,
         flag,
@@ -239,10 +239,7 @@ fn run_instruction<T: TinyRamExt>(
                 flag: flag.clone(),
                 reg_to_write,
                 reg_val,
-                answer: CpuAnswerVar {
-                    is_set: Boolean::TRUE,
-                    val: imm_or_reg_val.clone(),
-                },
+                answer: CpuAnswerVar::Some(imm_or_reg_val.clone()),
                 primary_tape_pos: primary_tape_pos.clone(),
                 aux_tape_pos: aux_tape_pos.clone(),
                 err,
@@ -294,10 +291,10 @@ fn run_instruction<T: TinyRamExt>(
             // Learn which tape is being read
             let is_primary = mem_op
                 .op
-                .is_eq(&FpVar::Constant(F::from(MemOpKind::ReadPrimary as u8)))?;
+                .is_eq(&FpVar::Constant(T::F::from(MemOpKind::ReadPrimary as u8)))?;
             let is_aux = mem_op
                 .op
-                .is_eq(&FpVar::Constant(F::from(MemOpKind::ReadAux as u8)))?;
+                .is_eq(&FpVar::Constant(T::F::from(MemOpKind::ReadAux as u8)))?;
             let is_invalid_tape = !&is_primary & !&is_aux;
 
             // Find out the current tape position and the maximum tape position. This is nonsense
@@ -362,7 +359,7 @@ pub(crate) fn check_execution<T: TinyRamExt>(
     // Prepare to run all the instructions. This will hold new_state for all possible instructions,
     // and all_errors will hold the corresponding errors flags. At the end, we'll use the opcode to
     // select the output state we want to return, and assert that err == false.
-    let mut all_outputs = vec![InstrResult::default::<NUM_REGS>(); 32];
+    let mut all_outputs = vec![InstrResult::default(); 32];
 
     // Unpack the CPu state and make sure it hasn't already halted
     let CpuStateVar {
@@ -371,14 +368,14 @@ pub(crate) fn check_execution<T: TinyRamExt>(
     answer.is_set.enforce_equal(&Boolean::FALSE)?;
 
     // Decode the instruction
-    let (opcode, reg1, reg2, imm_or_reg) = decode_instruction::<NUM_REGS, _, _>(instr)?;
+    let (opcode, reg1, reg2, imm_or_reg) = decode_instruction::<T>(instr)?;
 
     // Create the default next program counter, which is the one that's incremented
     let (incrd_pc, pc_overflow) = match meta.arch {
         TinyRamArch::Harvard => pc.checked_increment()?,
         TinyRamArch::VonNeumann => {
             // Increment PC by 1 double word
-            let double_word_bytelen = 2 * (T::WordVar::BIT_LENGTH / 8) as u64;
+            let double_word_bytelen = T::DOUBLE_WORD_BYTE_LENGTH;
             pc.carrying_add(&T::WordVar::constant(T::WordVar::Native::from_u64(
                 double_word_bytelen,
             )))?
@@ -397,14 +394,12 @@ pub(crate) fn check_execution<T: TinyRamExt>(
     // reg1 (if used) is always the output register. We need to read that in case the operation
     //     doesn't modify registers, and we need to overwrite reg1 with itself (as a no-op)
     // reg2 (if used) is always a secondary input
-    let reg1_val = reg1.value::<NUM_REGS, _>(&regs)?;
-    let reg2_val = reg2.value::<NUM_REGS, _>(&regs)?;
+    let reg1_val = reg1.value::<T>(&regs)?;
+    let reg2_val = reg2.value::<T>(&regs)?;
     // imm_or_reg is always present
     let imm_or_reg_val = {
-        let reg_val = T::WordVar::conditionally_select_power_of_two_vector(
-            &imm_or_reg.as_selector::<NUM_REGS>()?,
-            regs,
-        )?;
+        let reg_val =
+            T::WordVar::conditionally_select_power_of_two_vector(&imm_or_reg.as_selector()?, regs)?;
         let imm_val = imm_or_reg.val.clone();
 
         T::WordVar::conditionally_select(&imm_or_reg.is_imm, &imm_val, &reg_val)?
@@ -440,7 +435,7 @@ pub(crate) fn check_execution<T: TinyRamExt>(
     // Pack the output states for muxing. Transpose the packing so that the first index is the
     // vector of all the first packed FpVars, the second is the vector of all the second packed
     // FpVars etc.
-    let packed_outputs: Vec<Vec<FpVar<F>>> = all_outputs.iter().map(pack_to_fps).collect();
+    let packed_outputs: Vec<Vec<FpVar<T::F>>> = all_outputs.iter().map(pack_to_fps).collect();
     let transposed_packings = crate::util::transpose(packed_outputs);
 
     // Decode the opcode and use it to index into the vec of next CPU states
@@ -453,7 +448,7 @@ pub(crate) fn check_execution<T: TinyRamExt>(
         .map(|fps| FpVar::conditionally_select_power_of_two_vector(&opcode_bits, &fps))
         .collect::<Result<Vec<_>, _>>()?;
     // Unpack the state
-    let chosen_output = InstrResult::unpack_from_fps::<NUM_REGS>(&chosen_packed_output);
+    let chosen_output = InstrResult::unpack_from_fps::<T::NUM_REGS>(&chosen_packed_output);
 
     // Check that this operation didn't error
     chosen_output.err.enforce_equal(&Boolean::FALSE)?;
@@ -467,7 +462,7 @@ pub(crate) fn check_execution<T: TinyRamExt>(
         .iter()
         .enumerate()
         .map(|(i, existing_val)| {
-            let idx_is_eq = reg_to_write.is_eq(&FpVar::constant(F::from(i as u8)))?;
+            let idx_is_eq = reg_to_write.is_eq(&FpVar::constant(T::F::from(i as u8)))?;
             T::WordVar::conditionally_select(&idx_is_eq, &chosen_output.reg_val, existing_val)
         })
         .collect::<Result<Vec<_>, _>>()?;

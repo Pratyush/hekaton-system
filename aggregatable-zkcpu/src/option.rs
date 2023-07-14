@@ -2,6 +2,7 @@ use std::borrow::Borrow;
 
 use ark_ff::Field;
 use ark_r1cs_std::{
+    convert::ToBitsGadget,
     prelude::{AllocVar, AllocationMode, Boolean, EqGadget},
     R1CSVar,
 };
@@ -16,7 +17,7 @@ pub struct OptionVar<T, F: Field> {
 }
 
 impl<T, F: Field> OptionVar<T, F> {
-    #[allow(non_snake_case)]
+    #[allow(non_upper_case_globals)]
     pub const None: Self = Self {
         is_some: Boolean::FALSE,
         value: None,
@@ -385,6 +386,28 @@ impl<G: Clone, T: AllocVar<G, F>, F: Field> AllocVar<Option<G>, F> for OptionVar
             Some(g) => T::new_variable(ns, || Ok(g.clone()), mode).map(Self::Some),
             None => Ok(Self::None),
         })
+    }
+}
+
+impl<'a, T: WordVar<F>, F: Field> ToBitsGadget<F> for &'a OptionVar<T, F> {
+    fn to_bits_le(&self) -> Result<Vec<Boolean<F>>, SynthesisError> {
+        let is_some = self.is_some();
+        match self.value {
+            Some(val) => Ok([vec![is_some], self.value.unwrap().as_le_bits()].concat()),
+            None => Ok([vec![is_some], T::zero().as_le_bits()].concat()),
+        }
+    }
+}
+
+impl<T: WordVar<F>, F: Field> ToBitsGadget<F> for OptionVar<T, F> {
+    fn to_bits_le(&self) -> Result<Vec<Boolean<F>>, SynthesisError> {
+        <&Self>::to_bits_le(&self)
+    }
+}
+
+impl<T, F: Field> Default for OptionVar<T, F> {
+    fn default() -> Self {
+        OptionVar::None
     }
 }
 

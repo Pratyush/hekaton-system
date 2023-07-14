@@ -27,6 +27,10 @@ impl<T: TinyRam> CpuState<T> {
         &mut self.registers[reg]
     }
 
+    pub fn registers(&self) -> &[T::Word] {
+        &self.registers
+    }
+
     pub fn program_counter(&self) -> T::Word {
         self.program_counter
     }

@@ -56,11 +56,11 @@ pub fn check_transcript<T: TinyRamExt>(
     meta: ProgramMetadata,
     cpu_state: &CpuStateVar<T>,
     chal: &FpVar<T::F>,
-    instr_load: &ProcessedTranscriptEntryVar<WV, F>,
-    mem_op: &ProcessedTranscriptEntryVar<WV, F>,
-    mem_tr_adj_seq: &[ProcessedTranscriptEntryVar<WV, F>],
-    evals: &TranscriptCheckerEvalsVar<F>,
-) -> Result<(CpuStateVar<T>, TranscriptCheckerEvalsVar<F>), SynthesisError> {
+    instr_load: &ProcessedTranscriptEntryVar<T>,
+    mem_op: &ProcessedTranscriptEntryVar<T>,
+    mem_tr_adj_seq: &[ProcessedTranscriptEntryVar<T>],
+    evals: &TranscriptCheckerEvalsVar<T::F>,
+) -> Result<(CpuStateVar<T>, TranscriptCheckerEvalsVar<T::F>), SynthesisError> {
     assert_eq!(mem_tr_adj_seq.len(), 3);
     let cs = cpu_state.cs();
 
@@ -113,7 +113,7 @@ pub fn check_transcript<T: TinyRamExt>(
 
     // Run the CPU for one tick
     println!("Num constraints pre-exec-checker {}", cs.num_constraints());
-    let new_cpu_state = check_execution::<NUM_REGS, _, _>(meta, &mem_op, cpu_state, instr)?;
+    let new_cpu_state = check_execution::<T>(meta, &mem_op, cpu_state, instr)?;
     println!("Num constraints post-exec-checker {}", cs.num_constraints());
 
     // --------------------------------------------------------------------------------------------

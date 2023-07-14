@@ -9,6 +9,9 @@ pub mod transcript_utils;
 mod util;
 mod word;
 
+#[cfg(test)]
+pub(crate) mod test_utils;
+
 pub mod option;
 
 pub trait TinyRamExt: TinyRam {

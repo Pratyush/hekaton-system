@@ -8,13 +8,13 @@ pub(crate) struct InstrResult<T: TinyRamExt> {
     pub(crate) flag: Boolean<T::F>,
     pub(crate) reg_to_write: RegIdxVar<T::F>,
     pub(crate) reg_val: T::WordVar,
-    pub(crate) answer: Option<T::WordVar, T::F>,
+    pub(crate) answer: CpuAnswerVar<T>,
     pub(crate) primary_tape_pos: TapeHeadPosVar<T::F>,
     pub(crate) aux_tape_pos: TapeHeadPosVar<T::F>,
     pub(super) err: Boolean<T::F>,
 }
 
-impl<'a, T: TinyRamExt> ToBitsGadget<F> for &'a InstrResult<T> {
+impl<'a, T: TinyRamExt> ToBitsGadget<T::F> for &'a InstrResult<T> {
     fn to_bits_le(&self) -> Result<Vec<Boolean<T::F>>, SynthesisError> {
         Ok([
             self.pc.as_le_bits(),
@@ -40,7 +40,7 @@ impl<T: TinyRamExt> InstrResult<T> {
             flag: Boolean::FALSE,
             reg_to_write: RegIdxVar::zero(),
             reg_val: T::WordVar::zero(),
-            answer: OptionVar::default(),
+            answer: CpuAnswerVar::default(),
             primary_tape_pos: TapeHeadPosVar::zero(),
             aux_tape_pos: TapeHeadPosVar::zero(),
             err: Boolean::TRUE,
@@ -70,12 +70,12 @@ impl<T: TinyRamExt> InstrResult<T> {
     // TODO: Make a FromBitsGadget that has this method. This requires CpuStateVar being made
     // generic over NUM_REGS
     /// Converts the given bitstring to a `CpuStateVar`. Requires that `bits.len() == Self::bitlen`
-    pub(super) fn from_bits_le<const NUM_REGS: usize>(bits: &[Boolean<F>]) -> Self {
+    pub(super) fn from_bits_le<const NUM_REGS: usize>(bits: &[Boolean<T::F>]) -> Self {
         assert_eq!(bits.len(), Self::bitlen::<NUM_REGS>());
 
-        let pc_len = WV::BIT_LENGTH;
-        let answer_len = WV::BIT_LENGTH + 1;
-        let tape_pos_len = <TapeHeadPosVar<F> as WordVar<F>>::BIT_LENGTH;
+        let pc_len = T::WordVar::BIT_LENGTH;
+        let answer_len = T::WordVar::BIT_LENGTH + 1;
+        let tape_pos_len = <TapeHeadPosVar<T::F>>::BIT_LENGTH;
 
         // Keep a cursor into the bits array
         let mut idx = 0;
@@ -86,11 +86,11 @@ impl<T: TinyRamExt> InstrResult<T> {
         let flag = bits[idx].clone();
         idx += 1;
 
-        let reg_to_write = RegIdxVar::from_le_bits(&bits[idx..idx + RegIdxVar::<F>::BIT_LENGTH]);
-        idx += RegIdxVar::<F>::BIT_LENGTH;
+        let reg_to_write = RegIdxVar::from_le_bits(&bits[idx..idx + RegIdxVar::<T::F>::BIT_LENGTH]);
+        idx += RegIdxVar::<T::F>::BIT_LENGTH;
 
-        let reg_val = WV::from_le_bits(&bits[idx..idx + WV::BIT_LENGTH]);
-        idx += WV::BIT_LENGTH;
+        let reg_val = T::WordVar::from_le_bits(&bits[idx..idx + T::WordVar::BIT_LENGTH]);
+        idx += T::WordVar::BIT_LENGTH;
 
         let answer = CpuAnswerVar::from_bits_le(&bits[idx..idx + answer_len]);
         idx += answer_len;
@@ -121,8 +121,8 @@ impl<T: TinyRamExt> InstrResult<T> {
     // CpuStateVar
     /// Undoes `pack_to_fps`, i.e., deserializes from its packed representation as field
     /// elements.
-    pub(super) fn unpack_from_fps<const NUM_REGS: usize>(fps: &[FpVar<F>]) -> Self {
-        let bits_per_fp = F::MODULUS_BIT_SIZE as usize - 1;
+    pub(super) fn unpack_from_fps<const NUM_REGS: usize>(fps: &[FpVar<T::F>]) -> Self {
+        let bits_per_fp = T::F::MODULUS_BIT_SIZE as usize - 1;
 
         // Check that not too many field elements were given
         assert!(
@@ -133,7 +133,7 @@ impl<T: TinyRamExt> InstrResult<T> {
         let cs = fps[0].cs();
 
         // Serialize the field elems
-        let mut bits: Vec<Boolean<F>> = fps
+        let mut bits: Vec<Boolean<T::F>> = fps
             .iter()
             .flat_map(|f| {
                 // We only packed BITLEN-1 bits. If there's a leading zero, cut it off.
@@ -143,11 +143,11 @@ impl<T: TinyRamExt> InstrResult<T> {
                 // So it suffices to just ensure that the top bit isn't set in the non-unique
                 // decoding
                 let mut bits = f.to_non_unique_bits_le().unwrap();
-                bits[F::MODULUS_BIT_SIZE as usize - 1]
+                bits[T::F::MODULUS_BIT_SIZE as usize - 1]
                     .enforce_equal(&Boolean::FALSE)
                     .unwrap();
 
-                bits.truncate(F::MODULUS_BIT_SIZE as usize - 1);
+                bits.truncate(T::F::MODULUS_BIT_SIZE as usize - 1);
                 println!(
                     "Num constraints to run FpVar::to_bits_le(): {}",
                     cs.num_constraints() - pre_tobits
