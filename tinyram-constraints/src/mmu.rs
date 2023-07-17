@@ -6,9 +6,10 @@ use rand::Rng;
 use tinyram_emu::MemOpKind;
 
 use crate::{
+    common::RamIdxVar,
     instructions::Instr,
     word::{DoubleWord, Word},
-    TinyRam, TinyRamArch, common::RamIdxVar, TinyRamExt,
+    TinyRam, TinyRamArch, TinyRamExt,
 };
 
 use std::{collections::BTreeMap, ops::Range};
@@ -239,7 +240,6 @@ impl<T: TinyRam> MemoryUnit<T> {
     }
 }
 
-
 /// An `ExecTickMemData` can be a LOAD (= 0) or a STORE (= 1), or no-op (= 2)
 #[derive(Clone)]
 pub(crate) struct MemOpKindVar<F: PrimeField>(FpVar<F>);
@@ -247,7 +247,7 @@ pub(crate) struct MemOpKindVar<F: PrimeField>(FpVar<F>);
 #[allow(non_upper_case_globals)]
 impl<F: PrimeField> MemOpKindVar<F> {
     pub const Load: Self = Self(FpVar::Constant(F::ZERO));
-    
+
     pub const Store: Self = Self(FpVar::Constant(F::ONE));
 
     pub const NoOp: Self = Self(FpVar::Constant(F::from(2u8)));
@@ -284,8 +284,6 @@ impl<'a, T: TinyRamExt> From<&'a MemOpVar<T>> for MemOpKindVar<T::F> {
         mem_op.kind
     }
 }
-
-
 
 /// Represents the decoded instruction and register information used to LOAD or STORE in a small
 /// tick. `Load` doesn't carry the thing loaded because that has to come from outside the CPU, from

@@ -1,8 +1,8 @@
 use crate::{
     cpu::CpuStateVar,
     transcript_checker::{
-        check_transcript, MemTranscriptEntry, MemTranscriptEntryVar,
-        TranscriptCheckerEvals, TranscriptCheckerEvalsVar,
+        check_transcript, MemTranscriptEntry, MemTranscriptEntryVar, TranscriptCheckerEvals,
+        TranscriptCheckerEvalsVar,
     },
     TinyRamExt,
 };
@@ -96,10 +96,10 @@ impl<T: TinyRamExt> TranscriptCheckerCircuit<T> {
 
         self.in_cpu_state_var =
             CpuStateVar::new_witness(ns!(cs, "in cpu state"), || Ok(&self.in_cpu_state))?;
-        self.in_mem_tr_adj_var =
-            MemTranscriptEntryVar::new_witness(ns!(cs, "mem tr adj 0"), || {
-                Ok(&self.in_mem_tr_adj)
-            })?;
+        self.in_mem_tr_adj_var = MemTranscriptEntryVar::new_witness(
+            ns!(cs, "mem tr adj 0"),
+            || Ok(&self.in_mem_tr_adj),
+        )?;
 
         println!("Num constraints post-stage0 {}", cs.num_constraints());
 

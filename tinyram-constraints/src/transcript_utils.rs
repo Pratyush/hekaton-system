@@ -6,16 +6,13 @@ use crate::{
 };
 use ark_ff::{FftField, PrimeField};
 use ark_poly::polynomial::univariate::DensePolynomial;
-use tinyram_emu::{word::Word, MemOp, MemOpKind, ExecutionTranscriptEntry};
+use tinyram_emu::{word::Word, ExecutionTranscriptEntry, MemOp, MemOpKind};
 
 /// Given a TinyRAM transcript, constructs the corresponding time- and memory-sorted processed
 /// transcripts, in that order, padded such that `time_tx.len() = 2 * mem_tx.len() + 1`.
 pub fn sort_and_pad<T: TinyRamExt>(
     transcript: &[ExecutionTranscriptEntry<T>],
-) -> (
-    Vec<MemTranscriptEntry<T>>,
-    Vec<MemTranscriptEntry<T>>,
-) {
+) -> (Vec<MemTranscriptEntry<T>>, Vec<MemTranscriptEntry<T>>) {
     // Create the time-sorted transcript, complete with padding memory ops. This has length 2T,
     // where T is the number of CPU ticks.
     let time_sorted_transcript = transcript

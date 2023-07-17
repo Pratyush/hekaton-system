@@ -163,7 +163,7 @@ impl<E: Pairing> GenericSRS<E> {
             n,
         };
         let vk = VerifierSRS::<E> {
-            n: n,
+            n,
             g: self.g_alpha_powers[0].into_group(),
             h: self.h_alpha_powers[0].into_group(),
             g_alpha: self.g_alpha_powers[1].into_group(),

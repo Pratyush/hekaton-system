@@ -1,9 +1,6 @@
 use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup, VariableBaseMSM};
 use ark_ff::{PrimeField, UniformRand, Zero};
-use ark_groth16::{
-    r1cs_to_qap::{LibsnarkReduction, R1CSToQAP},
-    Proof as ProofWithoutComms,
-};
+use ark_groth16::{r1cs_to_qap::R1CSToQAP, Proof as ProofWithoutComms};
 use ark_poly::GeneralEvaluationDomain;
 use ark_relations::r1cs::Result as R1CSResult;
 use ark_std::{cfg_into_iter, end_timer, rand::Rng, start_timer, vec::Vec};
@@ -11,16 +8,11 @@ use ark_std::{cfg_into_iter, end_timer, rand::Rng, start_timer, vec::Vec};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use crate::{MultiStageConstraintSynthesizer, MultiStageConstraintSystem, ProvingKey};
+use crate::{CPGroth16, MultiStageConstraintSynthesizer, MultiStageConstraintSystem, ProvingKey};
 
 type D<F> = GeneralEvaluationDomain<F>;
 
-/// The SNARK of [[Groth16]](https://eprint.iacr.org/2016/260.pdf).
-pub struct Groth16<E: Pairing, QAP: R1CSToQAP = LibsnarkReduction> {
-    _p: core::marker::PhantomData<(E, QAP)>,
-}
-
-impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
+impl<E: Pairing, QAP: R1CSToQAP> CPGroth16<E, QAP> {
     /// Create a Groth16 proof that is zero-knowledge.
     /// This method samples randomness for zero knowledges via `rng`.
     #[inline]
@@ -84,7 +76,7 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
         end_timer!(lc_time);
 
         let witness_map_time = start_timer!(|| "R1CS to QAP witness map");
-        let h = QAP::witness_map::<E::ScalarField, D<E::ScalarField>>(cs.cs.clone())?;
+        let h = QAP::witness_map::<E::ScalarField, D<E::ScalarField>>(&cs.cs)?;
         end_timer!(witness_map_time);
 
         let c_acc_time = start_timer!(|| "Compute C");

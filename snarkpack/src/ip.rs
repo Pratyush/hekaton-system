@@ -3,7 +3,7 @@ use ark_ec::{
     pairing::{MillerLoopOutput, Pairing, PairingOutput},
     AffineRepr, VariableBaseMSM,
 };
-use ark_std::{vec::Vec, cfg_iter};
+use ark_std::{cfg_iter, vec::Vec};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 

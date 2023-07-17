@@ -42,13 +42,13 @@ impl Transcript for Merlin {
                     } else {
                         continue;
                     }
-                }
+                },
                 None => {
                     buf[0] = counter;
                     counter += 1;
                     self.challenge_bytes(label, &mut buf);
                     continue;
-                }
+                },
             }
         }
     }

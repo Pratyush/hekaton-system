@@ -1,12 +1,9 @@
-use crate::{word::WordVar, TinyRamExt, option::OptionVar};
+use crate::{option::OptionVar, word::WordVar, TinyRamExt};
 use derivative::Derivative;
 
 /// Contains the RAM, ROM, and tapes necessary to run a program
 #[derive(Derivative)]
-#[derivative(
-    Debug(bound = "T: TinyRamExt"),
-    Clone(bound = "T: TinyRamExt"),
-)]
+#[derivative(Debug(bound = "T: TinyRamExt"), Clone(bound = "T: TinyRamExt"))]
 pub struct TapesVar<T: TinyRamExt> {
     primary_tape: Vec<T::WordVar>,
     auxiliary_tape: Vec<T::WordVar>,
@@ -50,7 +47,10 @@ impl<T: TinyRamExt> TapesVar<T> {
             })
     }
 
-    fn read_auxiliary_tape(&self, location: &mut TapeHead<T::WordVar>) -> Option<TapeOp<T::WordVar>> {
+    fn read_auxiliary_tape(
+        &self,
+        location: &mut TapeHead<T::WordVar>,
+    ) -> Option<TapeOp<T::WordVar>> {
         self.auxiliary_tape
             .get((*location).into() as usize)
             .copied()
@@ -80,7 +80,7 @@ impl<W: WordVar> Default for TapeHeadsVar<W> {
             auxiliary: W::zero(),
         }
     }
-} 
+}
 
 #[derive(Clone, Copy, Eq, PartialEq, Debug)]
 pub enum TapeOp<W: WordVar> {

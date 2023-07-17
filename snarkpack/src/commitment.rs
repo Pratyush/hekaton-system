@@ -3,10 +3,7 @@ use crate::Error;
 use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup};
 use ark_ff::CyclotomicMultSubgroup;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use ark_std::{
-    fmt::Debug,
-    vec::Vec, cfg_iter,
-};
+use ark_std::{cfg_iter, fmt::Debug, vec::Vec};
 use rayon::prelude::*;
 /// This module implements two binding commitment schemes used in the Groth16
 /// aggregation.

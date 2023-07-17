@@ -304,7 +304,7 @@ fn verify_tipp_mipp<E: Pairing, R: Rng + Send, T: Transcript + Send>(
         Err(e) => {
             dbg!("TIPP verify: INVALID with multi exp: {}", e);
             checks.send(PairingCheck::new_invalid()).unwrap();
-        }
+        },
         Ok(z) => {
             dbg!(format!(
                 "TIPP verify: parallel checks before merge: {}ms",
@@ -319,7 +319,7 @@ fn verify_tipp_mipp<E: Pairing, R: Rng + Send, T: Transcript + Send>(
                 ));
                 checks.send(PairingCheck::new_invalid()).unwrap()
             }
-        }
+        },
     };
 }
 
@@ -490,27 +490,27 @@ fn gipa_verify_tipp_mipp<E: Pairing, T: Transcript + Send>(
                 Op::TAB(tx, c) => {
                     let tx: <E as Pairing>::TargetField = tx.pow(c);
                     res.tab.mul_assign(&tx);
-                }
+                },
                 Op::UAB(ux, c) => {
                     let ux: <E as Pairing>::TargetField = ux.pow(c);
                     res.uab.mul_assign(&ux);
-                }
+                },
                 Op::ZAB(zx, c) => {
                     let zx: <E as Pairing>::TargetField = zx.pow(c);
                     res.zab.mul_assign(&zx);
-                }
+                },
                 Op::TC(tx, c) => {
                     let tx: <E as Pairing>::TargetField = tx.pow(c);
                     res.tc.mul_assign(&tx);
-                }
+                },
                 Op::UC(ux, c) => {
                     let ux: <E as Pairing>::TargetField = ux.pow(c);
                     res.uc.mul_assign(&ux);
-                }
+                },
                 Op::ZC(zx, c) => {
                     let zxp: E::G1 = zx.mul_bigint(c);
                     res.zc.add_assign(&zxp);
-                }
+                },
             }
             res
         })

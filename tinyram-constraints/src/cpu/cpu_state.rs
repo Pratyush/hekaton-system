@@ -1,4 +1,4 @@
-use crate::{TinyRamExt, tape::TapeHeadsVar};
+use crate::{tape::TapeHeadsVar, TinyRamExt};
 use ark_r1cs_std::R1CSVar;
 use tinyram_emu::TinyRam;
 
@@ -75,7 +75,7 @@ impl<T: TinyRamExt> CpuStateVar<T> {
             answer,
             flag,
             regs,
-            tape_heads
+            tape_heads,
         }
     }
 
@@ -113,7 +113,8 @@ impl<T: TinyRamExt> CpuStateVar<T> {
             TinyRamArch::Harvard => self.pc.checked_increment()?,
             TinyRamArch::VonNeumann => {
                 // Increment PC by 1 double word
-                self.pc.carrying_add(&T::WordVar::constant_u64(T::DOUBLE_WORD_BYTE_LENGTH))?
+                self.pc
+                    .carrying_add(&T::WordVar::constant_u64(T::DOUBLE_WORD_BYTE_LENGTH))?
             },
         }
     }

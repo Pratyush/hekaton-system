@@ -96,7 +96,6 @@ where
         it: &[(E::G1Affine, E::G2Affine)],
         out: &E::TargetField,
     ) -> PairingCheck<E> {
-
         #[cfg(test)]
         use ark_ff::PrimeField;
         #[cfg(test)]
@@ -178,7 +177,8 @@ mod test {
         let g1r = G1Projective::rand(&mut r);
         let g2r = G2Projective::rand(&mut r);
         let exp = Bls12::pairing(g1r, g2r);
-        let tuple = PairingCheck::<Bls12>::rand(&mut r, &[(g1r.into_affine(), g2r.into_affine())], &exp.0);
+        let tuple =
+            PairingCheck::<Bls12>::rand(&mut r, &[(g1r.into_affine(), g2r.into_affine())], &exp.0);
         assert!(tuple.verify());
         tuple
     }

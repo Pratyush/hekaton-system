@@ -86,10 +86,12 @@ impl<T: TinyRamExt> MemTranscriptEntry<T> {
     }
 
     /// Converts the given execution transcript entry into two processed entries, one for
-    /// instruction load operation, and one for any potential load/store instruction 
+    /// instruction load operation, and one for any potential load/store instruction
     /// executed at this step. If the current instruction was not a load/store, then the second
     /// entry is padding.
-    pub(crate) fn extract_mem_ops(t: &ExecutionTranscriptEntry<T>) -> (MemTranscriptEntry<T>, MemTranscriptEntry<T>) {
+    pub(crate) fn extract_mem_ops(
+        t: &ExecutionTranscriptEntry<T>,
+    ) -> (MemTranscriptEntry<T>, MemTranscriptEntry<T>) {
         // Get the instruction load. We stretch the timestamps to make every timestamp unique
         let first = MemTranscriptEntry {
             is_padding: false,
@@ -241,7 +243,7 @@ impl<T: TinyRamExt> R1CSVar<T::F> for MemTranscriptEntryVar<T> {
                 location: T::Word::from_u64(loc),
             },
         };
-        
+
         Ok(MemTranscriptEntry {
             is_padding,
             timestamp,
@@ -267,12 +269,14 @@ impl<T: TinyRamExt> Default for MemTranscriptEntryVar<T> {
 impl<T: TinyRamExt> MemTranscriptEntryVar<T> {
     /// Returns whether this memory operation is a `load`
     pub(crate) fn is_load(&self) -> Result<Boolean<T::F>, SynthesisError> {
-        self.op.is_eq(&MemOpKindVar::Constant((MemOpKind::Load as u8).into()))
+        self.op
+            .is_eq(&MemOpKindVar::Constant((MemOpKind::Load as u8).into()))
     }
 
     /// Returns whether this memory operation is a `store`
     pub(crate) fn is_store(&self) -> Result<Boolean<T::F>, SynthesisError> {
-        self.op.is_eq(&MemOpKindVar::Constant((MemOpKind::Store as u8).into()))
+        self.op
+            .is_eq(&MemOpKindVar::Constant((MemOpKind::Store as u8).into()))
     }
 }
 

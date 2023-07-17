@@ -1,9 +1,10 @@
 use crate::{
     common::*,
+    tape::TapeHeadsVar,
     transcript_checker::MemTranscriptEntryVar,
     util::{arr_set, pack_to_fps, uint32_to_uint64},
     word::{DoubleWordVar, WordVar},
-    TinyRamExt, tape::TapeHeadsVar,
+    TinyRamExt,
 };
 use tinyram_emu::{
     instructions::opcode::Opcode, word::Word, CpuState, MemOpKind, ProgramMetadata, TinyRamArch,
@@ -690,8 +691,10 @@ impl<T: TinyRamExt> CpuVar<T> {
         let reg2_val = reg2.value::<T>(&regs)?;
         // imm_or_reg is always present
         let imm_or_reg_val = {
-            let reg_val =
-                T::WordVar::conditionally_select_power_of_two_vector(&imm_or_reg.as_selector()?, regs)?;
+            let reg_val = T::WordVar::conditionally_select_power_of_two_vector(
+                &imm_or_reg.as_selector()?,
+                regs,
+            )?;
             let imm_val = imm_or_reg.val.clone();
 
             imm_or_reg.is_imm.select(&imm_val, &reg_val)?

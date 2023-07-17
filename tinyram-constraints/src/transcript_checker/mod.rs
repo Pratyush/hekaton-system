@@ -6,7 +6,7 @@ use crate::{
 
 use core::borrow::Borrow;
 
-use tinyram_emu::{word::Word, MemOp, MemOpKind, ProgramMetadata, ExecutionTranscriptEntry};
+use tinyram_emu::{word::Word, ExecutionTranscriptEntry, MemOp, MemOpKind, ProgramMetadata};
 
 use ark_ff::PrimeField;
 use ark_r1cs_std::{
@@ -232,9 +232,7 @@ mod test {
         // Now witness the time- and memory-sorted transcripts
         let time_sorted_transcript_vars = time_sorted_transcript
             .iter()
-            .map(|t| {
-                MemTranscriptEntryVar::<WV, _>::new_witness(ns!(cs, "t"), || Ok(t)).unwrap()
-            })
+            .map(|t| MemTranscriptEntryVar::<WV, _>::new_witness(ns!(cs, "t"), || Ok(t)).unwrap())
             .collect::<Vec<_>>();
         let mem_sorted_transcript_vars = mem_sorted_transcript
             .iter()
@@ -418,8 +416,7 @@ mod test {
         for _ in 0..200 {
             let entry = MemTranscriptEntry::rand(&mut rng);
             let entry_var =
-                MemTranscriptEntryVar::<WV, _>::new_witness(ns!(cs, "e"), || Ok(&entry))
-                    .unwrap();
+                MemTranscriptEntryVar::<WV, _>::new_witness(ns!(cs, "e"), || Ok(&entry)).unwrap();
 
             assert_eq!(
                 entry.as_fp::<F>(true),
