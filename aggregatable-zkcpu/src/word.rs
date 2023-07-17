@@ -109,6 +109,12 @@ pub trait WordVar<F: PrimeField>:
     /// Returns the constant given by `w`
     fn constant(w: Self::Native) -> Self;
 
+
+    /// Returns the constant given by `w`
+    fn constant_u64(w: u64) -> Self {
+        Self::constant(Self::Native::from_u64(w))
+    }
+
     /// Convert `self` to a field element
     fn as_fpvar(&self) -> Result<FpVar<F>, SynthesisError>;
 

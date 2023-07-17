@@ -1,3 +1,5 @@
+use crate::tape::TapeHeadsVar;
+
 use super::*;
 
 /// The output of a `run_instr()` invocation. This has the resulting CPU state, and a flag for if
@@ -9,8 +11,7 @@ pub(crate) struct InstrResult<T: TinyRamExt> {
     pub(crate) reg_to_write: RegIdxVar<T::F>,
     pub(crate) reg_val: T::WordVar,
     pub(crate) answer: CpuAnswerVar<T>,
-    pub(crate) primary_tape_pos: TapeHeadPosVar<T::F>,
-    pub(crate) aux_tape_pos: TapeHeadPosVar<T::F>,
+    pub(crate) tape_heads: TapeHeadsVar<T::WordVar>,
     pub(super) err: Boolean<T::F>,
 }
 
@@ -22,8 +23,7 @@ impl<'a, T: TinyRamExt> ToBitsGadget<T::F> for &'a InstrResult<T> {
             self.reg_to_write.to_bits_le().unwrap(),
             self.reg_val.as_le_bits(),
             self.answer.to_bits_le().unwrap(),
-            self.primary_tape_pos.as_le_bits(),
-            self.aux_tape_pos.as_le_bits(),
+            self.tape_heads.as_le_bits(),
             vec![self.err.clone()],
         ]
         .concat())
@@ -41,8 +41,7 @@ impl<T: TinyRamExt> InstrResult<T> {
             reg_to_write: RegIdxVar::zero(),
             reg_val: T::WordVar::zero(),
             answer: CpuAnswerVar::default(),
-            primary_tape_pos: TapeHeadPosVar::zero(),
-            aux_tape_pos: TapeHeadPosVar::zero(),
+            tape_heads: TapeHeadsVar::default(),
             err: Boolean::TRUE,
         }
     }
@@ -69,41 +68,33 @@ impl<T: TinyRamExt> InstrResult<T> {
 
     // TODO: Make a FromBitsGadget that has this method. This requires CpuStateVar being made
     // generic over NUM_REGS
-    /// Converts the given bitstring to a `CpuStateVar`. Requires that `bits.len() == Self::bitlen`
-    pub(super) fn from_bits_le<const NUM_REGS: usize>(bits: &[Boolean<T::F>]) -> Self {
-        assert_eq!(bits.len(), Self::bitlen::<NUM_REGS>());
+    /// Converts the given bitstring to a `CpuStateVar`. Requires that `bits.len() == Self::bit_length`
+    pub(super) fn from_bits_le(mut bits: &[Boolean<T::F>]) -> Self {
+        assert_eq!(bits.len(), Self::bit_length());
 
         let pc_len = T::WordVar::BIT_LENGTH;
         let answer_len = T::WordVar::BIT_LENGTH + 1;
-        let tape_pos_len = <TapeHeadPosVar<T::F>>::BIT_LENGTH;
+        let tape_head_len = <TapeHeadsVar<_>>::BIT_LENGTH;
 
-        // Keep a cursor into the bits array
-        let mut idx = 0;
+        let pc = PcVar::from_le_bits(&bits[..pc_len]);
+        bits = &bits[pc_len..];
 
-        let pc = PcVar::from_le_bits(&bits[idx..idx + pc_len]);
-        idx += pc_len;
+        let flag = bits[0].clone();
+        bits = &bits[1..];
 
-        let flag = bits[idx].clone();
-        idx += 1;
+        let reg_to_write = RegIdxVar::from_le_bits(&bits[..RegIdxVar::<T::F>::BIT_LENGTH]);
+        bits = &bits[RegIdxVar::<T::F>::BIT_LENGTH..];
 
-        let reg_to_write = RegIdxVar::from_le_bits(&bits[idx..idx + RegIdxVar::<T::F>::BIT_LENGTH]);
-        idx += RegIdxVar::<T::F>::BIT_LENGTH;
+        let reg_val = T::WordVar::from_le_bits(&bits[..T::WordVar::BIT_LENGTH]);
+        bits = &bits[T::WordVar::BIT_LENGTH..];
 
-        let reg_val = T::WordVar::from_le_bits(&bits[idx..idx + T::WordVar::BIT_LENGTH]);
-        idx += T::WordVar::BIT_LENGTH;
+        let answer = CpuAnswerVar::from_bits_le(&bits[..answer_len]);
+        bits = &bits[answer_len..];
 
-        let answer = CpuAnswerVar::from_bits_le(&bits[idx..idx + answer_len]);
-        idx += answer_len;
+        let tape_heads = TapeHeadsVar::from_le_bits(&bits[..tape_head_len]);
+        bits = &bits[tape_head_len..];
 
-        let primary_tape_pos = TapeHeadPosVar::from_le_bits(&bits[idx..idx + tape_pos_len]);
-        idx += tape_pos_len;
-        let aux_tape_pos = TapeHeadPosVar::from_le_bits(&bits[idx..idx + tape_pos_len]);
-        idx += tape_pos_len;
-
-        let err = bits[idx].clone();
-        idx += 1;
-
-        _ = idx;
+        let err = bits[0].clone();
 
         InstrResult {
             pc,
@@ -111,8 +102,7 @@ impl<T: TinyRamExt> InstrResult<T> {
             reg_to_write,
             reg_val,
             answer,
-            primary_tape_pos,
-            aux_tape_pos,
+            tape_heads,
             err,
         }
     }
@@ -121,12 +111,12 @@ impl<T: TinyRamExt> InstrResult<T> {
     // CpuStateVar
     /// Undoes `pack_to_fps`, i.e., deserializes from its packed representation as field
     /// elements.
-    pub(super) fn unpack_from_fps<const NUM_REGS: usize>(fps: &[FpVar<T::F>]) -> Self {
+    pub(super) fn unpack_from_fps(fps: &[FpVar<T::F>]) -> Self {
         let bits_per_fp = T::F::MODULUS_BIT_SIZE as usize - 1;
 
         // Check that not too many field elements were given
         assert!(
-            fps.len() * bits_per_fp < Self::bitlen::<NUM_REGS>() + bits_per_fp,
+            fps.len() * bits_per_fp < Self::bit_length() + bits_per_fp,
             "expected fewer field elements"
         );
 
@@ -156,9 +146,9 @@ impl<T: TinyRamExt> InstrResult<T> {
             })
             .collect();
         // Truncate to the appropriate size
-        bits.truncate(Self::bitlen::<NUM_REGS>());
+        bits.truncate(Self::bit_length());
 
         // Deserialize
-        Self::from_bits_le::<NUM_REGS>(&bits)
+        Self::from_bits_le(&bits)
     }
 }

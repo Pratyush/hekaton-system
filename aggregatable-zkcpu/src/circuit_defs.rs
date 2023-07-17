@@ -1,7 +1,7 @@
 use crate::{
-    exec_checker::CpuStateVar,
+    cpu::CpuStateVar,
     transcript_checker::{
-        check_transcript, ProcessedTranscriptEntry, ProcessedTranscriptEntryVar,
+        check_transcript, MemTranscriptEntry, MemTranscriptEntryVar,
         TranscriptCheckerEvals, TranscriptCheckerEvalsVar,
     },
     TinyRamExt,
@@ -21,23 +21,23 @@ pub struct TranscriptCheckerCircuit<T: TinyRamExt> {
 
     // Stage 0 values. Inputs that equal the output of the last tick.
     pub in_cpu_state: CpuState<T>,
-    pub in_mem_tr_adj: ProcessedTranscriptEntry<T>,
+    pub in_mem_tr_adj: MemTranscriptEntry<T>,
     in_cpu_state_var: CpuStateVar<T>,
-    in_mem_tr_adj_var: ProcessedTranscriptEntryVar<T>,
+    in_mem_tr_adj_var: MemTranscriptEntryVar<T>,
 
     // Stage 1 values. Outputs that equal the input of the next tick.
     pub out_cpu_state: CpuState<T>,
-    pub out_mem_tr_adj: ProcessedTranscriptEntry<T>,
+    pub out_mem_tr_adj: MemTranscriptEntry<T>,
     out_cpu_state_var: CpuStateVar<T>,
-    out_mem_tr_adj_var: ProcessedTranscriptEntryVar<T>,
+    out_mem_tr_adj_var: MemTranscriptEntryVar<T>,
 
     // Stage 2 values. Intermediate values not repeated anywhere.
-    pub instr_loads: Vec<ProcessedTranscriptEntry<T>>,
-    pub mem_ops: Vec<ProcessedTranscriptEntry<T>>,
-    pub middle_mem_tr_adjs: Vec<ProcessedTranscriptEntry<T>>,
-    instr_loads_var: Vec<ProcessedTranscriptEntryVar<T>>,
-    mem_ops_var: Vec<ProcessedTranscriptEntryVar<T>>,
-    middle_mem_tr_adjs_var: Vec<ProcessedTranscriptEntryVar<T>>,
+    pub instr_loads: Vec<MemTranscriptEntry<T>>,
+    pub mem_ops: Vec<MemTranscriptEntry<T>>,
+    pub middle_mem_tr_adjs: Vec<MemTranscriptEntry<T>>,
+    instr_loads_var: Vec<MemTranscriptEntryVar<T>>,
+    mem_ops_var: Vec<MemTranscriptEntryVar<T>>,
+    middle_mem_tr_adjs_var: Vec<MemTranscriptEntryVar<T>>,
 
     // Stage 3 values. Inputs whose value depend on the commitments of all the above stages. This
     // is all the polynomial evals.
@@ -97,7 +97,7 @@ impl<T: TinyRamExt> TranscriptCheckerCircuit<T> {
         self.in_cpu_state_var =
             CpuStateVar::new_witness(ns!(cs, "in cpu state"), || Ok(&self.in_cpu_state))?;
         self.in_mem_tr_adj_var =
-            ProcessedTranscriptEntryVar::new_witness(ns!(cs, "mem tr adj 0"), || {
+            MemTranscriptEntryVar::new_witness(ns!(cs, "mem tr adj 0"), || {
                 Ok(&self.in_mem_tr_adj)
             })?;
 
@@ -114,7 +114,7 @@ impl<T: TinyRamExt> TranscriptCheckerCircuit<T> {
         self.out_cpu_state_var =
             CpuStateVar::new_witness(ns!(cs, "out cpu state"), || Ok(&self.out_cpu_state))?;
         self.out_mem_tr_adj_var =
-            ProcessedTranscriptEntryVar::new_witness(ns!(cs, "mem tr adj 2"), || {
+            MemTranscriptEntryVar::new_witness(ns!(cs, "mem tr adj 2"), || {
                 Ok(&self.out_mem_tr_adj)
             })?;
 
@@ -130,17 +130,17 @@ impl<T: TinyRamExt> TranscriptCheckerCircuit<T> {
         self.instr_loads_var = self
             .instr_loads
             .iter()
-            .map(|op| ProcessedTranscriptEntryVar::new_witness(ns!(cs, "instr load"), || Ok(op)))
+            .map(|op| MemTranscriptEntryVar::new_witness(ns!(cs, "instr load"), || Ok(op)))
             .collect::<Result<Vec<_>, _>>()?;
         self.mem_ops_var = self
             .mem_ops
             .iter()
-            .map(|op| ProcessedTranscriptEntryVar::new_witness(ns!(cs, "mem op"), || Ok(op)))
+            .map(|op| MemTranscriptEntryVar::new_witness(ns!(cs, "mem op"), || Ok(op)))
             .collect::<Result<Vec<_>, _>>()?;
         self.middle_mem_tr_adjs_var = self
             .middle_mem_tr_adjs
             .iter()
-            .map(|op| ProcessedTranscriptEntryVar::new_witness(ns!(cs, "mem tr adj 1"), || Ok(op)))
+            .map(|op| MemTranscriptEntryVar::new_witness(ns!(cs, "mem tr adj 1"), || Ok(op)))
             .collect::<Result<Vec<_>, _>>()?;
 
         println!("Num constraints post-stage2 {}", cs.num_constraints());

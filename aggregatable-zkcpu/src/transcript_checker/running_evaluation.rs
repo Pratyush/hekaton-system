@@ -19,7 +19,7 @@ impl<F: PrimeField> RunningEvalVar<F> {
     pub(super) fn conditionally_update_with_ram_op<T: TinyRamExt<F = F>>(
         &mut self,
         bit: &Boolean<F>,
-        mem_op: &ProcessedTranscriptEntryVar<T>,
+        mem_op: &MemTranscriptEntryVar<T>,
         chal: &FpVar<F>,
     ) -> Result<(), SynthesisError> {
         // The field repr of mem_op is 0 iff it's a tape op or padding
@@ -40,7 +40,7 @@ impl<F: PrimeField> RunningEvalVar<F> {
     /// Updates the running eval with the given entry and challenge point
     pub(super) fn update_with_ram_op<T: TinyRamExt<F = F>>(
         &mut self,
-        mem_op: &ProcessedTranscriptEntryVar<T>,
+        mem_op: &MemTranscriptEntryVar<T>,
         chal: &FpVar<F>,
     ) -> Result<(), SynthesisError> {
         self.conditionally_update_with_ram_op(&Boolean::TRUE, mem_op, chal)
@@ -52,7 +52,7 @@ impl<F: PrimeField> RunningEvalVar<F> {
     pub(super) fn conditionally_update_with_ram_op_notime<T: TinyRamExt<F = F>>(
         &mut self,
         bit: &Boolean<F>,
-        mem_op: &ProcessedTranscriptEntryVar<T>,
+        mem_op: &MemTranscriptEntryVar<T>,
         chal: &FpVar<F>,
     ) -> Result<(), SynthesisError> {
         // The field repr of mem_op is 0 iff it's a tape op or padding

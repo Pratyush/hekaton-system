@@ -1,12 +1,12 @@
 use crate::{
-    exec_checker::{check_execution, CpuStateVar},
+    cpu::{Cpu, CpuStateVar},
     word::{DoubleWordVar, WordVar},
     TinyRamExt,
 };
 
 use core::borrow::Borrow;
 
-use tinyram_emu::{word::Word, MemOp, MemOpKind, ProgramMetadata, TranscriptEntry};
+use tinyram_emu::{word::Word, MemOp, MemOpKind, ProgramMetadata, ExecutionTranscriptEntry};
 
 use ark_ff::PrimeField;
 use ark_r1cs_std::{
@@ -56,9 +56,9 @@ pub fn check_transcript<T: TinyRamExt>(
     meta: ProgramMetadata,
     cpu_state: &CpuStateVar<T>,
     chal: &FpVar<T::F>,
-    instr_load: &ProcessedTranscriptEntryVar<T>,
-    mem_op: &ProcessedTranscriptEntryVar<T>,
-    mem_tr_adj_seq: &[ProcessedTranscriptEntryVar<T>],
+    instr_load: &MemTranscriptEntryVar<T>,
+    mem_op: &MemTranscriptEntryVar<T>,
+    mem_tr_adj_seq: &[MemTranscriptEntryVar<T>],
     evals: &TranscriptCheckerEvalsVar<T::F>,
 ) -> Result<(CpuStateVar<T>, TranscriptCheckerEvalsVar<T::F>), SynthesisError> {
     assert_eq!(mem_tr_adj_seq.len(), 3);
@@ -233,12 +233,12 @@ mod test {
         let time_sorted_transcript_vars = time_sorted_transcript
             .iter()
             .map(|t| {
-                ProcessedTranscriptEntryVar::<WV, _>::new_witness(ns!(cs, "t"), || Ok(t)).unwrap()
+                MemTranscriptEntryVar::<WV, _>::new_witness(ns!(cs, "t"), || Ok(t)).unwrap()
             })
             .collect::<Vec<_>>();
         let mem_sorted_transcript_vars = mem_sorted_transcript
             .iter()
-            .map(|t| ProcessedTranscriptEntryVar::new_witness(ns!(cs, "t"), || Ok(t)).unwrap())
+            .map(|t| MemTranscriptEntryVar::new_witness(ns!(cs, "t"), || Ok(t)).unwrap())
             .collect::<Vec<_>>();
 
         // Doesn't matter what the challenge value is just yet
@@ -416,9 +416,9 @@ mod test {
         // Make 200 random transcript entries and check that the native and ZK verisons encode to
         // the same value
         for _ in 0..200 {
-            let entry = ProcessedTranscriptEntry::rand(&mut rng);
+            let entry = MemTranscriptEntry::rand(&mut rng);
             let entry_var =
-                ProcessedTranscriptEntryVar::<WV, _>::new_witness(ns!(cs, "e"), || Ok(&entry))
+                MemTranscriptEntryVar::<WV, _>::new_witness(ns!(cs, "e"), || Ok(&entry))
                     .unwrap();
 
             assert_eq!(

@@ -3,7 +3,7 @@ use super::*;
 /// This is a transcript entry with just 1 associated memory operation, and a padding flag. This is
 /// easier to directly use than a [`TranscriptEntry`]
 #[derive(Clone, Debug, Eq, PartialEq, Default)]
-pub struct ProcessedTranscriptEntry<T: TinyRamExt> {
+pub struct MemTranscriptEntry<T: TinyRamExt> {
     /// Tells whether or not this entry is padding
     pub is_padding: bool,
     /// The timestamp of this entry. This MUST be greater than 0
@@ -12,11 +12,19 @@ pub struct ProcessedTranscriptEntry<T: TinyRamExt> {
     pub mem_op: MemOp<T::Word>,
 }
 
-impl<T: TinyRamExt> ProcessedTranscriptEntry<T> {
+impl<T: TinyRamExt> MemTranscriptEntry<T> {
+    pub fn padding_with_timestamp(timestamp: Timestamp) -> Self {
+        Self {
+            is_padding: true,
+            timestamp,
+            mem_op: MemOp::default(),
+        }
+    }
+
     /// Encodes this transcript entry in the low bits of a field element for the purpose of
     /// representation as a coefficient in a polynomial. Does not include timestamp, i.e., sets
     /// `timestamp` to 0. `is_init` says whether this entry is part of the initial memory or not.
-    pub(crate) fn as_fp_notime<F: PrimeField>(&self, is_init: bool) -> F {
+    pub(crate) fn as_fp_notime(&self, is_init: bool) -> T::F {
         fn pow_two<G: PrimeField>(n: usize) -> G {
             G::from(2u8).pow([n as u64])
         }
@@ -26,37 +34,37 @@ impl<T: TinyRamExt> ProcessedTranscriptEntry<T> {
         // The shape doesn't really matter as long as it's consistent.
 
         let mut shift = 0;
-        let mut acc = F::zero();
+        let mut acc = T::F::zero();
 
         // Encode `timestamp` as 64 bits. It's all 0s here
-        acc += F::zero() * pow_two::<F>(shift);
+        acc += T::F::zero() * pow_two::<T::F>(shift);
         shift += 64;
 
         // Encode `is_padding` as a bit
-        acc += F::from(self.is_padding as u64) * pow_two::<F>(shift);
+        acc += T::F::from(self.is_padding as u64) * pow_two::<T::F>(shift);
         shift += 1;
 
         // Encode `is_init` as a bit
-        acc += F::from(is_init) * pow_two::<F>(shift);
+        acc += T::F::from(is_init) * pow_two::<T::F>(shift);
         shift += 1;
 
         // Encode the memory op kind `op` as 2 bits
-        acc += F::from(self.mem_op.kind() as u8) * pow_two::<F>(shift);
+        acc += T::F::from(self.mem_op.kind() as u8) * pow_two::<T::F>(shift);
         shift += 2;
 
         // Encode `location` as a u64
-        acc += F::from(self.mem_op.location()) * pow_two::<F>(shift);
+        acc += T::F::from(self.mem_op.location()) * pow_two::<T::F>(shift);
         shift += 64;
 
         // val is a double word, so pack each of its words separately
         let val = self.mem_op.val();
-        acc += F::from(val.1.into()) * pow_two::<F>(shift);
+        acc += T::F::from(val.1.into()) * pow_two::<T::F>(shift);
         shift += T::Word::BIT_LENGTH;
-        acc += F::from(val.0.into()) * pow_two::<F>(shift);
+        acc += T::F::from(val.0.into()) * pow_two::<T::F>(shift);
         shift += T::Word::BIT_LENGTH;
 
         // Make sure we didn't over-pack the field element
-        assert!(shift < F::MODULUS_BIT_SIZE as usize);
+        assert!(shift < T::F::MODULUS_BIT_SIZE as usize);
 
         acc
     }
@@ -64,7 +72,7 @@ impl<T: TinyRamExt> ProcessedTranscriptEntry<T> {
     /// Encodes this transcript entry in the low bits of a field element for the purpose of
     /// representation as a coefficient in a polynomial. `is_init` says whether this entry is part
     /// of the initial memory or not.
-    pub(crate) fn as_fp<F: PrimeField>(&self, is_init: bool) -> F {
+    pub(crate) fn as_fp(&self, is_init: bool) -> T::F {
         // The field element is of the form
         // 00...0 || memop_val || memop_location || memop_kind || is_init || is_padding || timestamp
 
@@ -72,16 +80,18 @@ impl<T: TinyRamExt> ProcessedTranscriptEntry<T> {
         let mut acc = self.as_fp_notime(is_init);
 
         // Add `timestamp` to the low bits
-        acc += F::from(self.timestamp);
+        acc += T::F::from(self.timestamp);
 
         acc
     }
 
-    /// Converts the given transcript entry into two processed entries. If there is no mem op, then
-    /// a padding entry is created.
-    pub(crate) fn new_pair(t: &TranscriptEntry<T>) -> [ProcessedTranscriptEntry<T>; 2] {
+    /// Converts the given execution transcript entry into two processed entries, one for
+    /// instruction load operation, and one for any potential load/store instruction 
+    /// executed at this step. If the current instruction was not a load/store, then the second
+    /// entry is padding.
+    pub(crate) fn extract_mem_ops(t: &ExecutionTranscriptEntry<T>) -> (MemTranscriptEntry<T>, MemTranscriptEntry<T>) {
         // Get the instruction load. We stretch the timestamps to make every timestamp unique
-        let first = ProcessedTranscriptEntry {
+        let first = MemTranscriptEntry {
             is_padding: false,
             timestamp: 2 * t.timestamp + TIMESTAMP_OFFSET,
             mem_op: t.instr_load.clone(),
@@ -90,17 +100,12 @@ impl<T: TinyRamExt> ProcessedTranscriptEntry<T> {
         // copy of the first instruction load. The reason it'd be a copy is because it's consistent
         // with the rest of the transcript.
         let second = match &t.mem_op {
-            Some(op) => ProcessedTranscriptEntry {
+            Some(op) => MemTranscriptEntry {
                 is_padding: false,
                 timestamp: first.timestamp + 1,
                 mem_op: op.clone(),
             },
-            None => {
-                let mut pad = first.clone();
-                pad.is_padding = true;
-                pad.timestamp = first.timestamp + 1;
-                pad
-            },
+            None => Self::padding_with_timestamp(first.timestamp + 1),
         };
 
         [first, second]
@@ -112,29 +117,16 @@ impl<T: TinyRamExt> ProcessedTranscriptEntry<T> {
         let timestamp = rng.gen();
         let mem_op = MemOp::rand(&mut rng);
 
-        ProcessedTranscriptEntry {
+        MemTranscriptEntry {
             is_padding,
             timestamp,
             mem_op,
         }
     }
-
-    /// Returns whether this memory operation is a `read`
-    pub fn is_tape_op(&self) -> bool {
-        match self.mem_op.kind() {
-            MemOpKind::ReadPrimary | MemOpKind::ReadAux => true,
-            _ => false,
-        }
-    }
-
-    /// Returns whether this memory operation is a `load` or `store`
-    pub(crate) fn is_ram_op(&self) -> bool {
-        !self.is_tape_op()
-    }
 }
 
-impl<T: TinyRamExt> AllocVar<ProcessedTranscriptEntry<T>, T::F> for ProcessedTranscriptEntryVar<T> {
-    fn new_variable<S: Borrow<ProcessedTranscriptEntry<T>>>(
+impl<T: TinyRamExt> AllocVar<MemTranscriptEntry<T>, T::F> for MemTranscriptEntryVar<T> {
+    fn new_variable<S: Borrow<MemTranscriptEntry<T>>>(
         cs: impl Into<Namespace<T::F>>,
         f: impl FnOnce() -> Result<S, SynthesisError>,
         mode: AllocationMode,
@@ -172,7 +164,7 @@ impl<T: TinyRamExt> AllocVar<ProcessedTranscriptEntry<T>, T::F> for ProcessedTra
             DoubleWordVar::new_variable(ns!(cs, "val"), || entry.map(|e| e.mem_op.val()), mode)?;
         let val_fp = val.as_fpvar()?;
 
-        Ok(ProcessedTranscriptEntryVar {
+        Ok(MemTranscriptEntryVar {
             is_padding: is_padding_var,
             timestamp: timestamp_var,
             op,
@@ -187,7 +179,7 @@ impl<T: TinyRamExt> AllocVar<ProcessedTranscriptEntry<T>, T::F> for ProcessedTra
 /// The ZK version of `ProcessedTranscriptEntry`. It's also flattened so all the fields are right
 /// here.
 #[derive(Clone)]
-pub struct ProcessedTranscriptEntryVar<T: TinyRamExt> {
+pub struct MemTranscriptEntryVar<T: TinyRamExt> {
     /// Tells whether or not this entry is padding
     pub(crate) is_padding: Boolean<T::F>,
     /// The timestamp of this entry. This is at most 64 bits
@@ -195,7 +187,7 @@ pub struct ProcessedTranscriptEntryVar<T: TinyRamExt> {
     pub(super) timestamp: TimestampVar<T::F>,
     /// The type of memory op this is. This is determined by the discriminant of [`MemOpKind`]
     pub(crate) op: MemOpKindVar<T::F>,
-    /// The RAM index being loaded from or stored to, or the location of the tape head
+    /// The RAM index being loaded from or stored to.
     pub(crate) location: UInt64<T::F>,
     /// `location` as a field element
     pub(crate) location_fp: FpVar<T::F>,
@@ -205,8 +197,8 @@ pub struct ProcessedTranscriptEntryVar<T: TinyRamExt> {
     pub(super) val_fp: FpVar<T::F>,
 }
 
-impl<T: TinyRamExt> R1CSVar<T::F> for ProcessedTranscriptEntryVar<T> {
-    type Value = ProcessedTranscriptEntry<T>;
+impl<T: TinyRamExt> R1CSVar<T::F> for MemTranscriptEntryVar<T> {
+    type Value = MemTranscriptEntry<T>;
 
     fn cs(&self) -> ConstraintSystemRef<T::F> {
         self.timestamp
@@ -232,43 +224,25 @@ impl<T: TinyRamExt> R1CSVar<T::F> for ProcessedTranscriptEntryVar<T> {
             // Make sure the op kind is just 2 bits
             let disc = limbs[0];
             assert!(disc < 4);
-            limbs[0] as u8
+            limbs[0] as u8 as MemOpKind
         };
         let val = self.val.value()?;
         let loc = self.location.value()?;
 
         // Make the mem op from the flattened values. The `from_u64` calls below will not panic
         // because if the op_disc doesn't match the location type, this is a malformed value.
-        let mem_op = if op_disc == MemOpKind::Load as u8 {
-            MemOp::Load {
+        let mem_op = match op_disc {
+            MemOpKind::Load => MemOp::Load {
                 val,
                 location: T::Word::from_u64(loc),
-            }
-        } else if op_disc == MemOpKind::Store as u8 {
-            MemOp::Store {
+            },
+            MemOpKind::Store => MemOp::Store {
                 val,
                 location: T::Word::from_u64(loc),
-            }
-        } else if op_disc == MemOpKind::ReadPrimary as u8 {
-            // The single-word value of a Read is located in the first word of val. And the
-            // location is guaranteed to be a u32
-            MemOp::ReadPrimary {
-                val: val.0,
-                location: loc as u32,
-            }
-        } else if op_disc == MemOpKind::ReadAux as u8 {
-            // Same as above
-            MemOp::ReadAux {
-                val: val.0,
-                location: loc as u32,
-            }
-        } else if op_disc == MemOpKind::ReadInvalid as u8 {
-            MemOp::ReadInvalid
-        } else {
-            panic!("unexpected memop kind {op_disc}")
+            },
         };
-
-        Ok(ProcessedTranscriptEntry {
+        
+        Ok(MemTranscriptEntry {
             is_padding,
             timestamp,
             mem_op,
@@ -276,9 +250,9 @@ impl<T: TinyRamExt> R1CSVar<T::F> for ProcessedTranscriptEntryVar<T> {
     }
 }
 
-impl<T: TinyRamExt> Default for ProcessedTranscriptEntryVar<T> {
+impl<T: TinyRamExt> Default for MemTranscriptEntryVar<T> {
     fn default() -> Self {
-        ProcessedTranscriptEntryVar {
+        MemTranscriptEntryVar {
             is_padding: Boolean::TRUE,
             timestamp: TimestampVar::zero(),
             op: MemOpKindVar::zero(),
@@ -290,39 +264,21 @@ impl<T: TinyRamExt> Default for ProcessedTranscriptEntryVar<T> {
     }
 }
 
-impl<T: TinyRamExt> ProcessedTranscriptEntryVar<T> {
+impl<T: TinyRamExt> MemTranscriptEntryVar<T> {
     /// Returns whether this memory operation is a `load`
     pub(crate) fn is_load(&self) -> Result<Boolean<T::F>, SynthesisError> {
-        self.op
-            .is_eq(&MemOpKindVar::Constant(T::F::from(MemOpKind::Load as u8)))
+        self.op.is_eq(&MemOpKindVar::Constant((MemOpKind::Load as u8).into()))
     }
 
     /// Returns whether this memory operation is a `store`
     pub(crate) fn is_store(&self) -> Result<Boolean<T::F>, SynthesisError> {
-        self.op
-            .is_eq(&MemOpKindVar::Constant(T::F::from(MemOpKind::Store as u8)))
-    }
-
-    /// Returns whether this memory operation is a `read`
-    pub(crate) fn is_tape_op(&self) -> Result<Boolean<T::F>, SynthesisError> {
-        let is_primary = self
-            .op
-            .is_eq(&FpVar::Constant(T::F::from(MemOpKind::ReadPrimary as u8)))?;
-        let is_aux = self
-            .op
-            .is_eq(&FpVar::Constant(T::F::from(MemOpKind::ReadAux as u8)))?;
-        Ok(is_primary | is_aux)
-    }
-
-    /// Returns whether this memory operation is a `load` or `store`
-    pub(crate) fn is_ram_op(&self) -> Result<Boolean<T::F>, SynthesisError> {
-        Ok(!self.is_tape_op()?)
+        self.op.is_eq(&MemOpKindVar::Constant((MemOpKind::Store as u8).into()))
     }
 }
 
-impl<T: TinyRamExt> ProcessedTranscriptEntryVar<T> {
-    pub(crate) fn pow_two<G: PrimeField>(n: usize) -> FpVar<G> {
-        FpVar::Constant(G::from(2u8).pow([n as u64]))
+impl<T: TinyRamExt> MemTranscriptEntryVar<T> {
+    pub(crate) fn pow_two(n: usize) -> FpVar<T::F> {
+        FpVar::Constant(T::F::from(2u8).pow([n as u64]))
     }
 
     /// Encodes this transcript entry as a field element, not including `timestamp` (i.e., setting
@@ -410,7 +366,7 @@ impl<T: TinyRamExt> ProcessedTranscriptEntryVar<T> {
 
         // Now get the word-aligned index and use the lowest word bit to select the word
         let word_selector = &word_aligned_idx_bits[0];
-        let out = T::Word::conditionally_select(word_selector, &self.val.w1, &self.val.w0)?;
+        let out = word_selector.select(&self.val.w1, &self.val.w0)?;
 
         Ok((out, err))
     }

@@ -1,32 +1,32 @@
 //! This module contains utilities for building, committing to, and splitting execution transcripts
 
 use crate::{
-    transcript_checker::{ProcessedTranscriptEntry, TranscriptCheckerEvals},
+    transcript_checker::{MemTranscriptEntry, TranscriptCheckerEvals},
     TinyRamExt,
 };
 use ark_ff::{FftField, PrimeField};
 use ark_poly::polynomial::univariate::DensePolynomial;
-use tinyram_emu::{word::Word, MemOp, MemOpKind, TranscriptEntry};
+use tinyram_emu::{word::Word, MemOp, MemOpKind, ExecutionTranscriptEntry};
 
 /// Given a TinyRAM transcript, constructs the corresponding time- and memory-sorted processed
 /// transcripts, in that order, padded such that `time_tx.len() = 2 * mem_tx.len() + 1`.
 pub fn sort_and_pad<T: TinyRamExt>(
-    transcript: &[TranscriptEntry<T>],
+    transcript: &[ExecutionTranscriptEntry<T>],
 ) -> (
-    Vec<ProcessedTranscriptEntry<T>>,
-    Vec<ProcessedTranscriptEntry<T>>,
+    Vec<MemTranscriptEntry<T>>,
+    Vec<MemTranscriptEntry<T>>,
 ) {
     // Create the time-sorted transcript, complete with padding memory ops. This has length 2T,
     // where T is the number of CPU ticks.
     let time_sorted_transcript = transcript
         .iter()
-        .flat_map(ProcessedTranscriptEntry::new_pair)
+        .flat_map(MemTranscriptEntry::extract_mem_ops)
         .collect::<Vec<_>>();
 
     // Make the mem-sorted trace with `read` ops removed. We have to pad the result out to be
     // sufficiently long. The required length is 2T + 1. The +1 is the initial padding.
-    let mem_sorted_transcript: Vec<ProcessedTranscriptEntry<T>> = {
-        let mut buf: Vec<ProcessedTranscriptEntry<T>> = time_sorted_transcript
+    let mem_sorted_transcript: Vec<MemTranscriptEntry<T>> = {
+        let mut buf: Vec<MemTranscriptEntry<T>> = time_sorted_transcript
             .iter()
             .filter(|item| item.mem_op.is_ram_op())
             .cloned()
@@ -72,7 +72,7 @@ pub fn sort_and_pad<T: TinyRamExt>(
 /// Xʳ · Πᵢ (X - vᵢ), where r is the degree needed to make deg P equal `desired_deg`. Padding and
 /// tape operations are mapped to 0 ∈ `F`.
 pub fn ram_transcript_to_polyn<W: Word, F: FftField + PrimeField>(
-    transcript: &[ProcessedTranscriptEntry<W>],
+    transcript: &[MemTranscriptEntry<W>],
     desired_deg: usize,
 ) -> DensePolynomial<F> {
     // Define a recursive function that will make a polynomial from the given roots
@@ -116,20 +116,20 @@ impl<F: PrimeField> TranscriptCheckerEvals<F> {
     pub(crate) fn update<W: Word>(
         &mut self,
         chal: F,
-        instr_load: &ProcessedTranscriptEntry<W>,
-        mem_op: &ProcessedTranscriptEntry<W>,
-        mem_tr_adj_seq: &[ProcessedTranscriptEntry<W>],
+        instr_load: &MemTranscriptEntry<W>,
+        mem_op: &MemTranscriptEntry<W>,
+        mem_tr_adj_seq: &[MemTranscriptEntry<W>],
     ) {
         assert_eq!(mem_tr_adj_seq.len(), 3);
 
-        let process_ram_op = |m: &ProcessedTranscriptEntry<W>| {
+        let process_ram_op = |m: &MemTranscriptEntry<W>| {
             if m.is_tape_op() || m.is_padding {
                 F::zero()
             } else {
                 m.as_fp(false)
             }
         };
-        let process_ram_op_notime = |m: &ProcessedTranscriptEntry<W>| {
+        let process_ram_op_notime = |m: &MemTranscriptEntry<W>| {
             if m.is_tape_op() || m.is_padding {
                 F::zero()
             } else {
