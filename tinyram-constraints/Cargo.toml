@@ -1,5 +1,5 @@
 [package]
-name = "aggregatable-zkcpu"
+name = "tinyram-constraints"
 authors = ["Michael Rosenberg <michael@mrosenberg.pub>"]
 edition = "2021"
 readme = "README.md"

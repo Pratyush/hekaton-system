@@ -1,10 +1,11 @@
 [workspace]
 
 members = [
-    "aggregatable-zkcpu",
-    "tinyram-emu",
     "cp-groth16",
     "snarkpack",
+
+    "tinyram-emu",
+    "tinyram-constraints",
 ]
 
 [profile.release]
