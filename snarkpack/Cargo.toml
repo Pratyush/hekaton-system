@@ -1,0 +1,40 @@
+[package]
+name = "snarkpack"
+version = "0.1.1"
+authors = ["nalos"]
+edition = "2021"
+
+[dependencies]
+crossbeam-channel = "0.5"
+ark-ff = { version = "0.4.2", default-features = false }
+ark-ec = { version = "0.4.2", default-features = false }
+ark-serialize = { version = "^0.4.2", default-features = false, features = [ "derive" ] }
+ark-poly = { version = "^0.4.2", default-features = false }
+ark-std = { version = "^0.4.0", default-features = false }
+ark-relations = { version = "^0.4.0", default-features = false }
+ark-crypto-primitives = { version = "^0.4.0", default-features = false }
+ark-groth16 = { version = "^0.4.0", default-features = false }
+rand = { version = "0.8" }
+rand_core = { version = "^0.6" }
+digest = { version = "0.10.7" }
+sha2 = { version = "^0.10" }
+rayon = { version = "1", optional = true }
+thiserror = { version = "^1.0" }
+merlin = { version = "^3.0" }
+
+[dev-dependencies]
+ark-bls12-381 = { version = "^0.4.0", default-features = false, features = ["curve"] }
+rand_chacha = "0.3"
+criterion = "0.5.1"
+
+[features]
+default = ["parallel"]
+std = ["ark-ff/std", "ark-ec/std", "ark-poly/std", "ark-groth16/std", "ark-relations/std", "ark-crypto-primitives/std", "ark-std/std" ]
+parallel = ["std", "ark-ff/parallel", "ark-poly/parallel", "ark-groth16/parallel", "ark-ec/parallel", "ark-crypto-primitives/parallel", "ark-std/parallel", "rayon"]
+
+[lib]
+bench = false
+
+[[bench]]
+name = "bench_aggregation"
+harness = false

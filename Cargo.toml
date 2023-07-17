@@ -4,6 +4,7 @@ members = [
     "aggregatable-zkcpu",
     "tinyram-emu",
     "cp-groth16",
+    "snarkpack",
 ]
 
 [profile.release]
