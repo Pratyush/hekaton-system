@@ -1,13 +1,6 @@
-use ark_ec::{
-    pairing::{MillerLoopOutput, Pairing, PairingOutput},
-    CurveGroup,
-};
-// {AffineCurve, PairingEngine, ProjectiveCurve};
-use ark_ff::{Field, PrimeField};
-use ark_std::{ops::Mul, rand::Rng, sync::Mutex, One, UniformRand, Zero};
-use rayon::prelude::*;
-
-use std::ops::MulAssign;
+use ark_ec::pairing::{MillerLoopOutput, Pairing, PairingOutput};
+use ark_ff::Field;
+use ark_std::{rand::Rng, One, UniformRand, Zero};
 
 /// PairingCheck represents a check of the form e(A,B)e(C,D)... = T. Checks can
 /// be aggregated together using random linear combination. The efficiency comes
@@ -31,16 +24,17 @@ impl<E> PairingCheck<E>
 where
     E: Pairing,
 {
-    pub fn new() -> PairingCheck<E> {
+    pub(crate) fn new() -> PairingCheck<E> {
         Self {
             left: <E as Pairing>::TargetField::one(),
             right: <E as Pairing>::TargetField::one(),
-            // an fixed "1 = 1" check doesn't count
+            // a fixed "1 = 1" check doesn't count
             non_randomized: 0,
         }
     }
 
-    pub fn new_invalid() -> PairingCheck<E> {
+    #[cfg(test)]
+    pub(crate) fn new_invalid() -> PairingCheck<E> {
         Self {
             left: <E as Pairing>::TargetField::one(),
             right: <E as Pairing>::TargetField::one() + <E as Pairing>::TargetField::one(),
@@ -96,51 +90,42 @@ where
     /// e(rA,B)e(rC,D) ... = out^r <=>
     /// e(A,B)^r e(C,D)^r = out^r <=> e(g,h)^{abr + cdr} = out^r
     /// (e(g,h)^{ab + cd})^r = out^r
-    pub fn rand<'a, R: Rng + Send>(
-        rng: &Mutex<R>,
-        it: &[(&'a E::G1Affine, &'a E::G2Affine)],
-        out: &'a <E as Pairing>::TargetField,
+    #[cfg(test)]
+    pub fn rand(
+        rng: impl Rng,
+        it: &[(E::G1Affine, E::G2Affine)],
+        out: &E::TargetField,
     ) -> PairingCheck<E> {
-        let coeff = rand_fr::<E, R>(&rng);
+
+        #[cfg(test)]
+        use ark_ff::PrimeField;
+        #[cfg(test)]
+        use rayon::prelude::*;
+
+        let coeff: E::ScalarField = rand_scalar::<E>(rng);
         let miller_out = it
             .into_par_iter()
-            .map(|(a, b)| {
-                let na = a.mul(coeff).into_affine();
-                (E::G1Prepared::from(na), E::G2Prepared::from(**b))
-            })
-            .map(|(a, b)| E::miller_loop(a, b))
-            .fold(
-                || <E as Pairing>::TargetField::one(),
-                |mut acc, res| {
-                    acc.mul_assign(&(res.0));
-                    acc
-                },
-            )
-            .reduce(
-                || <E as Pairing>::TargetField::one(),
-                |mut acc, res| {
-                    acc.mul_assign(&res);
-                    acc
-                },
-            );
-        let mut outt = out.clone();
-        if out != &<E as Pairing>::TargetField::one() {
+            .map(|&(a, b)| E::miller_loop(a * coeff, b).0)
+            .product();
+        let out = if !out.is_one() {
             // we only need to make this expensive operation is the output is
             // not one since 1^r = 1
-            outt = outt.pow(&(coeff.into_bigint()));
-        }
+            out.pow(&coeff.into_bigint())
+        } else {
+            *out
+        };
         PairingCheck {
             left: miller_out,
-            right: outt,
+            right: out,
             non_randomized: 0,
         }
     }
 
     /// takes another pairing tuple and combine both sides together. Note the checks are not
     /// randomized when merged, the checks must have been randomized before.
-    pub fn merge(&mut self, p2: &PairingCheck<E>) {
-        mul_if_not_one::<E>(&mut self.left, &p2.left);
-        mul_if_not_one::<E>(&mut self.right, &p2.right);
+    pub(crate) fn merge(&mut self, p2: &PairingCheck<E>) {
+        mul_assign_if_not_one(&mut self.left, &p2.left);
+        mul_assign_if_not_one(&mut self.right, &p2.right);
         // A merged PairingCheck is only randomized if both of its contributors are.
         self.non_randomized += p2.non_randomized;
     }
@@ -162,47 +147,42 @@ where
     }
 }
 
-fn rand_fr<E: Pairing, R: Rng + Send>(r: &Mutex<R>) -> E::ScalarField {
-    let rng: &mut R = &mut r.lock().unwrap();
+fn rand_scalar<E: Pairing>(mut r: impl Rng) -> E::ScalarField {
     loop {
-        let c = E::ScalarField::rand(rng);
-        if c != E::ScalarField::zero() {
+        let c = E::ScalarField::rand(&mut r);
+        if !c.is_zero() {
             return c;
         }
     }
 }
-fn mul_if_not_one<E: Pairing>(
-    left: &mut <E as Pairing>::TargetField,
-    right: &<E as Pairing>::TargetField,
-) {
-    let one = <E as Pairing>::TargetField::one();
-    if left == &one {
-        *left = right.clone();
-        return;
-    } else if right == &one {
+
+fn mul_assign_if_not_one<F: Field>(left: &mut F, right: &F) {
+    if left.is_one() {
+        *left = *right;
+    } else if right.is_one() {
         // nothing to do here
-        return;
+    } else {
+        *left *= right;
     }
-    left.mul_assign(right);
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
     use ark_bls12_381::{Bls12_381 as Bls12, G1Projective, G2Projective};
+    use ark_ec::CurveGroup;
     use ark_std::{rand::Rng, UniformRand};
     use rand_core::SeedableRng;
 
-    fn gen_pairing_check<R: Rng + Send>(r: &mut R) -> PairingCheck<Bls12> {
-        let g1r = G1Projective::rand(r);
-        let g2r = G2Projective::rand(r);
-        let exp = Bls12::pairing(g1r.clone(), g2r.clone());
-        let mr = Mutex::new(r);
-        let tuple =
-            PairingCheck::<Bls12>::rand(&mr, &[(&g1r.into_affine(), &g2r.into_affine())], &exp.0);
+    fn gen_pairing_check(mut r: impl Rng) -> PairingCheck<Bls12> {
+        let g1r = G1Projective::rand(&mut r);
+        let g2r = G2Projective::rand(&mut r);
+        let exp = Bls12::pairing(g1r, g2r);
+        let tuple = PairingCheck::<Bls12>::rand(&mut r, &[(g1r.into_affine(), g2r.into_affine())], &exp.0);
         assert!(tuple.verify());
         tuple
     }
+
     #[test]
     fn test_pairing_randomize() {
         let mut rng = rand_chacha::ChaChaRng::seed_from_u64(0u64);

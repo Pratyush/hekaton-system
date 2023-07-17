@@ -5,8 +5,7 @@ use ark_ff::CyclotomicMultSubgroup;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{
     fmt::Debug,
-    ops::{AddAssign, MulAssign},
-    vec::Vec,
+    vec::Vec, cfg_iter,
 };
 use rayon::prelude::*;
 /// This module implements two binding commitment schemes used in the Groth16
@@ -56,10 +55,7 @@ pub type VKey<E> = Key<<E as Pairing>::G2Affine>;
 /// It contains $\{g^{a^{n+i}}\}_{i=1}^n$ and $\{g^{b^{n+i}}\}_{i=1}^n$
 pub type WKey<E> = Key<<E as Pairing>::G1Affine>;
 
-impl<G> Key<G>
-where
-    G: AffineRepr,
-{
+impl<G: AffineRepr> Key<G> {
     /// Returns true if commitment keys have the exact required length.
     /// It is necessary for the IPP scheme to work that commitment
     /// key have the exact same number of arguments as the number of proofs to
@@ -70,15 +66,13 @@ where
 
     /// Returns both vectors scaled by the given vector entrywise.
     /// In other words, it returns $\{v_i^{s_i}\}$
-    pub fn scale(&self, s_vec: &[G::ScalarField]) -> Result<Self, Error> {
-        if self.a.len() != s_vec.len() {
+    pub fn scale(&self, s: &[G::ScalarField]) -> Result<Self, Error> {
+        if self.a.len() != s.len() {
             return Err(Error::InvalidKeyLength);
         }
-        let (a, b) = self
-            .a
-            .par_iter()
-            .zip(self.b.par_iter())
-            .zip(s_vec.par_iter())
+        let (a, b) = cfg_iter!(self.a)
+            .zip(&self.b)
+            .zip(s)
             .map(|((ap, bp), si)| {
                 let v1s = ap.mul(si).into_affine();
                 let v2s = bp.mul(si).into_affine();
@@ -86,7 +80,7 @@ where
             })
             .unzip();
 
-        Ok(Self { a: a, b: b })
+        Ok(Self { a, b })
     }
 
     /// Returns the left and right commitment key part. It makes copy.
@@ -113,22 +107,16 @@ where
         if left.a.len() != right.a.len() {
             return Err(Error::InvalidKeyLength);
         }
-        let (a, b): (Vec<G>, Vec<G>) = left
-            .a
-            .par_iter()
-            .zip(left.b.par_iter())
-            .zip(right.a.par_iter())
-            .zip(right.b.par_iter())
-            .map(|(((left_a, left_b), right_a), right_b)| {
-                let mut ra = right_a.mul(scale);
-                let mut rb = right_b.mul(scale);
-                ra.add_assign(left_a);
-                rb.add_assign(left_b);
-                (ra.into_affine(), rb.into_affine())
-            })
+        let (a, b): (Vec<G::Group>, Vec<G::Group>) = cfg_iter!(&left.a)
+            .zip(&left.b)
+            .zip(&right.a)
+            .zip(&right.b)
+            .map(|(((l_a, l_b), &r_a), &r_b)| (r_a * scale + l_a, r_b * scale + l_b))
             .unzip();
+        let a = G::Group::normalize_batch(&a);
+        let b = G::Group::normalize_batch(&b);
 
-        Ok(Self { a: a, b: b })
+        Ok(Self { a, b })
     }
 
     /// Returns the first values in the vector of v1 and v2 (respectively
@@ -179,12 +167,7 @@ pub fn pair<E: Pairing>(
         let u1 = ip::pairing::<E>(a, &vkey.b),
         let u2 = ip::pairing::<E>(&wkey.b, b)
     };
-    // (A * v)(w * B)
-    let mut t1 = t1.0;
-    let mut u1 = u1.0;
-    t1.mul_assign(&t2.0);
-    u1.mul_assign(&u2.0);
-    Ok(Output(t1, u1))
+    Ok(Output(t1.0 * t2.0, u1.0 * u2.0))
 }
 
 #[cfg(test)]

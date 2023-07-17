@@ -3,7 +3,9 @@ use ark_ec::{
     pairing::{MillerLoopOutput, Pairing, PairingOutput},
     AffineRepr, VariableBaseMSM,
 };
-use ark_std::vec::Vec;
+use ark_std::{vec::Vec, cfg_iter};
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 
 pub(crate) fn pairing_miller_affine<E: Pairing>(
     left: &[E::G1Affine],
@@ -12,12 +14,10 @@ pub(crate) fn pairing_miller_affine<E: Pairing>(
     if left.len() != right.len() {
         return Err(Error::InvalidIPVectorLength);
     }
-    let left = left
-        .iter()
+    let left = cfg_iter!(left)
         .map(|e| E::G1Prepared::from(*e))
         .collect::<Vec<_>>();
-    let right = right
-        .iter()
+    let right = cfg_iter!(right)
         .map(|e| E::G2Prepared::from(*e))
         .collect::<Vec<_>>();
 
