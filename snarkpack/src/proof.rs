@@ -1,4 +1,4 @@
-use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup};
+use ark_ec::{pairing::{Pairing, PairingOutput}, AffineRepr, CurveGroup};
 use ark_serialize::{
     CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Valid, Validate,
 };
@@ -6,7 +6,7 @@ use std::io::{Read, Write};
 
 use super::Error;
 use super::{
-    commitment::{self, Output},
+    commitment::{self, Commitment},
     srs,
 };
 
@@ -17,11 +17,11 @@ use super::{
 pub struct AggregateProof<E: Pairing> {
     /// commitment to A and B using the pair commitment scheme needed to verify
     /// TIPP relation.
-    pub com_ab: commitment::Output<<E as Pairing>::TargetField>,
+    pub com_ab: commitment::Commitment<E>,
     /// commit to C separate since we use it only in MIPP
-    pub com_c: commitment::Output<<E as Pairing>::TargetField>,
+    pub com_c: commitment::Commitment<E>,
     /// $A^r * B = Z$ is the left value on the aggregated Groth16 equation
-    pub ip_ab: <E as Pairing>::TargetField,
+    pub ip_ab: PairingOutput<E>,
     /// $C^r$ is used on the right side of the aggregated Groth16 equation
     pub agg_c: E::G1Affine,
     pub tmipp: TippMippProof<E>,
@@ -92,15 +92,9 @@ impl<E: Pairing> AggregateProof<E> {
 #[derive(Debug, Clone)]
 pub struct GipaProof<E: Pairing> {
     pub nproofs: u32,
-    pub comms_ab: Vec<(
-        commitment::Output<<E as Pairing>::TargetField>,
-        commitment::Output<<E as Pairing>::TargetField>,
-    )>,
-    pub comms_c: Vec<(
-        commitment::Output<<E as Pairing>::TargetField>,
-        commitment::Output<<E as Pairing>::TargetField>,
-    )>,
-    pub z_ab: Vec<(<E as Pairing>::TargetField, <E as Pairing>::TargetField)>,
+    pub comms_ab: Vec<(commitment::Commitment<E>, commitment::Commitment<E>)>,
+    pub comms_c: Vec<(commitment::Commitment<E>, commitment::Commitment<E>)>,
+    pub z_ab: Vec<(PairingOutput<E>, PairingOutput<E>)>,
     pub z_c: Vec<(E::G1Affine, E::G1Affine)>,
     pub final_a: E::G1Affine,
     pub final_b: E::G2Affine,
@@ -231,12 +225,12 @@ where
             let mut comms_ab = Vec::with_capacity(log_proofs);
             for _ in 0..log_proofs {
                 comms_ab.push((
-                    Output::<<E as Pairing>::TargetField>::deserialize_with_mode(
+                    Commitment::<E>::deserialize_with_mode(
                         &mut source,
                         compress,
                         validate,
                     )?,
-                    Output::<<E as Pairing>::TargetField>::deserialize_with_mode(
+                    Commitment::<E>::deserialize_with_mode(
                         &mut source,
                         compress,
                         validate,
@@ -247,12 +241,12 @@ where
             let mut comms_c = Vec::with_capacity(log_proofs);
             for _ in 0..log_proofs {
                 comms_c.push((
-                    Output::<<E as Pairing>::TargetField>::deserialize_with_mode(
+                    Commitment::<E>::deserialize_with_mode(
                         &mut source,
                         compress,
                         validate,
                     )?,
-                    Output::<<E as Pairing>::TargetField>::deserialize_with_mode(
+                    Commitment::<E>::deserialize_with_mode(
                         &mut source,
                         compress,
                         validate,
@@ -263,12 +257,12 @@ where
             let mut z_ab = Vec::with_capacity(log_proofs);
             for _ in 0..log_proofs {
                 z_ab.push((
-                    <E as Pairing>::TargetField::deserialize_with_mode(
+                    PairingOutput::deserialize_with_mode(
                         &mut source,
                         compress,
                         validate,
                     )?,
-                    <E as Pairing>::TargetField::deserialize_with_mode(
+                    PairingOutput::deserialize_with_mode(
                         &mut source,
                         compress,
                         validate,
@@ -359,7 +353,7 @@ impl<G: AffineRepr> KZGOpening<G> {
 mod tests {
     use super::*;
 
-    use crate::commitment::Output as O;
+    use crate::commitment::Commitment as O;
     use ark_bls12_381::{Bls12_381 as Bls12, G1Affine, G2Affine};
 
     fn fake_proof() -> AggregateProof<Bls12> {
@@ -369,16 +363,16 @@ mod tests {
         let a = Bls12::pairing(p, q);
 
         let proof = AggregateProof::<Bls12> {
-            com_ab: O(a.0, a.0),
-            com_c: O(a.0, a.0),
-            ip_ab: a.0,
+            com_ab: O(a, a),
+            com_c: O(a, a),
+            ip_ab: a,
             agg_c: G1Affine::generator(),
             tmipp: TippMippProof::<Bls12> {
                 gipa: GipaProof {
                     nproofs: 4,
-                    comms_ab: vec![(O(a.0, a.0), O(a.0, a.0)), (O(a.0, a.0), O(a.0, a.0))],
-                    comms_c: vec![(O(a.0, a.0), O(a.0, a.0)), (O(a.0, a.0), O(a.0, a.0))],
-                    z_ab: vec![(a.0, a.0), (a.0, a.0)],
+                    comms_ab: vec![(O(a, a), O(a, a)), (O(a, a), O(a, a))],
+                    comms_c: vec![(O(a, a), O(a, a)), (O(a, a), O(a, a))],
+                    z_ab: vec![(a, a), (a, a)],
                     z_c: vec![
                         (G1Affine::generator(), G1Affine::generator()),
                         (G1Affine::generator(), G1Affine::generator()),
@@ -423,7 +417,7 @@ mod tests {
             .tmipp
             .gipa
             .comms_ab
-            .append(&mut vec![(Output(a.0, a.0), Output(a.0, a.0))]);
+            .append(&mut vec![(Commitment(a, a), Commitment(a, a))]);
         proof.parsing_check().expect_err("Proof should be invalid");
     }
 }

@@ -7,6 +7,7 @@ mod ip;
 mod pairing_check;
 mod proof;
 mod prover;
+mod utils;
 pub mod srs;
 pub mod transcript;
 mod verifier;

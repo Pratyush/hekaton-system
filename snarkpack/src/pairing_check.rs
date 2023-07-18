@@ -1,6 +1,10 @@
 use ark_ec::pairing::{MillerLoopOutput, Pairing, PairingOutput};
 use ark_ff::Field;
-use ark_std::{rand::Rng, One, UniformRand, Zero};
+use ark_std::{rand::Rng, One, UniformRand, Zero, cfg_iter};
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
+
+use crate::utils;
 
 /// PairingCheck represents a check of the form e(A,B)e(C,D)... = T. Checks can
 /// be aggregated together using random linear combination. The efficiency comes
@@ -13,8 +17,8 @@ use ark_std::{rand::Rng, One, UniformRand, Zero};
 /// be compared to the left side when "final_exponentiatiat"-ed
 #[derive(Debug, Copy, Clone)]
 pub struct PairingCheck<E: Pairing> {
-    left: <E as Pairing>::TargetField,
-    right: <E as Pairing>::TargetField,
+    left: MillerLoopOutput<E>,
+    right: PairingOutput<E>,
     /// simple counter tracking number of non_randomized checks. If there are
     /// more than 1 non randomized check, it is invalid.
     non_randomized: u8,
@@ -26,19 +30,10 @@ where
 {
     pub(crate) fn new() -> PairingCheck<E> {
         Self {
-            left: <E as Pairing>::TargetField::one(),
-            right: <E as Pairing>::TargetField::one(),
+            left: MillerLoopOutput(E::TargetField::ONE),
+            right: PairingOutput::default(),
             // a fixed "1 = 1" check doesn't count
             non_randomized: 0,
-        }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn new_invalid() -> PairingCheck<E> {
-        Self {
-            left: <E as Pairing>::TargetField::one(),
-            right: <E as Pairing>::TargetField::one() + <E as Pairing>::TargetField::one(),
-            non_randomized: 2,
         }
     }
 
@@ -51,8 +46,8 @@ where
     /// Note the check is NOT randomized and there must be only up to ONE check
     /// only that can not be randomized when merging.
     fn from_pair(
-        result: <E as Pairing>::TargetField,
-        exp: <E as Pairing>::TargetField,
+        result: MillerLoopOutput<E>,
+        exp: PairingOutput<E>,
     ) -> PairingCheck<E> {
         Self {
             left: result,
@@ -70,19 +65,19 @@ where
     /// Note the check is NOT randomized and there must be only up to ONE check
     /// only that can not be randomized when merging.
     pub fn from_products(
-        lefts: Vec<<E as Pairing>::TargetField>,
-        right: <E as Pairing>::TargetField,
+        lefts: Vec<MillerLoopOutput<E>>,
+        right: PairingOutput<E>,
     ) -> PairingCheck<E> {
         let product = lefts
             .iter()
-            .fold(<E as Pairing>::TargetField::one(), |mut acc, l| {
-                acc *= l;
+            .fold(MillerLoopOutput(E::TargetField::one()), |mut acc, l| {
+                acc.0 *= l.0;
                 acc
             });
         Self::from_pair(product, right)
     }
 
-    /// returns a pairing tuple that is scaled by a random element.
+    /// returns a pairing tuple that is scaled by a random element sampled by hashing the inputs.
     /// When aggregating pairing checks, this creates a random linear
     /// combination of all checks so that it is secure. Specifically
     /// we have e(A,B)e(C,D)... = out <=> e(g,h)^{ab + cd} = out
@@ -90,28 +85,24 @@ where
     /// e(rA,B)e(rC,D) ... = out^r <=>
     /// e(A,B)^r e(C,D)^r = out^r <=> e(g,h)^{abr + cdr} = out^r
     /// (e(g,h)^{ab + cd})^r = out^r
-    #[cfg(test)]
     pub fn rand(
-        rng: impl Rng,
         it: &[(E::G1Affine, E::G2Affine)],
-        out: &E::TargetField,
+        out: PairingOutput<E>,
     ) -> PairingCheck<E> {
-        #[cfg(test)]
-        use ark_ff::PrimeField;
-        #[cfg(test)]
-        use rayon::prelude::*;
+
+        let rng = utils::rng_from_seed_bytes((it, out));
 
         let coeff: E::ScalarField = rand_scalar::<E>(rng);
-        let miller_out = it
-            .into_par_iter()
+        let miller_out = cfg_iter!(it)
             .map(|&(a, b)| E::miller_loop(a * coeff, b).0)
             .product();
-        let out = if !out.is_one() {
+        let miller_out = MillerLoopOutput(miller_out);
+        let out = if !out.is_zero() {
             // we only need to make this expensive operation is the output is
             // not one since 1^r = 1
-            out.pow(&coeff.into_bigint())
+            out * coeff
         } else {
-            *out
+            out
         };
         PairingCheck {
             left: miller_out,
@@ -123,8 +114,8 @@ where
     /// takes another pairing tuple and combine both sides together. Note the checks are not
     /// randomized when merged, the checks must have been randomized before.
     pub(crate) fn merge(&mut self, p2: &PairingCheck<E>) {
-        mul_assign_if_not_one(&mut self.left, &p2.left);
-        mul_assign_if_not_one(&mut self.right, &p2.right);
+        mul_assign_if_not_one(&mut self.left.0, &p2.left.0);
+        mul_assign_if_not_one(&mut self.right.0, &p2.right.0);
         // A merged PairingCheck is only randomized if both of its contributors are.
         self.non_randomized += p2.non_randomized;
     }
@@ -142,7 +133,7 @@ where
             ));
             return false;
         }
-        E::final_exponentiation(MillerLoopOutput(self.left)) == Some(PairingOutput(self.right))
+        E::final_exponentiation(self.left) == Some(self.right)
     }
 }
 
@@ -177,8 +168,7 @@ mod test {
         let g1r = G1Projective::rand(&mut r);
         let g2r = G2Projective::rand(&mut r);
         let exp = Bls12::pairing(g1r, g2r);
-        let tuple =
-            PairingCheck::<Bls12>::rand(&mut r, &[(g1r.into_affine(), g2r.into_affine())], &exp.0);
+        let tuple = PairingCheck::<Bls12>::rand(&[(g1r.into_affine(), g2r.into_affine())], exp);
         assert!(tuple.verify());
         tuple
     }

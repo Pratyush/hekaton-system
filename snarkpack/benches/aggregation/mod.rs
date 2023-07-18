@@ -48,7 +48,6 @@ pub fn groth16_aggregation() {
         &pvk,
         &all_inputs,
         &aggregate_proof,
-        &mut rng,
         &mut ver_transcript,
     )
     .expect("error in verification");

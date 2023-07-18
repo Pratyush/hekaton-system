@@ -2,7 +2,7 @@ use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup, VariableBaseMSM};
 use ark_ff::{Field, One};
 use ark_groth16::Proof;
 use ark_poly::polynomial::{univariate::DensePolynomial, DenseUVPolynomial};
-use ark_std::Zero;
+use ark_std::{Zero, cfg_iter};
 
 use rayon::prelude::*;
 use std::ops::{AddAssign, MulAssign, Neg};
@@ -49,11 +49,9 @@ pub fn aggregate_proofs<E: Pairing + std::fmt::Debug, T: Transcript>(
     }
     // We first commit to A B and C - these commitments are what the verifier
     // will use later to verify the TIPP and MIPP proofs
-    par! {
-        let a = proofs.iter().map(|proof| proof.a).collect::<Vec<_>>(),
-        let b = proofs.iter().map(|proof| proof.b).collect::<Vec<_>>(),
-        let c = proofs.iter().map(|proof| proof.c).collect::<Vec<_>>()
-    };
+    let a = cfg_iter!(proofs).map(|proof| proof.a).collect::<Vec<_>>();
+    let b = cfg_iter!(proofs).map(|proof| proof.b).collect::<Vec<_>>();
+    let c = cfg_iter!(proofs).map(|proof| proof.c).collect::<Vec<_>>();
 
     // A and B are committed together in this scheme
     // we need to take the reference so the macro doesn't consume the value
@@ -62,8 +60,8 @@ pub fn aggregate_proofs<E: Pairing + std::fmt::Debug, T: Transcript>(
     let refb = &b;
     let refc = &c;
     try_par! {
-        let com_ab = commitment::pair::<E>(&srs.vkey, &srs.wkey, refa, refb),
-        let com_c = commitment::single_g1::<E>(&srs.vkey, refc)
+        let com_ab = commitment::commit_double::<E>(&srs.vkey, &srs.wkey, refa, refb),
+        let com_c = commitment::commit_single::<E>(&srs.vkey, refc)
     };
 
     // Derive a random scalar to perform a linear combination of proofs
@@ -111,14 +109,14 @@ pub fn aggregate_proofs<E: Pairing + std::fmt::Debug, T: Transcript>(
         &agg_c,
     )?;
     debug_assert!({
-        let computed_com_ab = commitment::pair::<E>(&srs.vkey, &wkey_r_inv, &a, &b_r).unwrap();
+        let computed_com_ab = commitment::commit_double::<E>(&srs.vkey, &wkey_r_inv, &a, &b_r).unwrap();
         com_ab == computed_com_ab
     });
 
     Ok(AggregateProof {
         com_ab,
         com_c,
-        ip_ab: ip_ab.0,
+        ip_ab,
         agg_c,
         tmipp: proof,
     })
@@ -251,8 +249,8 @@ fn gipa_tipp_mipp<E: Pairing>(
         // See section 3.3 for paper version with equivalent names
         try_par! {
             // TIPP part
-            let tab_l = commitment::pair::<E>(&rvk_left, &rwk_right, &ra_right, &rb_left),
-            let tab_r = commitment::pair::<E>(&rvk_right, &rwk_left, &ra_left, &rb_right),
+            let tab_l = commitment::commit_double::<E>(&rvk_left, &rwk_right, &ra_right, &rb_left),
+            let tab_r = commitment::commit_double::<E>(&rvk_right, &rwk_left, &ra_left, &rb_right),
             // \prod e(A_right,B_left)
             let zab_l = ip::pairing::<E>(&ra_right, &rb_left),
             let zab_r = ip::pairing::<E>(&ra_left, &rb_right),
@@ -263,9 +261,9 @@ fn gipa_tipp_mipp<E: Pairing>(
             // Z_r = c[:n'] ^ r[n':]
             let zc_r = ip::multiexponentiation::<E::G1Affine>(rc_left, rr_right),
             // u_l = c[n':] * v[:n']
-            let tuc_l = commitment::single_g1::<E>(&rvk_left, rc_right),
+            let tuc_l = commitment::commit_single::<E>(&rvk_left, rc_right),
             // u_r = c[:n'] * v[n':]
-            let tuc_r = commitment::single_g1::<E>(&rvk_right, rc_left)
+            let tuc_r = commitment::commit_single::<E>(&rvk_right, rc_left)
         };
 
         // Fiat-Shamir challenge
@@ -316,7 +314,7 @@ fn gipa_tipp_mipp<E: Pairing>(
 
         comms_ab.push((tab_l, tab_r));
         comms_c.push((tuc_l, tuc_r));
-        z_ab.push((zab_l.0, zab_r.0));
+        z_ab.push((zab_l, zab_r));
         z_c.push((zc_l.into_affine(), zc_r.into_affine()));
         challenges.push(c);
         challenges_inv.push(c_inv);

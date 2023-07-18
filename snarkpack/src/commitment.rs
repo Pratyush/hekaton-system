@@ -1,7 +1,6 @@
 use crate::ip;
 use crate::Error;
-use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup};
-use ark_ff::CyclotomicMultSubgroup;
+use ark_ec::{pairing::{Pairing, PairingOutput}, AffineRepr, CurveGroup};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{cfg_iter, fmt::Debug, vec::Vec};
 use rayon::prelude::*;
@@ -126,36 +125,33 @@ impl<G: AffineRepr> Key<G> {
 
 /// Both commitment outputs a pair of $F_q^k$ element.
 #[derive(PartialEq, CanonicalSerialize, CanonicalDeserialize, Clone, Debug)]
-pub struct Output<F: CanonicalSerialize + CanonicalDeserialize + CyclotomicMultSubgroup>(
-    pub F,
-    pub F,
+pub struct Commitment<E: Pairing>(
+    pub PairingOutput<E>,
+    pub PairingOutput<E>,
 );
 
 /// Commits to a single vector of G1 elements in the following way:
 /// $T = \prod_{i=0}^n e(A_i, v_{1,i})$
 /// $U = \prod_{i=0}^n e(A_i, v_{2,i})$
 /// Output is $(T,U)$
-pub fn single_g1<E: Pairing>(
-    vkey: &VKey<E>,
-    a_vec: &[E::G1Affine],
-) -> Result<Output<<E as Pairing>::TargetField>, Error> {
+pub fn commit_single<E: Pairing>(vkey: &VKey<E>, a_vec: &[E::G1Affine]) -> Result<Commitment<E>, Error> {
     try_par! {
         let a = ip::pairing::<E>(a_vec, &vkey.a),
         let b = ip::pairing::<E>(a_vec, &vkey.b)
     };
-    Ok(Output(a.0, b.0))
+    Ok(Commitment(a, b))
 }
 
 /// Commits to a tuple of G1 vector and G2 vector in the following way:
 /// $T = \prod_{i=0}^n e(A_i, v_{1,i})e(B_i,w_{1,i})$
 /// $U = \prod_{i=0}^n e(A_i, v_{2,i})e(B_i,w_{2,i})$
 /// Output is $(T,U)$
-pub fn pair<E: Pairing>(
+pub fn commit_double<E: Pairing>(
     vkey: &VKey<E>,
     wkey: &WKey<E>,
     a: &[E::G1Affine],
     b: &[E::G2Affine],
-) -> Result<Output<<E as Pairing>::TargetField>, Error> {
+) -> Result<Commitment<E>, Error> {
     try_par! {
         // (A * v)
         let t1 = ip::pairing::<E>(a, &vkey.a),
@@ -164,7 +160,7 @@ pub fn pair<E: Pairing>(
         let u1 = ip::pairing::<E>(a, &vkey.b),
         let u2 = ip::pairing::<E>(&wkey.b, b)
     };
-    Ok(Output(t1.0 * t2.0, u1.0 * u2.0))
+    Ok(Commitment(t1 + t2, u1 + u2))
 }
 
 #[cfg(test)]
@@ -189,13 +185,13 @@ mod tests {
         let a = (0..n)
             .map(|_| G1Projective::rand(&mut rng).into_affine())
             .collect::<Vec<_>>();
-        let c1 = single_g1::<Bls12>(&vkey, &a).unwrap();
-        let c2 = single_g1::<Bls12>(&vkey, &a).unwrap();
+        let c1 = commit_single::<Bls12>(&vkey, &a).unwrap();
+        let c2 = commit_single::<Bls12>(&vkey, &a).unwrap();
         assert_eq!(c1, c2);
         let b = (0..n)
             .map(|_| G1Projective::rand(&mut rng).into_affine())
             .collect::<Vec<_>>();
-        let c3 = single_g1::<Bls12>(&vkey, &b).unwrap();
+        let c3 = commit_single::<Bls12>(&vkey, &b).unwrap();
         assert!(c1 != c3);
     }
 
@@ -223,9 +219,9 @@ mod tests {
         let b = (0..n)
             .map(|_| G2Projective::rand(&mut rng).into_affine())
             .collect::<Vec<_>>();
-        let c1 = pair::<Bls12>(&vkey, &wkey, &a, &b).unwrap();
-        let c2 = pair::<Bls12>(&vkey, &wkey, &a, &b).unwrap();
+        let c1 = commit_double::<Bls12>(&vkey, &wkey, &a, &b).unwrap();
+        let c2 = commit_double::<Bls12>(&vkey, &wkey, &a, &b).unwrap();
         assert_eq!(c1, c2);
-        pair::<Bls12>(&vkey, &wkey, &a[1..2], &b).expect_err("this should have failed");
+        commit_double::<Bls12>(&vkey, &wkey, &a[1..2], &b).expect_err("this should have failed");
     }
 }

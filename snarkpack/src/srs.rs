@@ -71,7 +71,7 @@ pub struct ProverSRS<E: Pairing> {
 /// regardless of the number of proofs aggregated. However, a verifier SRS will be determined by
 /// the number of proofs being aggregated.
 #[derive(Clone, Debug)]
-pub struct VerifierSRS<E: Pairing> {
+pub struct VerifierKey<E: Pairing> {
     pub n: usize,
     pub g: E::G1,
     pub h: E::G2,
@@ -90,7 +90,7 @@ impl<E: Pairing> PartialEq for GenericSRS<E> {
     }
 }
 
-impl<E: Pairing> PartialEq for VerifierSRS<E> {
+impl<E: Pairing> PartialEq for VerifierKey<E> {
     fn eq(&self, other: &Self) -> bool {
         self.g == other.g
             && self.h == other.h
@@ -116,7 +116,7 @@ impl<E: Pairing> GenericSRS<E> {
     /// proofs to aggregate. The number of proofs MUST BE a power of two, it
     /// panics otherwise. The number of proofs must be inferior to half of the
     /// size of the generic srs otherwise it panics.
-    pub fn specialize(&self, num_proofs: usize) -> (ProverSRS<E>, VerifierSRS<E>) {
+    pub fn specialize(&self, num_proofs: usize) -> (ProverSRS<E>, VerifierKey<E>) {
         assert!(num_proofs.is_power_of_two());
         let tn = 2 * num_proofs; // size of the CRS we need
         assert!(self.g_alpha_powers.len() >= tn);
@@ -162,7 +162,7 @@ impl<E: Pairing> GenericSRS<E> {
             wkey,
             n,
         };
-        let vk = VerifierSRS::<E> {
+        let vk = VerifierKey::<E> {
             n,
             g: self.g_alpha_powers[0].into_group(),
             h: self.h_alpha_powers[0].into_group(),

@@ -1,18 +1,18 @@
-use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup, VariableBaseMSM};
-use ark_ff::{Field, PrimeField};
+use ark_ec::{pairing::{Pairing, PairingOutput}, AffineRepr, CurveGroup, VariableBaseMSM};
+use ark_ff::Field;
 use ark_groth16::PreparedVerifyingKey;
-use ark_std::{rand::Rng, sync::Mutex, One, Zero};
+use ark_std::{One, Zero};
 use crossbeam_channel::{bounded, Sender};
 use rayon::prelude::*;
 use std::ops::{AddAssign, Mul, MulAssign, Neg, SubAssign};
 
 use super::{
-    commitment::Output,
+    commitment::Commitment,
     ip,
     pairing_check::PairingCheck,
     proof::{AggregateProof, KZGOpening},
     prover::polynomial_evaluation_product_form_from_transcript,
-    srs::VerifierSRS,
+    srs::VerifierKey,
     structured_scalar_power,
     transcript::Transcript,
 };
@@ -24,23 +24,11 @@ use std::time::Instant;
 /// Verifies the aggregated proofs thanks to the Groth16 verifying key, the
 /// verifier SRS from the aggregation scheme, all the public inputs of the
 /// proofs and the aggregated proof.
-///
-/// WARNING: transcript_include represents everything that should be included in
-/// the transcript from outside the boundary of this function. This is especially
-/// relevant for ALL public inputs of ALL individual proofs. In the regular case,
-/// one should input ALL public inputs from ALL proofs aggregated. However, IF ALL the
-/// public inputs are **fixed, and public before the aggregation time**, then there is
-/// no need to hash those. The reason we specify this extra assumption is because hashing
-/// the public inputs from the decoded form can take quite some time depending on the
-/// number of proofs and public inputs (+100ms in our case). In the case of Filecoin, the only
-/// non-fixed part of the public inputs are the challenges derived from a seed. Even though this
-/// seed comes from a random beeacon, we are hashing this as a safety precaution.
-pub fn verify_aggregate_proof<E: Pairing + std::fmt::Debug, R: Rng + Send, T: Transcript + Send>(
-    ip_verifier_srs: &VerifierSRS<E>,
+pub fn verify_aggregate_proof<E: Pairing, T: Transcript + Send>(
+    ip_vk: &VerifierKey<E>,
     pvk: &PreparedVerifyingKey<E>,
     public_inputs: &[Vec<<E as Pairing>::ScalarField>],
     proof: &AggregateProof<E>,
-    rng: R,
     mut transcript: &mut T,
 ) -> Result<(), Error> {
     dbg!("verify_aggregate_proof");
@@ -57,8 +45,6 @@ pub fn verify_aggregate_proof<E: Pairing + std::fmt::Debug, R: Rng + Send, T: Tr
         ));
     }
 
-    let mut_rng = Mutex::new(rng);
-
     // Random linear combination of proofs
     transcript.append(b"AB-commitment", &proof.com_ab);
     transcript.append(b"C-commitment", &proof.com_c);
@@ -74,23 +60,24 @@ pub fn verify_aggregate_proof<E: Pairing + std::fmt::Debug, R: Rng + Send, T: Tr
         s.spawn(move |_| {
             let mut acc = PairingCheck::new();
             while let Ok(tuple) = rcv_checks.recv() {
-                acc.merge(&tuple);
+                if let Some(tuple) = tuple {
+                    acc.merge(&tuple);
+                }
             }
             valid_send.send(acc.verify()).unwrap();
         });
 
         // 1.Check TIPA proof ab
         // 2.Check TIPA proof c
-        let checkclone = send_checks.clone();
+        let send_checks_copy = send_checks.clone();
         s.spawn(move |_| {
             let now = Instant::now();
-            verify_tipp_mipp::<E, R, T>(
-                ip_verifier_srs,
+            verify_tipp_mipp::<E, T>(
+                ip_vk,
                 proof,
                 &r, // we give the extra r as it's not part of the proof itself - it is simply used on top for the groth16 aggregation
                 &mut transcript,
-                &mut_rng,
-                checkclone,
+                send_checks_copy,
             );
             dbg!("TIPP took {} ms", now.elapsed().as_millis(),);
         });
@@ -169,7 +156,7 @@ pub fn verify_aggregate_proof<E: Pairing + std::fmt::Debug, R: Rng + Send, T: Tr
                         c
                     }).collect::<Vec<_>>();
 
-                    let totsi = <<E as Pairing>::G1 as VariableBaseMSM>::msm(&pvk.vk.gamma_abc_g1[1..],&summed).unwrap();
+                    let totsi = <E::G1 as VariableBaseMSM>::msm(&pvk.vk.gamma_abc_g1[1..],&summed).unwrap();
 
                     g_ic.add_assign(&totsi);
 
@@ -182,9 +169,8 @@ pub fn verify_aggregate_proof<E: Pairing + std::fmt::Debug, R: Rng + Send, T: Tr
         };
         // final value ip_ab is what we want to compare in the groth16
         // aggregated equation A * B
-        let check =
-            PairingCheck::from_products(vec![left.0, middle.0, right.0], proof.ip_ab.clone());
-        send_checks.send(check).unwrap();
+        let check = PairingCheck::from_products(vec![left, middle, right], proof.ip_ab);
+        send_checks.send(Some(check)).unwrap();
     });
     let res = valid_rcv.recv().unwrap();
     dbg!(format!("aggregate verify done: valid ? {}", res));
@@ -197,13 +183,12 @@ pub fn verify_aggregate_proof<E: Pairing + std::fmt::Debug, R: Rng + Send, T: Tr
 /// verify_tipp_mipp returns a pairing equation to check the tipp proof.  $r$ is
 /// the randomness used to produce a random linear combination of A and B and
 /// used in the MIPP part with C
-fn verify_tipp_mipp<E: Pairing, R: Rng + Send, T: Transcript + Send>(
-    v_srs: &VerifierSRS<E>,
+fn verify_tipp_mipp<E: Pairing, T: Transcript + Send>(
+    v_srs: &VerifierKey<E>,
     proof: &AggregateProof<E>,
     r_shift: &E::ScalarField,
     transcript: &mut T,
-    rng: &Mutex<R>,
-    checks: Sender<PairingCheck<E>>,
+    checks: Sender<Option<PairingCheck<E>>>,
 ) {
     dbg!("verify with srs shift");
     let now = Instant::now();
@@ -226,14 +211,14 @@ fn verify_tipp_mipp<E: Pairing, R: Rng + Send, T: Transcript + Send>(
     transcript.append(b"wkey1", &proof.tmipp.gipa.final_wkey.1);
     let c = transcript.challenge_scalar::<E::ScalarField>(b"z-challenge");
     // we take reference so they are able to be copied in the par! macro
-    let final_a = &proof.tmipp.gipa.final_a;
-    let final_b = &proof.tmipp.gipa.final_b;
-    let final_c = &proof.tmipp.gipa.final_c;
-    let final_zab = &final_res.zab;
-    let final_tab = &final_res.tab;
-    let final_uab = &final_res.uab;
-    let final_tc = &final_res.tc;
-    let final_uc = &final_res.uc;
+    let final_a = proof.tmipp.gipa.final_a;
+    let final_b = proof.tmipp.gipa.final_b;
+    let final_c = proof.tmipp.gipa.final_c;
+    let final_zab = final_res.z_ab;
+    let final_tab = final_res.t_ab;
+    let final_uab = final_res.u_ab;
+    let final_tc = final_res.t_c;
+    let final_uc = final_res.u_c;
 
     let now = Instant::now();
     let vclone = checks.clone();
@@ -251,7 +236,6 @@ fn verify_tipp_mipp<E: Pairing, R: Rng + Send, T: Transcript + Send>(
             &proof.tmipp.vkey_opening,
             &challenges_inv,
             &c,
-            rng,
             vclone,
         ),
         // check the opening proof for w - note that w has been rescaled by $r^{-1}$
@@ -262,7 +246,6 @@ fn verify_tipp_mipp<E: Pairing, R: Rng + Send, T: Transcript + Send>(
             &challenges,
             &r_shift.inverse().unwrap(),
             &c,
-            rng,
             wclone,
         ),
         //
@@ -272,38 +255,37 @@ fn verify_tipp_mipp<E: Pairing, R: Rng + Send, T: Transcript + Send>(
         // TIPP
         // z = e(A,B)
         //let _check_z = zclone.send(PairingCheck::rand(&rng,&[(final_a, final_b)], final_zab)).unwrap(),
-        let pcheckz = PairingCheck::rand(&rng,&[(final_a, final_b)], final_zab),
+        let pcheckz = PairingCheck::rand(&[(final_a, final_b)], final_zab),
         //  final_aB.0 = T = e(A,v1)e(w1,B)
         //let check_ab0 = ab0clone.send(PairingCheck::rand(&rng,&[(final_a, &fvkey.0),(&fwkey.0, final_b)], final_tab)).unwrap(),
-        let pcheck_ab = PairingCheck::rand(&rng,&[(final_a, &fvkey.0),(&fwkey.0, final_b)], final_tab),
+        let pcheck_ab = PairingCheck::rand(&[(final_a, fvkey.0),(fwkey.0, final_b)], final_tab),
 
         //  final_aB.1 = U = e(A,v2)e(w2,B)
         //let _check_ab1 = ab1clone.send(PairingCheck::rand(&rng,&[(final_a, &fvkey.1),(&fwkey.1, final_b)], final_uab)).unwrap(),
-        let pcheckab2 = PairingCheck::rand(&rng,&[(final_a, &fvkey.1),(&fwkey.1, final_b)], final_uab),
+        let pcheckab2 = PairingCheck::rand(&[(final_a, fvkey.1),(fwkey.1, final_b)], final_uab),
 
         // MIPP
         // Verify base inner product commitment
         // Z ==  c ^ r
-        let final_z =
-            ip::multiexponentiation::<E::G1Affine>(&[final_c.clone()], &[final_r]),
+        let final_z = ip::multiexponentiation::<E::G1Affine>(&[final_c.clone()], &[final_r]),
         // Check commiment correctness
         // T = e(C,v1)
         //let _check_t = tclone.send(PairingCheck::rand(&rng,&[(final_c,&fvkey.0)],final_tc)).unwrap(),
-        let pcheckt = PairingCheck::rand(&rng,&[(final_c,&fvkey.0)],final_tc),
+        let pcheckt = PairingCheck::rand(&[(final_c, fvkey.0)],final_tc),
         // U = e(A,v2)
         //let _check_u = uclone.send(PairingCheck::rand(&rng,&[(final_c,&fvkey.1)],final_uc)).unwrap()
-        let pchecku = PairingCheck::rand(&rng,&[(final_c,&fvkey.1)],final_uc)
+        let pchecku = PairingCheck::rand(&[(final_c, fvkey.1)],final_uc)
     };
 
-    tclone.send(pcheckt).unwrap();
-    uclone.send(pchecku).unwrap();
-    ab0clone.send(pcheck_ab).unwrap();
-    ab1clone.send(pcheckab2).unwrap();
-    zclone.send(pcheckz).unwrap();
+    tclone.send(Some(pcheckt)).unwrap();
+    uclone.send(Some(pchecku)).unwrap();
+    ab0clone.send(Some(pcheck_ab)).unwrap();
+    ab1clone.send(Some(pcheckab2)).unwrap();
+    zclone.send(Some(pcheckz)).unwrap();
     match final_z {
         Err(e) => {
             dbg!("TIPP verify: INVALID with multi exp: {}", e);
-            checks.send(PairingCheck::new_invalid()).unwrap();
+            checks.send(None).unwrap();
         },
         Ok(z) => {
             dbg!(format!(
@@ -312,12 +294,12 @@ fn verify_tipp_mipp<E: Pairing, R: Rng + Send, T: Transcript + Send>(
             ));
             // only check that doesn't require pairing so we can give a tuple
             // that will render the equation wrong in case it's false
-            if z != final_res.zc {
+            if z != final_res.z_c {
                 dbg!(format!(
                     "tipp verify: INVALID final_z check {} vs {}",
-                    z, final_res.zc
+                    z, final_res.z_c
                 ));
-                checks.send(PairingCheck::new_invalid()).unwrap()
+                checks.send(None).unwrap()
             }
         },
     };
@@ -406,111 +388,76 @@ fn gipa_verify_tipp_mipp<E: Pairing, T: Transcript + Send>(
     // output of the pair commitment T and U in TIPP -> COM((v,w),A,B)
     //let comab2 = proof.com_ab.clone();
     //let Output(t_ab, u_ab) = (comab2.0, comab2.1);
-    let Output { 0: t_ab, 1: u_ab } = proof.com_ab.clone();
+    let Commitment(t_ab, u_ab) = proof.com_ab;
     let z_ab = proof.ip_ab; // in the end must be equal to Z = A^r * B
 
     // COM(v,C)
     //let comc2 = proof.com_c.clone();
     //let (t_c, u_c) = (comc2.0, comc2.1);
-    let Output { 0: t_c, 1: u_c } = proof.com_c.clone();
+    let Commitment(t_c, u_c) = proof.com_c.clone();
     let z_c = proof.agg_c.into_group(); // in the end must be equal to Z = C^r
 
     let mut final_res = GipaTUZ {
-        tab: t_ab,
-        uab: u_ab,
-        zab: z_ab,
-        tc: t_c,
-        uc: u_c,
-        zc: z_c,
+        t_ab,
+        u_ab,
+        z_ab,
+        t_c,
+        u_c,
+        z_c,
     };
 
     // we first multiply each entry of the Z U and L vectors by the respective
     // challenges independently
     // Since at the end we want to multiple all "t" values together, we do
-    // multiply all of them in parrallel and then merge then back at the end.
+    // multiply all of them in parallel and then merge then back at the end.
     // same for u and z.
+    #[allow(non_camel_case_types)]
     enum Op<'a, E: Pairing> {
-        TAB(
-            &'a <E as Pairing>::TargetField,
-            <E::ScalarField as PrimeField>::BigInt,
-        ),
-        UAB(
-            &'a <E as Pairing>::TargetField,
-            <E::ScalarField as PrimeField>::BigInt,
-        ),
-        ZAB(
-            &'a <E as Pairing>::TargetField,
-            <E::ScalarField as PrimeField>::BigInt,
-        ),
-        TC(
-            &'a <E as Pairing>::TargetField,
-            <E::ScalarField as PrimeField>::BigInt,
-        ),
-        UC(
-            &'a <E as Pairing>::TargetField,
-            <E::ScalarField as PrimeField>::BigInt,
-        ),
-        ZC(&'a E::G1Affine, <E::ScalarField as PrimeField>::BigInt),
+        T_AB(&'a PairingOutput<E>, E::ScalarField),
+        U_AB(&'a PairingOutput<E>, E::ScalarField),
+        Z_AB(&'a PairingOutput<E>, E::ScalarField),
+        T_C(&'a PairingOutput<E>, E::ScalarField),
+        U_C(&'a PairingOutput<E>, E::ScalarField),
+        Z_C(&'a E::G1Affine, E::ScalarField),
     }
 
     let res = comms_ab
         .par_iter()
-        .zip(zs_ab.par_iter())
-        .zip(comms_c.par_iter().zip(zs_c.par_iter()))
-        .zip(challenges.par_iter().zip(challenges_inv.par_iter()))
-        .flat_map(|(((comm_ab, z_ab), (comm_c, z_c)), (c, c_inv))| {
+        .zip(zs_ab)
+        .zip(comms_c.par_iter().zip(zs_c))
+        .zip(challenges.par_iter().zip(&challenges_inv))
+        .flat_map(|(((comm_ab, z_ab), (comm_c, z_c)), (&c, &c_inv))| {
             // T and U values for right and left for AB part
-            let (Output { 0: tab_l, 1: uab_l }, Output { 0: tab_r, 1: uab_r }) = comm_ab;
-            let (zab_l, zab_r) = z_ab;
+            let (Commitment(ref tab_l, ref uab_l), Commitment (ref tab_r, ref uab_r)) = comm_ab;
+            let (ref zab_l, ref zab_r) = z_ab;
             // T and U values for right and left for C part
-            let (Output { 0: tc_l, 1: uc_l }, Output { 0: tc_r, 1: uc_r }) = comm_c;
-            let (zc_l, zc_r) = z_c;
-
-            let c_repr: <<E as Pairing>::ScalarField as PrimeField>::BigInt = (*c).into();
-            let c_inv_repr: <<E as Pairing>::ScalarField as PrimeField>::BigInt = (*c_inv).into();
+            let (Commitment ( ref tc_l, ref uc_l ), Commitment ( ref tc_r, ref uc_r )) = comm_c;
+            let (ref zc_l, ref zc_r) = z_c;
 
             // we multiple left side by x and right side by x^-1
-            vec![
-                Op::TAB::<E>(tab_l, c_repr),
-                Op::TAB(tab_r, c_inv_repr),
-                Op::UAB(uab_l, c_repr),
-                Op::UAB(uab_r, c_inv_repr),
-                Op::ZAB(zab_l, c_repr),
-                Op::ZAB(zab_r, c_inv_repr),
-                Op::TC::<E>(tc_l, c_repr),
-                Op::TC(tc_r, c_inv_repr),
-                Op::UC(uc_l, c_repr),
-                Op::UC(uc_r, c_inv_repr),
-                Op::ZC(zc_l, c_repr),
-                Op::ZC(zc_r, c_inv_repr),
+            [
+                Op::T_AB::<E>(tab_l, c),
+                Op::T_AB(tab_r, c_inv),
+                Op::U_AB(uab_l, c),
+                Op::U_AB(uab_r, c_inv),
+                Op::Z_AB(zab_l, c),
+                Op::Z_AB(zab_r, c_inv),
+                Op::T_C::<E>(tc_l, c),
+                Op::T_C(tc_r, c_inv),
+                Op::U_C(uc_l, c),
+                Op::U_C(uc_r, c_inv),
+                Op::Z_C(zc_l, c),
+                Op::Z_C(zc_r, c_inv),
             ]
         })
         .fold(GipaTUZ::<E>::default, |mut res, op: Op<E>| {
             match op {
-                Op::TAB(tx, c) => {
-                    let tx: <E as Pairing>::TargetField = tx.pow(c);
-                    res.tab.mul_assign(&tx);
-                },
-                Op::UAB(ux, c) => {
-                    let ux: <E as Pairing>::TargetField = ux.pow(c);
-                    res.uab.mul_assign(&ux);
-                },
-                Op::ZAB(zx, c) => {
-                    let zx: <E as Pairing>::TargetField = zx.pow(c);
-                    res.zab.mul_assign(&zx);
-                },
-                Op::TC(tx, c) => {
-                    let tx: <E as Pairing>::TargetField = tx.pow(c);
-                    res.tc.mul_assign(&tx);
-                },
-                Op::UC(ux, c) => {
-                    let ux: <E as Pairing>::TargetField = ux.pow(c);
-                    res.uc.mul_assign(&ux);
-                },
-                Op::ZC(zx, c) => {
-                    let zxp: E::G1 = zx.mul_bigint(c);
-                    res.zc.add_assign(&zxp);
-                },
+                Op::T_AB(tx, c) => res.t_ab += *tx * c,
+                Op::U_AB(ux, c) => res.u_ab += *ux * c,
+                Op::Z_AB(zx, c) => res.z_ab += *zx * c,
+                Op::T_C(tx, c) => res.t_c += *tx * c,
+                Op::U_C(ux, c) => res.u_c += *ux * c,
+                Op::Z_C(zx, c) => res.z_c += *zx * c,
             }
             res
         })
@@ -544,14 +491,13 @@ fn gipa_verify_tipp_mipp<E: Pairing, T: Transcript + Send>(
 /// verify_kzg_opening_g2 takes a KZG opening, the final commitment key, SRS and
 /// any shift (in TIPP we shift the v commitment by r^-1) and returns a pairing
 /// tuple to check if the opening is correct or not.
-pub fn verify_kzg_v<E: Pairing, R: Rng + Send>(
-    v_srs: &VerifierSRS<E>,
+pub fn verify_kzg_v<E: Pairing>(
+    v_srs: &VerifierKey<E>,
     final_vkey: &(E::G2Affine, E::G2Affine),
     vkey_opening: &KZGOpening<E::G2Affine>,
     challenges: &[E::ScalarField],
     kzg_challenge: &E::ScalarField,
-    rng: &Mutex<R>,
-    checks: Sender<PairingCheck<E>>,
+    checks: Sender<Option<PairingCheck<E>>>,
 ) {
     // f_v(z)
     let vpoly_eval_z = polynomial_evaluation_product_form_from_transcript(
@@ -572,7 +518,7 @@ pub fn verify_kzg_v<E: Pairing, R: Rng + Send>(
 
     par! {
         // e(g, C_f * h^{-y}) == e(v1 * g^{-x}, \pi) = 1
-        let _check1 = kzg_check_v::<E, R>(
+        let _check1 = kzg_check_v::<E>(
             v_srs,
             ng,
             *kzg_challenge,
@@ -580,12 +526,11 @@ pub fn verify_kzg_v<E: Pairing, R: Rng + Send>(
             final_vkey.0.into_group(),
             v_srs.g_alpha,
             vkey_opening.0,
-            &rng,
             v1clone,
         ),
 
         // e(g, C_f * h^{-y}) == e(v2 * g^{-x}, \pi) = 1
-        let _check2 = kzg_check_v::<E, R>(
+        let _check2 = kzg_check_v::<E>(
             v_srs,
             ng,
             *kzg_challenge,
@@ -593,50 +538,43 @@ pub fn verify_kzg_v<E: Pairing, R: Rng + Send>(
             final_vkey.1.into_group(),
             v_srs.g_beta,
             vkey_opening.1,
-            &rng,
             v2clone,
         )
     };
 }
 
-fn kzg_check_v<E: Pairing, R: Rng + Send>(
-    v_srs: &VerifierSRS<E>,
+fn kzg_check_v<E: Pairing>(
+    v_srs: &VerifierKey<E>,
     ng: E::G1Affine,
     x: E::ScalarField,
     y: E::ScalarField,
     cf: E::G2,
     vk: E::G1,
     pi: E::G2Affine,
-    rng: &Mutex<R>,
-    checks: Sender<PairingCheck<E>>,
+    checks: Sender<Option<PairingCheck<E>>>,
 ) {
     // KZG Check: e(g, C_f * h^{-y}) = e(vk * g^{-x}, \pi)
     // Transformed, such that
     // e(-g, C_f * h^{-y}) * e(vk * g^{-x}, \pi) = 1
 
     // C_f - (y * h)
-    let b = sub!(cf, &mul!(v_srs.h, y)).into_affine();
+    let b = (cf - v_srs.h * y).into();
 
     // vk - (g * x)
-    let c = sub!(vk, &mul!(v_srs.g, x)).into_affine();
-    let p = PairingCheck::rand(
-        &rng,
-        &[(&ng, &b), (&c, &pi)],
-        &<E as Pairing>::TargetField::one(),
-    );
-    checks.send(p).unwrap();
+    let c = (vk - v_srs.g * x).into_affine();
+    let p = PairingCheck::rand(&[(ng, b), (c, pi)], PairingOutput::default());
+    checks.send(Some(p)).unwrap();
 }
 
 /// Similar to verify_kzg_opening_g2 but for g1.
-pub fn verify_kzg_w<E: Pairing, R: Rng + Send>(
-    v_srs: &VerifierSRS<E>,
+pub fn verify_kzg_w<E: Pairing>(
+    v_srs: &VerifierKey<E>,
     final_wkey: &(E::G1Affine, E::G1Affine),
     wkey_opening: &KZGOpening<E::G1Affine>,
     challenges: &[E::ScalarField],
     r_shift: &E::ScalarField,
     kzg_challenge: &E::ScalarField,
-    rng: &Mutex<R>,
-    checks: Sender<PairingCheck<E>>,
+    checks: Sender<Option<PairingCheck<E>>>,
 ) {
     // compute in parallel f(z) and z^n and then combines into f_w(z) = z^n * f(z)
     par! {
@@ -644,18 +582,15 @@ pub fn verify_kzg_w<E: Pairing, R: Rng + Send>(
         let zn = kzg_challenge.pow(&[v_srs.n as u64])
     };
 
-    let mut fwz = fz;
-    fwz.mul_assign(&zn);
+    let fwz = fz * zn;
 
-    let mut nh = v_srs.h;
-    nh = nh.neg();
-    let nh = nh.into_affine();
+    let nh = (-v_srs.h).into_affine();
 
     let w1clone = checks.clone();
     let w2clone = checks.clone();
     par! {
         // e(C_f * g^{-y}, h) = e(\pi, w1 * h^{-x})
-        let _check1 = kzg_check_w::<E, R>(
+        let _check1 = kzg_check_w::<E>(
             v_srs,
             nh,
             *kzg_challenge,
@@ -663,12 +598,11 @@ pub fn verify_kzg_w<E: Pairing, R: Rng + Send>(
             final_wkey.0.into_group(),
             v_srs.h_alpha,
             wkey_opening.0,
-            &rng,
             w1clone,
         ),
 
         // e(C_f * g^{-y}, h) = e(\pi, w2 * h^{-x})
-        let _check2 = kzg_check_w::<E, R>(
+        let _check2 = kzg_check_w::<E>(
             v_srs,
             nh,
             *kzg_challenge,
@@ -676,50 +610,44 @@ pub fn verify_kzg_w<E: Pairing, R: Rng + Send>(
             final_wkey.1.into_group(),
             v_srs.h_beta,
             wkey_opening.1,
-            &rng,
             w2clone,
         )
     };
 }
 
-fn kzg_check_w<E: Pairing, R: Rng + Send>(
-    v_srs: &VerifierSRS<E>,
+fn kzg_check_w<E: Pairing>(
+    v_srs: &VerifierKey<E>,
     nh: E::G2Affine,
     x: E::ScalarField,
     y: E::ScalarField,
     cf: E::G1,
     wk: E::G2,
     pi: E::G1Affine,
-    rng: &Mutex<R>,
-    checks: Sender<PairingCheck<E>>,
+    checks: Sender<Option<PairingCheck<E>>>,
 ) {
     // KZG Check: e(C_f * g^{-y}, h) = e(\pi, wk * h^{-x})
     // Transformed, such that
     // e(C_f * g^{-y}, -h) * e(\pi, wk * h^{-x}) = 1
 
     // C_f - (y * g)
-    let a = sub!(cf, &mul!(v_srs.g, y)).into_affine();
+    let a = (cf - v_srs.g * y).into();
 
     // wk - (x * h)
-    let d = sub!(wk, &mul!(v_srs.h, x)).into_affine();
-    let p = PairingCheck::rand(
-        &rng,
-        &[(&a, &nh), (&pi, &d)],
-        &<E as Pairing>::TargetField::one(),
-    );
-    checks.send(p).unwrap();
+    let d = (wk - v_srs.h * x).into();
+    let p = PairingCheck::rand(&[(a, nh), (pi, d)], PairingOutput::default());
+    checks.send(Some(p)).unwrap();
 }
 
 /// Keeps track of the variables that have been sent by the prover and must
 /// be multiplied together by the verifier. Both MIPP and TIPP are merged
 /// together.
 struct GipaTUZ<E: Pairing> {
-    pub tab: <E as Pairing>::TargetField,
-    pub uab: <E as Pairing>::TargetField,
-    pub zab: <E as Pairing>::TargetField,
-    pub tc: <E as Pairing>::TargetField,
-    pub uc: <E as Pairing>::TargetField,
-    pub zc: E::G1,
+    pub t_ab: PairingOutput<E>,
+    pub u_ab: PairingOutput<E>,
+    pub z_ab: PairingOutput<E>,
+    pub t_c: PairingOutput<E>,
+    pub u_c: PairingOutput<E>,
+    pub z_c: E::G1,
 }
 
 impl<E> Default for GipaTUZ<E>
@@ -728,12 +656,12 @@ where
 {
     fn default() -> Self {
         Self {
-            tab: <E as Pairing>::TargetField::one(),
-            uab: <E as Pairing>::TargetField::one(),
-            zab: <E as Pairing>::TargetField::one(),
-            tc: <E as Pairing>::TargetField::one(),
-            uc: <E as Pairing>::TargetField::one(),
-            zc: E::G1::zero(),
+            t_ab: PairingOutput::default(),
+            u_ab: PairingOutput::default(),
+            z_ab: PairingOutput::default(),
+            t_c: PairingOutput::default(),
+            u_c: PairingOutput::default(),
+            z_c: E::G1::zero(),
         }
     }
 }
@@ -743,11 +671,11 @@ where
     E: Pairing,
 {
     fn merge(&mut self, other: &Self) {
-        self.tab.mul_assign(&other.tab);
-        self.uab.mul_assign(&other.uab);
-        self.zab.mul_assign(&other.zab);
-        self.tc.mul_assign(&other.tc);
-        self.uc.mul_assign(&other.uc);
-        self.zc.add_assign(&other.zc);
+        self.t_ab += &other.t_ab;
+        self.u_ab += &other.u_ab;
+        self.z_ab += &other.z_ab;
+        self.t_c += &other.t_c;
+        self.u_c += &other.u_c;
+        self.z_c += &other.z_c;
     }
 }

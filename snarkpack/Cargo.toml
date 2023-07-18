@@ -17,11 +17,13 @@ ark-groth16 = { version = "^0.4.0", default-features = false }
 ark-cp-groth16 = { version = "^0.1.0", default-features = false, path = "../cp-groth16" }
 rand = { version = "0.8" }
 rand_core = { version = "^0.6" }
-digest = { version = "0.10.7" }
+digest = { version = "0.10.7", default-features = false, features = [ "alloc" ] }
 sha2 = { version = "^0.10" }
 rayon = { version = "1", optional = true }
 thiserror = { version = "^1.0" }
 merlin = { version = "^3.0" }
+blake2 = { version = "0.10.6", default-features = false }
+rand_chacha = "0.3"
 
 [dev-dependencies]
 ark-bls12-381 = { version = "^0.4.0", default-features = false, features = ["curve"] }
@@ -30,7 +32,7 @@ criterion = "0.5.1"
 
 [features]
 default = ["parallel"]
-std = ["ark-ff/std", "ark-ec/std", "ark-poly/std", "ark-groth16/std", "ark-cp-groth16/std", "ark-relations/std", "ark-crypto-primitives/std", "ark-std/std" ]
+std = ["ark-ff/std", "ark-ec/std", "ark-poly/std", "ark-groth16/std", "ark-cp-groth16/std", "ark-relations/std", "ark-crypto-primitives/std", "ark-std/std"]
 parallel = ["std", "ark-ff/parallel", "ark-poly/parallel", "ark-groth16/parallel", "ark-cp-groth16/parallel", "ark-ec/parallel", "ark-crypto-primitives/parallel", "ark-std/parallel", "rayon"]
 
 [lib]
