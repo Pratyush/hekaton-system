@@ -42,3 +42,21 @@ pub(crate) fn compress<C: AffineRepr>(vec: &mut Vec<C>, split: usize, scalar: &C
     let len = left.len();
     vec.resize(len, C::zero());
 }
+
+
+/// Creates parallel iterator over mut refs if `parallel` feature is enabled.
+/// Additionally, if the object being iterated implements
+/// `IndexedParallelIterator`, then one can specify a minimum size for
+/// iteration.
+#[macro_export]
+macro_rules! cfg_fold {
+    ($e: expr, $default: expr, $fold_fn: expr) => {{
+        #[cfg(feature = "parallel")]
+        let result = $e.fold_with($default, $fold_fn);
+
+        #[cfg(not(feature = "parallel"))]
+        let result = $e.fold($default, $fold_fn);
+
+        result
+    }};
+}

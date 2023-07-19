@@ -1,16 +1,20 @@
 #[macro_use]
 mod macros;
 
+mod prover;
+mod verifier;
+
+mod data_structures;
+
+pub mod mmt;
+
 mod commitment;
 mod errors;
 mod ip;
 mod pairing_check;
-mod proof;
-mod prover;
 pub mod srs;
 pub mod transcript;
 mod utils;
-mod verifier;
 
 pub(crate) mod kzg;
 
