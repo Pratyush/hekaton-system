@@ -1,8 +1,10 @@
-use ark_ec::{pairing::{Pairing, PairingOutput}, AffineRepr, CurveGroup};
+use ark_ec::pairing::{Pairing, PairingOutput};
 use ark_serialize::{
     CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Valid, Validate,
 };
 use std::io::{Read, Write};
+
+use crate::kzg::EvaluationProof;
 
 use super::Error;
 use super::{
@@ -15,15 +17,16 @@ use super::{
 /// party in possession of valid Groth16 proofs.
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
 pub struct AggregateProof<E: Pairing> {
-    /// commitment to A and B using the pair commitment scheme needed to verify
+    /// Commitment to A and B using the pair commitment scheme needed to verify
     /// TIPP relation.
     pub com_ab: commitment::Commitment<E>,
-    /// commit to C separate since we use it only in MIPP
+    /// Commitment to C since we use it only in MIPP
     pub com_c: commitment::Commitment<E>,
-    /// $A^r * B = Z$ is the left value on the aggregated Groth16 equation
+    /// $A^r * B = Z$ is the left side of the aggregated Groth16 equation
     pub ip_ab: PairingOutput<E>,
     /// $C^r$ is used on the right side of the aggregated Groth16 equation
     pub agg_c: E::G1Affine,
+    /// The TIPP and MIPP proofs
     pub tmipp: TippMippProof<E>,
 }
 
@@ -43,19 +46,19 @@ impl<E: Pairing> AggregateProof<E> {
     pub fn parsing_check(&self) -> Result<(), Error> {
         let gipa = &self.tmipp.gipa;
         // 1. Check length of the proofs
-        if gipa.nproofs < 2 || gipa.nproofs as usize > srs::MAX_SRS_SIZE {
+        if gipa.num_proofs < 2 || gipa.num_proofs as usize > srs::MAX_SRS_SIZE {
             return Err(Error::InvalidProof(
                 "Proof length out of bounds".to_string(),
             ));
         }
         // 2. Check if it's a power of two
-        if !gipa.nproofs.is_power_of_two() {
+        if !gipa.num_proofs.is_power_of_two() {
             return Err(Error::InvalidProof(
                 "Proof length not a power of two".to_string(),
             ));
         }
         // 3. Check all vectors are of the same length and of the correct length
-        let ref_len = (gipa.nproofs as f32).log2().ceil() as usize;
+        let ref_len = (gipa.num_proofs as f32).log2().ceil() as usize;
         let all_same = ref_len == gipa.comms_ab.len()
             && ref_len == gipa.comms_c.len()
             && ref_len == gipa.z_ab.len()
@@ -72,8 +75,8 @@ impl<E: Pairing> AggregateProof<E> {
     /// high level protocol to use it as a library. If you want to use within
     /// another arkwork protocol, you can use the underlying implementation of
     /// `CanonicalSerialize`.
-    pub fn write<W: Write>(&self, mut out: W) -> Result<(), Error> {
-        self.serialize_compressed(&mut out)
+    pub fn write(&self, out: impl Write) -> Result<(), Error> {
+        self.serialize_compressed(out)
             .map_err(|e| Error::Serialization(e))
     }
 
@@ -81,8 +84,8 @@ impl<E: Pairing> AggregateProof<E> {
     /// high level protocol to use it as a library. If you want to use within
     /// another arkwork protocol, you can use the underlying implementation of
     /// `CanonicalSerialize`.
-    pub fn read<R: Read>(mut source: R) -> Result<Self, Error> {
-        Self::deserialize_compressed(&mut source).map_err(|e| Error::Serialization(e))
+    pub fn read(source: impl Read) -> Result<Self, Error> {
+        Self::deserialize_compressed(source).map_err(|e| Error::Serialization(e))
     }
 }
 
@@ -91,7 +94,7 @@ impl<E: Pairing> AggregateProof<E> {
 /// (CanonicalSerialization is implemented manually, not via the macro).
 #[derive(Debug, Clone)]
 pub struct GipaProof<E: Pairing> {
-    pub nproofs: u32,
+    pub num_proofs: u32,
     pub comms_ab: Vec<(commitment::Commitment<E>, commitment::Commitment<E>)>,
     pub comms_c: Vec<(commitment::Commitment<E>, commitment::Commitment<E>)>,
     pub z_ab: Vec<(PairingOutput<E>, PairingOutput<E>)>,
@@ -107,7 +110,7 @@ pub struct GipaProof<E: Pairing> {
 
 impl<E: Pairing> PartialEq for GipaProof<E> {
     fn eq(&self, other: &Self) -> bool {
-        self.nproofs == other.nproofs
+        self.num_proofs == other.num_proofs
             && self.comms_ab == other.comms_ab
             && self.comms_c == other.comms_c
             && self.z_ab == other.z_ab
@@ -128,8 +131,8 @@ impl<E: Pairing> GipaProof<E> {
 
 impl<E: Pairing> CanonicalSerialize for GipaProof<E> {
     fn serialized_size(&self, compress: Compress) -> usize {
-        let log_proofs = Self::log_proofs(self.nproofs as usize);
-        (self.nproofs as u32).serialized_size(compress)
+        let log_proofs = Self::log_proofs(self.num_proofs as usize);
+        (self.num_proofs as u32).serialized_size(compress)
             + log_proofs
                 * (self.comms_ab[0].0.serialized_size(compress)
                     + self.comms_ab[0].1.serialized_size(compress)
@@ -145,15 +148,16 @@ impl<E: Pairing> CanonicalSerialize for GipaProof<E> {
                     + self.final_vkey.serialized_size(compress)
                     + self.final_wkey.serialized_size(compress))
     }
+
     fn serialize_with_mode<W: Write>(
         &self,
         mut out: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
         // number of proofs
-        self.nproofs.serialize_with_mode(&mut out, compress)?;
+        self.num_proofs.serialize_with_mode(&mut out, compress)?;
 
-        let log_proofs = Self::log_proofs(self.nproofs as usize);
+        let log_proofs = Self::log_proofs(self.num_proofs as usize);
         assert_eq!(self.comms_ab.len(), log_proofs);
 
         // comms_ab
@@ -222,61 +226,41 @@ where
 
             let log_proofs = Self::log_proofs(nproofs as usize);
 
-            let mut comms_ab = Vec::with_capacity(log_proofs);
-            for _ in 0..log_proofs {
-                comms_ab.push((
-                    Commitment::<E>::deserialize_with_mode(
-                        &mut source,
-                        compress,
-                        validate,
-                    )?,
-                    Commitment::<E>::deserialize_with_mode(
-                        &mut source,
-                        compress,
-                        validate,
-                    )?,
-                ));
-            }
+            let comms_ab = (0..log_proofs)
+                .map(|_| {
+                    Ok((
+                        Commitment::deserialize_with_mode(&mut source, compress, validate)?,
+                        Commitment::deserialize_with_mode(&mut source, compress, validate)?,
+                    ))
+                })
+                .collect::<Result<Vec<_>, SerializationError>>()?;
 
-            let mut comms_c = Vec::with_capacity(log_proofs);
-            for _ in 0..log_proofs {
-                comms_c.push((
-                    Commitment::<E>::deserialize_with_mode(
-                        &mut source,
-                        compress,
-                        validate,
-                    )?,
-                    Commitment::<E>::deserialize_with_mode(
-                        &mut source,
-                        compress,
-                        validate,
-                    )?,
-                ));
-            }
+            let comms_c = (0..log_proofs)
+                .map(|_| {
+                    Ok((
+                        Commitment::deserialize_with_mode(&mut source, compress, validate)?,
+                        Commitment::deserialize_with_mode(&mut source, compress, validate)?,
+                    ))
+                })
+                .collect::<Result<Vec<_>, SerializationError>>()?;
 
-            let mut z_ab = Vec::with_capacity(log_proofs);
-            for _ in 0..log_proofs {
-                z_ab.push((
-                    PairingOutput::deserialize_with_mode(
-                        &mut source,
-                        compress,
-                        validate,
-                    )?,
-                    PairingOutput::deserialize_with_mode(
-                        &mut source,
-                        compress,
-                        validate,
-                    )?,
-                ));
-            }
+            let z_ab = (0..log_proofs)
+                .map(|_| {
+                    Ok((
+                        PairingOutput::deserialize_with_mode(&mut source, compress, validate)?,
+                        PairingOutput::deserialize_with_mode(&mut source, compress, validate)?,
+                    ))
+                })
+                .collect::<Result<Vec<_>, SerializationError>>()?;
 
-            let mut z_c = Vec::with_capacity(log_proofs);
-            for _ in 0..log_proofs {
-                z_c.push((
-                    E::G1Affine::deserialize_with_mode(&mut source, compress, validate)?,
-                    E::G1Affine::deserialize_with_mode(&mut source, compress, validate)?,
-                ));
-            }
+            let z_c = (0..log_proofs)
+                .map(|_| {
+                    Ok((
+                        E::G1Affine::deserialize_with_mode(&mut source, compress, validate)?,
+                        E::G1Affine::deserialize_with_mode(&mut source, compress, validate)?,
+                    ))
+                })
+                .collect::<Result<Vec<_>, SerializationError>>()?;
 
             let final_a = E::G1Affine::deserialize_with_mode(&mut source, compress, validate)?;
             let final_b = E::G2Affine::deserialize_with_mode(&mut source, compress, validate)?;
@@ -305,7 +289,7 @@ where
             }
 
             GipaProof {
-                nproofs,
+                num_proofs: nproofs,
                 comms_ab,
                 comms_c,
                 z_ab,
@@ -326,8 +310,8 @@ where
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
 pub struct TippMippProof<E: Pairing> {
     pub gipa: GipaProof<E>,
-    pub vkey_opening: KZGOpening<E::G2Affine>,
-    pub wkey_opening: KZGOpening<E::G1Affine>,
+    pub vkey_opening: EvaluationProof<E::G2Affine>,
+    pub wkey_opening: EvaluationProof<E::G1Affine>,
 }
 
 impl<E: Pairing> PartialEq for TippMippProof<E> {
@@ -338,20 +322,10 @@ impl<E: Pairing> PartialEq for TippMippProof<E> {
     }
 }
 
-/// KZGOpening represents the KZG opening of a commitment key (which is a tuple
-/// given commitment keys are a tuple).
-#[derive(Clone, Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
-pub struct KZGOpening<G: AffineRepr>(pub G, pub G);
-
-impl<G: AffineRepr> KZGOpening<G> {
-    pub fn new_from_proj(a: G::Group, b: G::Group) -> Self {
-        KZGOpening(a.into_affine(), b.into_affine())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ark_ec::AffineRepr;
 
     use crate::commitment::Commitment as O;
     use ark_bls12_381::{Bls12_381 as Bls12, G1Affine, G2Affine};
@@ -369,7 +343,7 @@ mod tests {
             agg_c: G1Affine::generator(),
             tmipp: TippMippProof::<Bls12> {
                 gipa: GipaProof {
-                    nproofs: 4,
+                    num_proofs: 4,
                     comms_ab: vec![(O(a, a), O(a, a)), (O(a, a), O(a, a))],
                     comms_c: vec![(O(a, a), O(a, a)), (O(a, a), O(a, a))],
                     z_ab: vec![(a, a), (a, a)],
@@ -383,8 +357,8 @@ mod tests {
                     final_vkey: (G2Affine::generator(), G2Affine::generator()),
                     final_wkey: (G1Affine::generator(), G1Affine::generator()),
                 },
-                vkey_opening: KZGOpening(G2Affine::generator(), G2Affine::generator()),
-                wkey_opening: KZGOpening(G1Affine::generator(), G1Affine::generator()),
+                vkey_opening: EvaluationProof(G2Affine::generator(), G2Affine::generator()),
+                wkey_opening: EvaluationProof(G1Affine::generator(), G1Affine::generator()),
             },
         };
         proof
@@ -408,10 +382,10 @@ mod tests {
         let mut proof = fake_proof();
         proof.parsing_check().expect("proof should be valid");
 
-        let oldn = proof.tmipp.gipa.nproofs;
-        proof.tmipp.gipa.nproofs = 14;
+        let oldn = proof.tmipp.gipa.num_proofs;
+        proof.tmipp.gipa.num_proofs = 14;
         proof.parsing_check().expect_err("proof should be invalid");
-        proof.tmipp.gipa.nproofs = oldn;
+        proof.tmipp.gipa.num_proofs = oldn;
 
         proof
             .tmipp

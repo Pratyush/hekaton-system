@@ -1,4 +1,4 @@
-use ark_ff::fields::Field;
+use ark_ff::PrimeField;
 use ark_serialize::{CanonicalSerialize, Compress};
 use merlin::Transcript as Merlin;
 
@@ -12,8 +12,10 @@ pub fn new_merlin_transcript(label: &'static [u8]) -> impl Transcript {
 /// prover/verifier so that the transcript can be fed with any other data first.
 pub trait Transcript {
     fn domain_sep(&mut self);
-    fn append<S: CanonicalSerialize>(&mut self, label: &'static [u8], point: &S);
-    fn challenge_scalar<F: Field>(&mut self, label: &'static [u8]) -> F;
+
+    fn append(&mut self, label: &'static [u8], point: &impl CanonicalSerialize);
+
+    fn challenge_scalar<F: PrimeField>(&mut self, label: &'static [u8]) -> F;
 }
 
 impl Transcript for Merlin {
@@ -21,7 +23,7 @@ impl Transcript for Merlin {
         self.append_message(b"dom-sep", b"groth16-aggregation-snarkpack");
     }
 
-    fn append<S: CanonicalSerialize>(&mut self, label: &'static [u8], element: &S) {
+    fn append(&mut self, label: &'static [u8], element: &impl CanonicalSerialize) {
         let mut buff: Vec<u8> = vec![0; element.serialized_size(Compress::Yes)];
         element
             .serialize_compressed(&mut buff)
@@ -29,28 +31,11 @@ impl Transcript for Merlin {
         self.append_message(label, &buff);
     }
 
-    fn challenge_scalar<F: Field>(&mut self, label: &'static [u8]) -> F {
-        // Reduce a double-width scalar to ensure a uniform distribution
-        let mut buf = [0; 64];
+    fn challenge_scalar<F: PrimeField>(&mut self, label: &'static [u8]) -> F {
+        let modulus_byte_size = ((F::MODULUS_BIT_SIZE + 7) / 8) as usize;
+        let mut buf = vec![0; modulus_byte_size];
         self.challenge_bytes(label, &mut buf);
-        let mut counter = 0;
-        loop {
-            match F::from_random_bytes(&buf) {
-                Some(e) => {
-                    if let Some(_) = e.inverse() {
-                        return e;
-                    } else {
-                        continue;
-                    }
-                },
-                None => {
-                    buf[0] = counter;
-                    counter += 1;
-                    self.challenge_bytes(label, &mut buf);
-                    continue;
-                },
-            }
-        }
+        F::from_le_bytes_mod_order(&buf)
     }
 }
 

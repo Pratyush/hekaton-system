@@ -3,6 +3,7 @@ use ark_ff::One;
 use ark_groth16::{prepare_verifying_key, Groth16};
 use snarkpack;
 use snarkpack::transcript::Transcript;
+use snarkpack::SnarkPack;
 
 mod constraints;
 use crate::constraints::Benchmark;
@@ -39,12 +40,12 @@ fn groth16_aggregation() {
 
     let mut prover_transcript = snarkpack::transcript::new_merlin_transcript(b"test aggregation");
     prover_transcript.append(b"public-inputs", &all_inputs);
-    let aggregate_proof = snarkpack::aggregate_proofs(&prover_srs, &mut prover_transcript, &proofs)
+    let aggregate_proof = SnarkPack::aggregate_proofs(&prover_srs, &mut prover_transcript, &proofs)
         .expect("error in aggregation");
 
     let mut ver_transcript = snarkpack::transcript::new_merlin_transcript(b"test aggregation");
     ver_transcript.append(b"public-inputs", &all_inputs);
-    snarkpack::verify_aggregate_proof(
+    SnarkPack::verify_aggregate_proof(
         &ver_srs,
         &pvk,
         &all_inputs,

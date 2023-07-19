@@ -10,7 +10,7 @@ pub use ark_groth16::r1cs_to_qap;
 use ark_groth16::r1cs_to_qap::{LibsnarkReduction, R1CSToQAP};
 pub use committer::CommitmentBuilder;
 pub use constraint_synthesizer::*;
-pub use data_structures::{CommitterKey, ProvingKey, VerifyingKey};
+pub use data_structures::{CommitterKey, Proof, ProvingKey, VerifyingKey};
 
 /// The SNARK of [[Groth16]](https://eprint.iacr.org/2016/260.pdf).
 pub struct CPGroth16<E: Pairing, QAP: R1CSToQAP = LibsnarkReduction> {

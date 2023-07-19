@@ -1,25 +1,25 @@
 use ark_ec::pairing::{MillerLoopOutput, Pairing, PairingOutput};
 use ark_ff::Field;
-use ark_std::{rand::Rng, One, UniformRand, Zero, cfg_iter};
+use ark_std::{cfg_iter, rand::Rng, One, UniformRand, Zero};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 use crate::utils;
 
 /// PairingCheck represents a check of the form e(A,B)e(C,D)... = T. Checks can
-/// be aggregated together using random linear combination. The efficiency comes
+/// be aggregated together using random linear combinations. The efficiency comes
 /// from keeping the results from the miller loop output before proceding to a final
 /// exponentiation when verifying if all checks are verified.
 /// It is a tuple:
 /// - a miller loop result that is to be multiplied by other miller loop results
 /// before going into a final exponentiation result
 /// - a right side result which is already in the right subgroup Gt which is to
-/// be compared to the left side when "final_exponentiatiat"-ed
+/// be compared to the left side when final-exponentiated.
 #[derive(Debug, Copy, Clone)]
 pub struct PairingCheck<E: Pairing> {
     left: MillerLoopOutput<E>,
     right: PairingOutput<E>,
-    /// simple counter tracking number of non_randomized checks. If there are
+    /// simple counter tracking number of non_randomized checks. If there is
     /// more than 1 non randomized check, it is invalid.
     non_randomized: u8,
 }
@@ -31,7 +31,7 @@ where
     pub(crate) fn new() -> PairingCheck<E> {
         Self {
             left: MillerLoopOutput(E::TargetField::ONE),
-            right: PairingOutput::default(),
+            right: PairingOutput(E::TargetField::ONE),
             // a fixed "1 = 1" check doesn't count
             non_randomized: 0,
         }
@@ -45,10 +45,7 @@ where
     ///
     /// Note the check is NOT randomized and there must be only up to ONE check
     /// only that can not be randomized when merging.
-    fn from_pair(
-        result: MillerLoopOutput<E>,
-        exp: PairingOutput<E>,
-    ) -> PairingCheck<E> {
+    fn from_pair(result: MillerLoopOutput<E>, exp: PairingOutput<E>) -> PairingCheck<E> {
         Self {
             left: result,
             right: exp,
@@ -85,11 +82,7 @@ where
     /// e(rA,B)e(rC,D) ... = out^r <=>
     /// e(A,B)^r e(C,D)^r = out^r <=> e(g,h)^{abr + cdr} = out^r
     /// (e(g,h)^{ab + cd})^r = out^r
-    pub fn rand(
-        it: &[(E::G1Affine, E::G2Affine)],
-        out: PairingOutput<E>,
-    ) -> PairingCheck<E> {
-
+    pub fn rand(it: &[(E::G1Affine, E::G2Affine)], out: PairingOutput<E>) -> PairingCheck<E> {
         let rng = utils::rng_from_seed_bytes((it, out));
 
         let coeff: E::ScalarField = rand_scalar::<E>(rng);
@@ -97,7 +90,7 @@ where
             .map(|&(a, b)| E::miller_loop(a * coeff, b).0)
             .product();
         let miller_out = MillerLoopOutput(miller_out);
-        let out = if !out.is_zero() {
+        let out = if !out.0.is_one() {
             // we only need to make this expensive operation is the output is
             // not one since 1^r = 1
             out * coeff
@@ -127,10 +120,10 @@ where
     /// $$
     pub fn verify(&self) -> bool {
         if self.non_randomized > 1 {
-            dbg!(format!(
-                "Pairing checks have more than 1 non-random checks {}",
+            dbg!(
+                "Pairing checks has more than {} non-random check.",
                 self.non_randomized
-            ));
+            );
             return false;
         }
         E::final_exponentiation(self.left) == Some(self.right)
@@ -165,10 +158,10 @@ mod test {
     use rand_core::SeedableRng;
 
     fn gen_pairing_check(mut r: impl Rng) -> PairingCheck<Bls12> {
-        let g1r = G1Projective::rand(&mut r);
-        let g2r = G2Projective::rand(&mut r);
-        let exp = Bls12::pairing(g1r, g2r);
-        let tuple = PairingCheck::<Bls12>::rand(&[(g1r.into_affine(), g2r.into_affine())], exp);
+        let g1 = G1Projective::rand(&mut r);
+        let g2 = G2Projective::rand(&mut r);
+        let exp = Bls12::pairing(g1, g2);
+        let tuple = PairingCheck::<Bls12>::rand(&[(g1.into_affine(), g2.into_affine())], exp);
         assert!(tuple.verify());
         tuple
     }

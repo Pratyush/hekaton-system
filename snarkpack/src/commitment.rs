@@ -1,6 +1,9 @@
 use crate::ip;
 use crate::Error;
-use ark_ec::{pairing::{Pairing, PairingOutput}, AffineRepr, CurveGroup};
+use ark_ec::{
+    pairing::{Pairing, PairingOutput},
+    AffineRepr, CurveGroup,
+};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{cfg_iter, fmt::Debug, vec::Vec};
 use rayon::prelude::*;
@@ -66,15 +69,13 @@ impl<G: AffineRepr> Key<G> {
         if self.a.len() != s.len() {
             return Err(Error::InvalidKeyLength);
         }
-        let (a, b) = cfg_iter!(self.a)
+        let (a, b): (Vec<_>, Vec<_>) = cfg_iter!(self.a)
             .zip(&self.b)
             .zip(s)
-            .map(|((ap, bp), si)| {
-                let v1s = ap.mul(si).into_affine();
-                let v2s = bp.mul(si).into_affine();
-                (v1s, v2s)
-            })
+            .map(|((a, b), s)| (*a * s, *b * s))
             .unzip();
+        let a = G::Group::normalize_batch(&a);
+        let b = G::Group::normalize_batch(&b);
 
         Ok(Self { a, b })
     }
@@ -125,16 +126,16 @@ impl<G: AffineRepr> Key<G> {
 
 /// Both commitment outputs a pair of $F_q^k$ element.
 #[derive(PartialEq, CanonicalSerialize, CanonicalDeserialize, Clone, Debug)]
-pub struct Commitment<E: Pairing>(
-    pub PairingOutput<E>,
-    pub PairingOutput<E>,
-);
+pub struct Commitment<E: Pairing>(pub PairingOutput<E>, pub PairingOutput<E>);
 
 /// Commits to a single vector of G1 elements in the following way:
 /// $T = \prod_{i=0}^n e(A_i, v_{1,i})$
 /// $U = \prod_{i=0}^n e(A_i, v_{2,i})$
 /// Output is $(T,U)$
-pub fn commit_single<E: Pairing>(vkey: &VKey<E>, a_vec: &[E::G1Affine]) -> Result<Commitment<E>, Error> {
+pub fn commit_single<E: Pairing>(
+    vkey: &VKey<E>,
+    a_vec: &[E::G1Affine],
+) -> Result<Commitment<E>, Error> {
     try_par! {
         let a = ip::pairing::<E>(a_vec, &vkey.a),
         let b = ip::pairing::<E>(a_vec, &vkey.b)
