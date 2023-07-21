@@ -7,7 +7,7 @@ use crossbeam_channel::Sender;
 
 use crate::{pairing_check::PairingCheck, srs::VerifierKey};
 
-use super::{polynomial_evaluation_product_form_from_transcript, EvaluationProof};
+use super::{evaluate_ipa_polynomial, EvaluationProof};
 
 /// verify_kzg_opening_g2 takes a KZG opening, the final commitment key, SRS and
 /// any shift (in TIPP we shift the v commitment by r^-1) and returns a pairing
@@ -21,11 +21,7 @@ pub fn verify_kzg_v<E: Pairing>(
     checks: Sender<Option<PairingCheck<E>>>,
 ) {
     // f_v(z)
-    let vpoly_eval_z = polynomial_evaluation_product_form_from_transcript(
-        challenges,
-        kzg_challenge,
-        E::ScalarField::ONE,
-    );
+    let vpoly_eval_z = evaluate_ipa_polynomial(challenges, kzg_challenge, E::ScalarField::ONE);
     // -g such that when we test a pairing equation we only need to check if
     // it's equal 1 at the end:
     // e(a,b) = e(c,d) <=> e(a,b)e(-c,d) = 1
@@ -97,7 +93,7 @@ pub fn verify_kzg_w<E: Pairing>(
 ) {
     // compute in parallel f(z) and z^n and then combines into f_w(z) = z^n * f(z)
     par! {
-        let fz = polynomial_evaluation_product_form_from_transcript(challenges, kzg_challenge, r_shift),
+        let fz = evaluate_ipa_polynomial(challenges, kzg_challenge, r_shift),
         let zn = kzg_challenge.pow(&[v_srs.n as u64])
     };
 

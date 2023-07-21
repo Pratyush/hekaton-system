@@ -4,6 +4,7 @@ mod data_structures;
 mod prove;
 mod verify;
 
+use ark_poly::{univariate::DensePolynomial, DenseUVPolynomial};
 pub use data_structures::*;
 pub(crate) use prove::*;
 pub(crate) use verify::*;
@@ -12,21 +13,17 @@ pub(crate) use verify::*;
 /// the point z, where transcript contains the reversed order of all challenges (the x).
 /// THe challenges must be in reversed order for the correct evaluation of the
 /// polynomial in O(logn)
-pub(super) fn polynomial_evaluation_product_form_from_transcript<F: Field>(
-    transcript: &[F],
-    z: F,
-    r_shift: F,
-) -> F {
+pub(super) fn evaluate_ipa_polynomial<F: Field>(challenges: &[F], z: F, r: F) -> F {
     // this is the term (rz) that will get squared at each step to produce the
     // $(rz)^{2j}$ of the formula
-    let mut power_zr = z * r_shift;
+    let mut evaluation_point = z * r;
 
     let one = F::one();
 
-    let mut res = one + transcript[0] * &power_zr;
-    for x in &transcript[1..] {
-        power_zr.square_in_place();
-        res *= one + *x * &power_zr;
+    let mut res = one;
+    for x in challenges {
+        res *= one + *x * &evaluation_point;
+        evaluation_point.square_in_place();
     }
 
     res
@@ -45,11 +42,11 @@ pub(super) fn polynomial_evaluation_product_form_from_transcript<F: Field>(
 // This method expects the coefficients in reverse order so transcript[i] =
 // x_{l-j}.
 // f(Y) = Y^n * \prod (1 + x_{l-j-1} (r_shiftY^{2^j}))
-fn polynomial_coefficients_from_transcript<F: Field>(transcript: &[F], r_shift: F) -> Vec<F> {
+fn ipa_polynomial<F: Field>(challenges: &[F], r: F) -> DensePolynomial<F> {
     let mut coefficients = vec![F::one()];
-    let mut power_2_r = r_shift;
+    let mut power_2_r = r;
 
-    for (i, x) in transcript.iter().enumerate() {
+    for (i, x) in challenges.iter().enumerate() {
         let n = coefficients.len();
         if i > 0 {
             power_2_r = power_2_r.square();
@@ -60,5 +57,23 @@ fn polynomial_coefficients_from_transcript<F: Field>(transcript: &[F], r_shift: 
         }
     }
 
-    coefficients
+    DensePolynomial::from_coefficients_vec(coefficients)
+}
+
+#[test]
+fn ipa_polynomial_consistency() {
+    use ark_bls12_381::Fr;
+    use ark_ff::UniformRand;
+    use ark_poly::Polynomial;
+    use ark_std::test_rng;
+
+    let mut rng = test_rng();
+    let r = Fr::rand(&mut rng);
+    let evaluation_point = Fr::rand(&mut rng);
+
+    let challenges = vec![Fr::rand(&mut rng), Fr::rand(&mut rng)];
+    let poly = ipa_polynomial(&challenges, r);
+    let direct_eval = poly.evaluate(&evaluation_point);
+    let fast_eval = evaluate_ipa_polynomial(&challenges, evaluation_point, r);
+    assert_eq!(fast_eval, direct_eval);
 }

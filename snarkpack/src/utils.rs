@@ -1,7 +1,7 @@
-use ark_ec::AffineRepr;
+use ark_ec::{AffineRepr, CurveGroup};
 use ark_ff::Field;
 use ark_serialize::CanonicalSerialize;
-use ark_std::cfg_iter_mut;
+use ark_std::cfg_iter;
 use digest::Digest;
 use rand::Rng;
 use rand_chacha::ChaChaRng;
@@ -23,7 +23,7 @@ pub fn rng_from_seed_bytes(seed: impl CanonicalSerialize) -> impl Rng {
 /// between A and B for the Groth16 aggregation: A^r * B. It is required as it
 /// is not enough to simply prove the ipp of A*B, we need a random linear
 /// combination of those.
-pub(crate) fn structured_scalar_power<F: Field>(num: usize, s: &F) -> Vec<F> {
+pub(crate) fn structured_scalar_power<F: Field>(num: usize, s: F) -> Vec<F> {
     let mut powers = vec![F::one()];
     for i in 1..num {
         powers.push(powers[i - 1] * s);
@@ -34,15 +34,15 @@ pub(crate) fn structured_scalar_power<F: Field>(num: usize, s: &F) -> Vec<F> {
 /// compress is similar to commit::{V,W}KEY::compress: it modifies the `vec`
 /// vector by setting the value at index $i:0 -> split$  $vec[i] = vec[i] +
 /// vec[i+split]^scaler$. The `vec` vector is half of its size after this call.
-pub(crate) fn compress<C: AffineRepr>(vec: &mut Vec<C>, split: usize, scalar: &C::ScalarField) {
-    let (left, right) = vec.split_at_mut(split);
-    cfg_iter_mut!(left)
+pub(crate) fn compress<C: AffineRepr>(vec: &mut Vec<C>, split: usize, scalar: C::ScalarField) {
+    let (left, right) = vec.split_at(split);
+    let left_group = cfg_iter!(left)
         .zip(right)
-        .for_each(|(a_l, a_r)| *a_l = (*a_r * *scalar + *a_l).into());
-    let len = left.len();
-    vec.resize(len, C::zero());
+        .map(|(&l, &r)| l + r * scalar)
+        .collect::<Vec<_>>();
+    assert_eq!(left_group.len(), left.len());
+    *vec = C::Group::normalize_batch(&left_group);
 }
-
 
 /// Creates parallel iterator over mut refs if `parallel` feature is enabled.
 /// Additionally, if the object being iterated implements

@@ -1,23 +1,14 @@
-use ark_ec::{
-    pairing::Pairing,
-    CurveGroup, VariableBaseMSM,
-};
+use ark_ec::{pairing::Pairing, CurveGroup, VariableBaseMSM};
 use ark_ff::Field;
 use ark_groth16::PreparedVerifyingKey;
 use crossbeam_channel::bounded;
 use rayon::prelude::*;
 use std::ops::{AddAssign, Mul, MulAssign};
 
-use super::{
-    pairing_check::PairingCheck,
-    srs::VerifierKey, transcript::Transcript,
-};
-use crate::{Error, mmt::MMT};
+use super::{pairing_check::PairingCheck, srs::VerifierKey, transcript::Transcript};
 use crate::data_structures::AggregationProof;
-use crate::{
-    utils::structured_scalar_power,
-    SnarkPack,
-};
+use crate::Error;
+use crate::{utils::structured_scalar_power, SnarkPack};
 
 use std::time::Instant;
 
@@ -47,9 +38,9 @@ impl<E: Pairing> SnarkPack<E> {
         }
 
         // Random linear combination of proofs
-        transcript.append(b"AB-commitment", &proof.com_ab);
-        transcript.append(b"C-commitment", &proof.com_c);
-        let r = transcript.challenge_scalar::<<E as Pairing>::ScalarField>(b"r-random-fiatshamir");
+        transcript.append(b"AB-commitment", &proof.comm_ab);
+        transcript.append(b"C-commitment", &proof.comm_c);
+        let r = transcript.challenge::<<E as Pairing>::ScalarField>(b"r-random-fiatshamir");
 
         // channels to send/recv pairing checks so we aggregate them all in a
         // loop - 9 places where we send pairing checks
@@ -68,15 +59,24 @@ impl<E: Pairing> SnarkPack<E> {
                 valid_send.send(acc.verify()).unwrap();
             });
 
+            let mmt_instance = crate::mmt::Instance {
+                size: proof.mmt_proof.gipa.num_proofs as usize,
+                comm_ab: proof.comm_ab.clone(),
+                aggregated_ab: proof.aggregated_ab,
+                comm_c: proof.comm_c.clone(),
+                aggregated_c: proof.aggregated_c,
+                random_challenge: r,
+            };
+
             // 1.Check TIPA proof ab
             // 2.Check TIPA proof c
             let send_checks_copy = send_checks.clone();
             s.spawn(move |_| {
                 let now = Instant::now();
-                MMT::verify(
+                crate::mmt::MMT::verify(
                     ip_vk,
-                    proof,
-                    &r, // we give the extra r as it's not part of the proof itself - it is simply used on top for the groth16 aggregation
+                    &mmt_instance,
+                    &proof.mmt_proof,
                     transcript,
                     send_checks_copy,
                 );
@@ -93,7 +93,8 @@ impl<E: Pairing> SnarkPack<E> {
             r_sum *= &b;
 
             // The following parts 3 4 5 are independently computing the parts of
-            // the Groth16 verification equation NOTE From this point on, we are
+            // the Groth16 verification equation
+            //  NOTE From this point on, we are
             // only checking *one* pairing check (the Groth16 verification equation)
             // so we don't need to randomize as all other checks are being
             // randomized already. When merging all pairing checks together, this
@@ -103,7 +104,7 @@ impl<E: Pairing> SnarkPack<E> {
             //        s.spawn(move |_| {
             let now = Instant::now();
             r_vec_sender
-                .send(structured_scalar_power(public_inputs.len(), &r))
+                .send(structured_scalar_power(public_inputs.len(), r))
                 .unwrap();
             let elapsed = now.elapsed().as_millis();
             println!("generation of r vector: {}ms", elapsed);
@@ -121,7 +122,7 @@ impl<E: Pairing> SnarkPack<E> {
                 // 4. Compute right part of the final pairing equation
                 let right = E::miller_loop(
                         // e(c^r vector form, h^delta)
-                        E::G1Prepared::from(proof.agg_c),
+                        E::G1Prepared::from(proof.aggregated_c),
                         E::G2Prepared::from(pvk.vk.delta_g2),
                     ),
                 // 5. compute the middle part of the final pairing equation, the one
@@ -167,7 +168,7 @@ impl<E: Pairing> SnarkPack<E> {
             };
             // final value ip_ab is what we want to compare in the groth16
             // aggregated equation A * B
-            let check = PairingCheck::from_products(vec![left, middle, right], proof.ip_ab);
+            let check = PairingCheck::from_products(vec![left, middle, right], proof.aggregated_ab);
             send_checks.send(Some(check)).unwrap();
         });
         let res = valid_rcv.recv().unwrap();
@@ -177,6 +178,4 @@ impl<E: Pairing> SnarkPack<E> {
             false => Err(Error::InvalidProof("Proof Verification Failed".to_string())),
         }
     }
-
-    
 }

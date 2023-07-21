@@ -1,21 +1,17 @@
-use ark_ec::{
-    pairing::Pairing,
-    CurveGroup,
-};
+use ark_ec::{pairing::Pairing, CurveGroup};
 use ark_ff::Field;
 use ark_groth16::Proof;
 use ark_std::cfg_iter;
 
 use rayon::prelude::*;
 
-use crate::{SnarkPack, mmt::MMT};
+use crate::{
+    mmt::{self, MMT},
+    SnarkPack,
+};
 
 use super::{
-    commitment,
-    errors::Error,
-    ip,
-    srs::ProverSRS,
-    transcript::Transcript,
+    commitment, errors::Error, ip, srs::ProverSRS, transcript::Transcript,
     utils::structured_scalar_power,
 };
 use crate::data_structures::AggregationProof;
@@ -65,17 +61,17 @@ impl<E: Pairing> SnarkPack<E> {
         let ref_b = &b;
         let ref_c = &c;
         try_par! {
-            let com_ab = commitment::commit_double::<E>(&srs.vkey, &srs.wkey, ref_a, ref_b),
-            let com_c = commitment::commit_single::<E>(&srs.vkey, ref_c)
+            let comm_ab = commitment::commit_double::<E>(&srs.vkey, &srs.wkey, ref_a, ref_b),
+            let comm_c = commitment::commit_single::<E>(&srs.vkey, ref_c)
         };
 
         // Derive a random scalar to perform a linear combination of proofs
-        transcript.append(b"AB-commitment", &com_ab);
-        transcript.append(b"C-commitment", &com_c);
-        let r = transcript.challenge_scalar::<E::ScalarField>(b"r-random-fiatshamir");
+        transcript.append(b"AB-commitment", &comm_ab);
+        transcript.append(b"C-commitment", &comm_c);
+        let r = transcript.challenge::<E::ScalarField>(b"r-random-fiatshamir");
 
         // 1,r, r^2, r^3, r^4 ...
-        let r_s = structured_scalar_power(proofs.len(), &r);
+        let r_s = structured_scalar_power(proofs.len(), r);
         // 1,r^-1, r^-2, r^-3
         let r_inv = r_s
             .par_iter()
@@ -94,37 +90,36 @@ impl<E: Pairing> SnarkPack<E> {
         let ref_r_s = &r_s;
         try_par! {
             // compute A * B^r for the verifier
-            let ip_ab = ip::pairing::<E>(&ref_a, &ref_b_r),
+            let aggregated_ab = ip::pairing::<E>(&ref_a, &ref_b_r),
             // compute C^r for the verifier
             let agg_c = ip::msm::<E::G1Affine>(&ref_c, &ref_r_s)
         };
 
-        let agg_c = agg_c.into_affine();
+        let aggregated_c = agg_c.into_affine();
         // w^{r^{-1}}
         let wkey_r_inv = srs.wkey.scale(&r_inv)?;
-
-        // we prove tipp and mipp using the same recursive loop
-        let mmt_proof = MMT::prove(
-            &srs,
-            transcript,
-            &a,
-            &b_r,
-            &c,
-            &wkey_r_inv,
-            &r_s,
-            &ip_ab,
-            &agg_c,
-        )?;
         debug_assert_eq!(
             commitment::commit_double::<E>(&srs.vkey, &wkey_r_inv, &a, &b_r).unwrap(),
-            com_ab
+            comm_ab
         );
+        // we prove tipp and mipp using the same recursive loop
+        let mmt_instance = mmt::Instance {
+            size: proofs.len(),
+            aggregated_ab,
+            comm_ab: comm_ab.clone(),
+            aggregated_c,
+            comm_c: comm_c.clone(),
+            random_challenge: r,
+        };
+
+        let mmt_witness = mmt::Witness { a, b, c };
+        let mmt_proof = MMT::prove(&srs, &wkey_r_inv, &mmt_instance, &mmt_witness, transcript)?;
 
         Ok(AggregationProof {
-            com_ab,
-            com_c,
-            ip_ab,
-            agg_c,
+            comm_ab,
+            comm_c,
+            aggregated_ab,
+            aggregated_c,
             mmt_proof,
         })
     }

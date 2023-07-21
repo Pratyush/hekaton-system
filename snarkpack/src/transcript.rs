@@ -15,7 +15,7 @@ pub trait Transcript {
 
     fn append(&mut self, label: &'static [u8], point: &impl CanonicalSerialize);
 
-    fn challenge_scalar<F: PrimeField>(&mut self, label: &'static [u8]) -> F;
+    fn challenge<F: PrimeField>(&mut self, label: &'static [u8]) -> F;
 }
 
 impl Transcript for Merlin {
@@ -31,7 +31,7 @@ impl Transcript for Merlin {
         self.append_message(label, &buff);
     }
 
-    fn challenge_scalar<F: PrimeField>(&mut self, label: &'static [u8]) -> F {
+    fn challenge<F: PrimeField>(&mut self, label: &'static [u8]) -> F {
         let modulus_byte_size = ((F::MODULUS_BIT_SIZE + 7) / 8) as usize;
         let mut buf = vec![0; modulus_byte_size];
         self.challenge_bytes(label, &mut buf);
@@ -49,10 +49,10 @@ mod test {
     fn transcript() {
         let mut transcript = new_merlin_transcript(b"test");
         transcript.append(b"point", &G1Projective::generator());
-        let f1 = transcript.challenge_scalar::<Fr>(b"scalar");
+        let f1 = transcript.challenge::<Fr>(b"scalar");
         let mut transcript2 = new_merlin_transcript(b"test");
         transcript2.append(b"point", &G1Projective::generator());
-        let f2 = transcript2.challenge_scalar::<Fr>(b"scalar");
+        let f2 = transcript2.challenge::<Fr>(b"scalar");
         assert_eq!(f1, f2);
     }
 }

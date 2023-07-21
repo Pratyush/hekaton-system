@@ -1,10 +1,19 @@
-use ark_ec::{CurveGroup, pairing::{Pairing, PairingOutput}};
+use ark_ec::{pairing::Pairing, CurveGroup};
 use ark_ff::Field;
 use ark_std::cfg_iter_mut;
 
-use crate::{srs::ProverSRS, commitment::{WKey, VKey, self}, Transcript, Error, ip, utils::compress};
+use crate::{
+    commitment::{self, VKey, WKey},
+    ip,
+    srs::ProverSRS,
+    utils::{compress, structured_scalar_power},
+    Error, Transcript,
+};
 
-use super::{data_structures::{MMTProof, GipaProof}, MMT};
+use super::{
+    data_structures::{GipaProof, Instance, MMTProof, Witness},
+    MMT,
+};
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -18,19 +27,18 @@ impl<E: Pairing> MMT<E> {
     /// challenges of GIPA would be different, two KZG proofs would be needed.
     pub fn prove(
         srs: &ProverSRS<E>,
-        transcript: &mut impl Transcript,
-        a: &[E::G1Affine],
-        b: &[E::G2Affine],
-        c: &[E::G1Affine],
         wkey: &WKey<E>, // scaled key w^r^-1
-        r_s: &[E::ScalarField],
-        ip_ab: &PairingOutput<E>,
-        agg_c: &E::G1Affine,
+        instance: &Instance<E>,
+        witness: &Witness<E>,
+        transcript: &mut impl Transcript,
     ) -> Result<MMTProof<E>, Error> {
-        let r_shift = r_s[1].clone();
+        assert_eq!(instance.size, witness.a.len());
+        assert_eq!(instance.size, witness.b.len());
+        assert_eq!(instance.size, witness.c.len());
+        let r = instance.random_challenge;
         // Run GIPA
         let (proof, mut challenges, mut challenges_inv) =
-            Self::gipa_tipp_mipp(transcript, a, b, c, &srs.vkey, &wkey, r_s, ip_ab, agg_c)?;
+            Self::prove_gipa(&srs.vkey, &wkey, instance, witness, transcript)?;
 
         // Prove final commitment keys are wellformed
         // we reverse the transcript so the polynomial in kzg opening is constructed
@@ -38,7 +46,7 @@ impl<E: Pairing> MMT<E> {
         // challenge point, input must be the last challenge.
         challenges.reverse();
         challenges_inv.reverse();
-        let r_inverse = r_shift.inverse().unwrap();
+        let r_inverse = r.inverse().unwrap();
 
         // KZG challenge point
         transcript.append(b"kzg-challenge", &challenges[0]);
@@ -46,7 +54,7 @@ impl<E: Pairing> MMT<E> {
         transcript.append(b"vkey1", &proof.final_vkey.1);
         transcript.append(b"wkey0", &proof.final_wkey.0);
         transcript.append(b"wkey1", &proof.final_wkey.1);
-        let z = transcript.challenge_scalar::<E::ScalarField>(b"z-challenge");
+        let z = transcript.challenge::<E::ScalarField>(b"z-challenge");
         // Complete KZG proofs
         par! {
             let vkey_opening = crate::kzg::prove_commitment_v(
@@ -75,21 +83,18 @@ impl<E: Pairing> MMT<E> {
     /// It returns a proof containing all intermdiate committed values, as well as
     /// the challenges generated necessary to do the polynomial commitment proof
     /// later in TIPP.
-    fn gipa_tipp_mipp(
-        transcript: &mut impl Transcript,
-        a: &[E::G1Affine],
-        b: &[E::G2Affine],
-        c: &[E::G1Affine],
+    fn prove_gipa(
         vkey: &VKey<E>,
         wkey: &WKey<E>, // scaled key w^r^-1
-        r: &[E::ScalarField],
-        ip_ab: &PairingOutput<E>,
-        agg_c: &E::G1Affine,
+        instance: &Instance<E>,
+        witness: &Witness<E>,
+        transcript: &mut impl Transcript,
     ) -> Result<(GipaProof<E>, Vec<E::ScalarField>, Vec<E::ScalarField>), Error> {
+        let mut r = structured_scalar_power(instance.size, instance.random_challenge);
         // the values of vectors A and B rescaled at each step of the loop
-        let (mut m_a, mut m_b) = (a.to_vec(), b.to_vec());
+        let (mut a, mut b) = (witness.a.to_vec(), witness.b.to_vec());
         // the values of vectors C and r rescaled at each step of the loop
-        let (mut m_c, mut m_r) = (c.to_vec(), r.to_vec());
+        let mut c = witness.c.to_vec();
         // the values of the commitment keys rescaled at each step of the loop
         let (mut vkey, mut wkey) = (vkey.clone(), wkey.clone());
 
@@ -98,30 +103,31 @@ impl<E: Pairing> MMT<E> {
         let mut comms_c = Vec::new();
         let mut z_ab = Vec::new();
         let mut z_c = Vec::new();
+
         let mut challenges: Vec<E::ScalarField> = Vec::new();
         let mut challenges_inv: Vec<E::ScalarField> = Vec::new();
 
-        transcript.append(b"inner-product-ab", ip_ab);
-        transcript.append(b"comm-c", agg_c);
-        let mut c_inv: E::ScalarField =
-            transcript.challenge_scalar::<E::ScalarField>(b"first-challenge");
-        let mut c = c_inv.inverse().unwrap();
+        transcript.append(b"Aggregated AB", &instance.aggregated_ab);
+        transcript.append(b"Aggregated C", &instance.aggregated_c);
+        let mut delta_inv: E::ScalarField =
+            transcript.challenge::<E::ScalarField>(b"first-challenge");
+        let mut delta = delta_inv.inverse().unwrap();
 
         let mut i = 0;
 
-        while m_a.len() > 1 {
+        while a.len() > 1 {
             // recursive step
             // Recurse with problem of half size
-            let split = m_a.len() / 2;
+            let split = a.len() / 2;
 
             // TIPP ///
-            let (a_left, a_right) = m_a.split_at_mut(split);
-            let (b_left, b_right) = m_b.split_at_mut(split);
+            let (a_left, a_right) = a.split_at_mut(split);
+            let (b_left, b_right) = b.split_at_mut(split);
             // MIPP ///
             // c[:n']   c[n':]
-            let (c_left, c_right) = m_c.split_at_mut(split);
+            let (c_left, c_right) = c.split_at_mut(split);
             // r[:n']   r[:n']
-            let (r_left, r_right) = m_r.split_at_mut(split);
+            let (r_left, r_right) = r.split_at_mut(split);
 
             let (vk_left, vk_right) = vkey.split(split);
             let (wk_left, wk_right) = wkey.split(split);
@@ -136,22 +142,43 @@ impl<E: Pairing> MMT<E> {
             let (rr_left, rr_right) = (&r_left, &r_right);
             // See section 3.3 for paper version with equivalent names
             try_par! {
-                // TIPP part
-                let t_ab_l = commitment::commit_double::<E>(&rvk_left, &rwk_right, &ra_right, &rb_left),
-                let t_ab_r = commitment::commit_double::<E>(&rvk_right, &rwk_left, &ra_left, &rb_right),
+                /********************************************************/
+                // Compute left and right inner products:
+                //
+                // For TIPP (i.e. A and B):
                 // \prod e(A_right,B_left)
-                let z_ab_l = ip::pairing::<E>(&ra_right, &rb_left),
-                let z_ab_r = ip::pairing::<E>(&ra_left, &rb_right),
+                let l_ab = ip::pairing::<E>(&ra_right, &rb_left),
+                let r_ab = ip::pairing::<E>(&ra_left, &rb_right),
 
-                // MIPP part
+                // For MIPP (i.e. C and r):
                 // z_l = c[n':] ^ r[:n']
-                let zc_l = ip::msm::<E::G1Affine>(rc_right, rr_left),
+                let l_c = ip::msm(rc_right, rr_left),
                 // Z_r = c[:n'] ^ r[n':]
-                let zc_r = ip::msm::<E::G1Affine>(rc_left, rr_right),
+                let r_c = ip::msm(rc_left, rr_right),
+                /********************************************************/
+
+                /********************************************************/
+                // Compute left cross commitments
+                //
+                // For TIPP:
+                let cm_l_ab = commitment::commit_double::<E>(&rvk_left, &rwk_right, &ra_right, &rb_left),
+
+                // For MIPP:
                 // u_l = c[n':] * v[:n']
-                let tuc_l = commitment::commit_single::<E>(&rvk_left, rc_right),
+                let cm_l_c = commitment::commit_single::<E>(&rvk_left, rc_right),
+                /********************************************************/
+
+                /********************************************************/
+                // Compute right cross commitments
+                //
+                // For TIPP:
+                // T_ab_r = e(A_left,B_right)
+                let cm_r_ab = commitment::commit_double::<E>(&rvk_right, &rwk_left, &ra_left, &rb_right),
+
+                // For MIPP
                 // u_r = c[:n'] * v[n':]
-                let tuc_r = commitment::commit_single::<E>(&rvk_right, rc_left)
+                let cm_r_c = commitment::commit_single::<E>(&rvk_right, rc_left)
+                /********************************************************/
             };
 
             // Fiat-Shamir challenge
@@ -159,71 +186,75 @@ impl<E: Pairing> MMT<E> {
             if i == 0 {
                 // already generated c_inv and c outside of the loop
             } else {
-                transcript.append(b"c_inv", &c_inv);
-                transcript.append(b"z_ab_l", &z_ab_l);
-                transcript.append(b"z_ab_r", &z_ab_r);
-                transcript.append(b"zc_l", &zc_l);
-                transcript.append(b"zc_r", &zc_r);
-                transcript.append(b"t_ab_l", &t_ab_l);
-                transcript.append(b"t_ab_r", &t_ab_r);
-                transcript.append(b"tuc_l", &tuc_l);
-                transcript.append(b"tuc_r", &tuc_r);
-                c_inv = transcript.challenge_scalar::<E::ScalarField>(b"challenge_i");
+                transcript.append(b"delta_inv", &delta_inv);
+                transcript.append(b"L_AB", &l_ab);
+                transcript.append(b"R_AB", &r_ab);
+                transcript.append(b"L_C", &l_c);
+                transcript.append(b"R_C", &r_c);
+                transcript.append(b"cm_L_AB", &cm_l_ab);
+                transcript.append(b"cm_R_AB", &cm_r_ab);
+                transcript.append(b"cm_L_C", &cm_l_c);
+                transcript.append(b"cm_R_C", &cm_r_c);
+                delta_inv = transcript.challenge::<E::ScalarField>(b"delta_inv_i");
 
                 // Optimization for multiexponentiation to rescale G2 elements with
                 // 128-bit challenge Swap 'c' and 'c_inv' since can't control bit size
                 // of c_inv
-                c = c_inv.inverse().unwrap();
+                delta = delta_inv.inverse().unwrap();
             }
 
             // Set up values for next step of recursion
-            // A[:n'] + A[n':] ^ x
-            compress(&mut m_a, split, &c);
-            // B[:n'] + B[n':] ^ x^-1
-            compress(&mut m_b, split, &c_inv);
+            // A[:n'] + delta * A[n':]
+            compress(&mut a, split, delta);
+            // B[:n'] + delta_inv * B[n':]
+            compress(&mut b, split, delta_inv);
 
-            // c[:n'] + c[n':]^x
-            compress(&mut m_c, split, &c);
+            // C[:n'] + delta * C[n':]
+            compress(&mut c, split, delta);
+
+            // Collapse randomness
             cfg_iter_mut!(r_left)
                 .zip(r_right)
-                .for_each(|(r_l, r_r)| {
-                    // r[:n'] + r[n':]^x^-1
-                    *r_r *= &c_inv;
-                    *r_l += r_r;
+                .for_each(|(left, right)| {
+                    // r[:n'] + delta_inv * r[n':]
+                    *right *= &delta_inv;
+                    *left += right;
                 });
             let len = r_left.len();
-            m_r.resize(len, E::ScalarField::ZERO); // shrink to new size
+            r.resize(len, E::ScalarField::ZERO); // shrink to new size
 
+            // Compress commitment keys:
             // v_left + v_right^x^-1
-            vkey = vk_left.compress(&vk_right, &c_inv)?;
-            // w_left + w_right^x
-            wkey = wk_left.compress(&wk_right, &c)?;
+            vkey = vk_left.compress(&vk_right, delta_inv)?;
 
-            comms_ab.push((t_ab_l, t_ab_r));
-            comms_c.push((tuc_l, tuc_r));
-            z_ab.push((z_ab_l, z_ab_r));
-            z_c.push((zc_l.into_affine(), zc_r.into_affine()));
-            challenges.push(c);
-            challenges_inv.push(c_inv);
+            // w_left + w_right^x
+            wkey = wk_left.compress(&wk_right, delta)?;
+
+            comms_ab.push((cm_l_ab, cm_r_ab));
+            comms_c.push((cm_l_c, cm_r_c));
+            z_ab.push((l_ab, r_ab));
+            z_c.push((l_c.into_affine(), r_c.into_affine()));
+            challenges.push(delta);
+            challenges_inv.push(delta_inv);
 
             i += 1;
         }
 
-        assert!(m_a.len() == 1 && m_b.len() == 1);
-        assert!(m_c.len() == 1 && m_r.len() == 1);
+        assert!(a.len() == 1 && b.len() == 1);
+        assert!(c.len() == 1 && r.len() == 1);
         assert!(vkey.a.len() == 1 && vkey.b.len() == 1);
         assert!(wkey.a.len() == 1 && wkey.b.len() == 1);
 
-        let (final_a, final_b, final_c) = (m_a[0], m_b[0], m_c[0]);
+        let (final_a, final_b, final_c) = (a[0], b[0], c[0]);
         let (final_vkey, final_wkey) = (vkey.first(), wkey.first());
 
         Ok((
             GipaProof {
-                num_proofs: a.len() as u32, // TODO: ensure u32
-                comms_ab,
-                comms_c,
-                z_ab,
-                z_c,
+                num_proofs: a.len().try_into().unwrap(), // TODO: ensure u32
+                comms_lr_ab: comms_ab,
+                comms_lr_c: comms_c,
+                lr_ab: z_ab,
+                lr_c: z_c,
                 final_a,
                 final_b,
                 final_c,

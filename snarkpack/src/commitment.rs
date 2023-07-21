@@ -4,6 +4,7 @@ use ark_ec::{
     pairing::{Pairing, PairingOutput},
     AffineRepr, CurveGroup,
 };
+use ark_ff::Field;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{cfg_iter, fmt::Debug, vec::Vec};
 use rayon::prelude::*;
@@ -99,16 +100,15 @@ impl<G: AffineRepr> Key<G> {
     /// Takes a left and right commitment key and returns a commitment
     /// key $left \circ right^{scale} = (left_i*right_i^{scale} ...)$. This is
     /// required step during GIPA recursion.
-    pub fn compress(&self, right: &Self, scale: &G::ScalarField) -> Result<Self, Error> {
+    pub fn compress(&self, right: &Self, scale: G::ScalarField) -> Result<Self, Error> {
         let left = self;
         if left.a.len() != right.a.len() {
             return Err(Error::InvalidKeyLength);
         }
         let (a, b): (Vec<G::Group>, Vec<G::Group>) = cfg_iter!(&left.a)
             .zip(&left.b)
-            .zip(&right.a)
-            .zip(&right.b)
-            .map(|(((l_a, l_b), &r_a), &r_b)| (r_a * scale + l_a, r_b * scale + l_b))
+            .zip(cfg_iter!(&right.a).zip(&right.b))
+            .map(|((l_a, l_b), (&r_a, &r_b))| (r_a * scale + l_a, r_b * scale + l_b))
             .unzip();
         let a = G::Group::normalize_batch(&a);
         let b = G::Group::normalize_batch(&b);
@@ -124,9 +124,27 @@ impl<G: AffineRepr> Key<G> {
     }
 }
 
-/// Both commitment outputs a pair of $F_q^k$ element.
+/// Commitments for both CM_S and `CM_D` consists of a of [`PairingOutput`] elements.
 #[derive(PartialEq, CanonicalSerialize, CanonicalDeserialize, Clone, Debug)]
-pub struct Commitment<E: Pairing>(pub PairingOutput<E>, pub PairingOutput<E>);
+pub struct Commitment<E: Pairing> {
+    pub t: PairingOutput<E>,
+    pub u: PairingOutput<E>,
+}
+
+impl<E: Pairing> Commitment<E> {
+    pub fn new(t: PairingOutput<E>, u: PairingOutput<E>) -> Self {
+        Self { t, u }
+    }
+}
+
+impl<E: Pairing> Default for Commitment<E> {
+    fn default() -> Self {
+        Self {
+            t: PairingOutput(E::TargetField::ONE),
+            u: PairingOutput(E::TargetField::ONE),
+        }
+    }
+}
 
 /// Commits to a single vector of G1 elements in the following way:
 /// $T = \prod_{i=0}^n e(A_i, v_{1,i})$
@@ -134,13 +152,13 @@ pub struct Commitment<E: Pairing>(pub PairingOutput<E>, pub PairingOutput<E>);
 /// Output is $(T,U)$
 pub fn commit_single<E: Pairing>(
     vkey: &VKey<E>,
-    a_vec: &[E::G1Affine],
+    a_s: &[E::G1Affine],
 ) -> Result<Commitment<E>, Error> {
     try_par! {
-        let a = ip::pairing::<E>(a_vec, &vkey.a),
-        let b = ip::pairing::<E>(a_vec, &vkey.b)
+        let t = ip::pairing::<E>(a_s, &vkey.a),
+        let u = ip::pairing::<E>(a_s, &vkey.b)
     };
-    Ok(Commitment(a, b))
+    Ok(Commitment { t, u })
 }
 
 /// Commits to a tuple of G1 vector and G2 vector in the following way:
@@ -161,7 +179,10 @@ pub fn commit_double<E: Pairing>(
         let u1 = ip::pairing::<E>(a, &vkey.b),
         let u2 = ip::pairing::<E>(&wkey.b, b)
     };
-    Ok(Commitment(t1 + t2, u1 + u2))
+    Ok(Commitment {
+        t: t1 + t2,
+        u: u1 + u2,
+    })
 }
 
 #[cfg(test)]
