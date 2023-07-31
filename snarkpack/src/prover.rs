@@ -11,7 +11,7 @@ use crate::{
 };
 
 use super::{
-    commitment, errors::Error, ip, srs::ProverSRS, transcript::Transcript,
+    commitment, errors::Error, inner_product, srs::ProverSRS, transcript::Transcript,
     utils::structured_scalar_power,
 };
 use crate::data_structures::AggregationProof;
@@ -90,9 +90,9 @@ impl<E: Pairing> SnarkPack<E> {
         let ref_r_s = &r_s;
         try_par! {
             // compute A * B^r for the verifier
-            let aggregated_ab = ip::pairing::<E>(&ref_a, &ref_b_r),
+            let aggregated_ab = inner_product::pairing::<E>(&ref_a, &ref_b_r),
             // compute C^r for the verifier
-            let agg_c = ip::msm::<E::G1Affine>(&ref_c, &ref_r_s)
+            let agg_c = inner_product::msm::<E::G1Affine>(&ref_c, &ref_r_s)
         };
 
         let aggregated_c = agg_c.into_affine();

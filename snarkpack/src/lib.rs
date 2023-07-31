@@ -10,7 +10,7 @@ pub mod mmt;
 
 mod commitment;
 mod errors;
-mod ip;
+mod inner_product;
 mod pairing_check;
 pub mod srs;
 pub mod transcript;

@@ -4,7 +4,7 @@ use ark_std::cfg_iter_mut;
 
 use crate::{
     commitment::{self, VKey, WKey},
-    ip,
+    inner_product,
     srs::ProverSRS,
     utils::{compress, structured_scalar_power},
     Error, Transcript,
@@ -147,14 +147,14 @@ impl<E: Pairing> MMT<E> {
                 //
                 // For TIPP (i.e. A and B):
                 // \prod e(A_right,B_left)
-                let l_ab = ip::pairing::<E>(&ra_right, &rb_left),
-                let r_ab = ip::pairing::<E>(&ra_left, &rb_right),
+                let l_ab = inner_product::pairing::<E>(&ra_right, &rb_left),
+                let r_ab = inner_product::pairing::<E>(&ra_left, &rb_right),
 
                 // For MIPP (i.e. C and r):
                 // z_l = c[n':] ^ r[:n']
-                let l_c = ip::msm(rc_right, rr_left),
+                let l_c = inner_product::msm(rc_right, rr_left),
                 // Z_r = c[:n'] ^ r[n':]
-                let r_c = ip::msm(rc_left, rr_right),
+                let r_c = inner_product::msm(rc_left, rr_right),
                 /********************************************************/
 
                 /********************************************************/

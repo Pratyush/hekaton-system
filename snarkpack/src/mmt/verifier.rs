@@ -8,7 +8,7 @@ use crossbeam_channel::Sender;
 use rayon::prelude::*;
 
 use crate::{
-    cfg_fold, commitment::Commitment, ip, kzg::evaluate_ipa_polynomial,
+    cfg_fold, commitment::Commitment, inner_product, kzg::evaluate_ipa_polynomial,
     pairing_check::PairingCheck, srs::VerifierKey, Transcript,
 };
 
@@ -101,7 +101,7 @@ impl<E: Pairing> MMT<E> {
             // MIPP
             // Verify base inner product commitment
             // Z ==  c ^ r
-            let final_z = ip::msm::<E::G1Affine>(&[final_c], &[final_r]),
+            let final_z = inner_product::msm::<E::G1Affine>(&[final_c], &[final_r]),
             // Check commiment correctness
             // T = e(C,v1)
             let pcheckt = PairingCheck::rand(&[(final_c, final_vkey.0)], final_comm_c.t),

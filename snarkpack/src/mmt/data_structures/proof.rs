@@ -6,8 +6,7 @@ use ark_serialize::{
 use ark_std::io::{Read, Write};
 
 /// It contains all elements derived in the GIPA loop for both TIPP and MIPP at
-/// the same time. Serialization is done manually here for better inspection
-/// (CanonicalSerialization is implemented manually, not via the macro).
+/// the same time.
 #[derive(Debug, Clone)]
 pub struct GipaProof<E: Pairing> {
     pub num_proofs: u32,
@@ -40,14 +39,14 @@ impl<E: Pairing> PartialEq for GipaProof<E> {
 }
 
 impl<E: Pairing> GipaProof<E> {
-    fn log_proofs(nproofs: usize) -> usize {
+    fn log_num_proofs(nproofs: usize) -> usize {
         (nproofs as f32).log2().ceil() as usize
     }
 }
 
 impl<E: Pairing> CanonicalSerialize for GipaProof<E> {
     fn serialized_size(&self, compress: Compress) -> usize {
-        let log_proofs = Self::log_proofs(self.num_proofs as usize);
+        let log_proofs = Self::log_num_proofs(self.num_proofs as usize);
         (self.num_proofs as u32).serialized_size(compress)
             + log_proofs
                 * (self.comms_lr_ab[0].0.serialized_size(compress)
@@ -73,7 +72,7 @@ impl<E: Pairing> CanonicalSerialize for GipaProof<E> {
         // number of proofs
         self.num_proofs.serialize_with_mode(&mut out, compress)?;
 
-        let log_proofs = Self::log_proofs(self.num_proofs as usize);
+        let log_proofs = Self::log_num_proofs(self.num_proofs as usize);
         assert_eq!(self.comms_lr_ab.len(), log_proofs);
 
         // comms_ab
@@ -140,7 +139,7 @@ where
                 return Err(SerializationError::InvalidData);
             }
 
-            let log_proofs = Self::log_proofs(nproofs as usize);
+            let log_proofs = Self::log_num_proofs(nproofs as usize);
 
             let comms_ab = (0..log_proofs)
                 .map(|_| {

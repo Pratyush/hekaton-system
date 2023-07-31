@@ -1,4 +1,4 @@
-use crate::ip;
+use crate::inner_product;
 use crate::Error;
 use ark_ec::{
     pairing::{Pairing, PairingOutput},
@@ -155,8 +155,8 @@ pub fn commit_single<E: Pairing>(
     a_s: &[E::G1Affine],
 ) -> Result<Commitment<E>, Error> {
     try_par! {
-        let t = ip::pairing::<E>(a_s, &vkey.a),
-        let u = ip::pairing::<E>(a_s, &vkey.b)
+        let t = inner_product::pairing::<E>(a_s, &vkey.a),
+        let u = inner_product::pairing::<E>(a_s, &vkey.b)
     };
     Ok(Commitment { t, u })
 }
@@ -173,11 +173,11 @@ pub fn commit_double<E: Pairing>(
 ) -> Result<Commitment<E>, Error> {
     try_par! {
         // (A * v)
-        let t1 = ip::pairing::<E>(a, &vkey.a),
+        let t1 = inner_product::pairing::<E>(a, &vkey.a),
         // (w * B)
-        let t2 = ip::pairing::<E>(&wkey.a, b),
-        let u1 = ip::pairing::<E>(a, &vkey.b),
-        let u2 = ip::pairing::<E>(&wkey.b, b)
+        let t2 = inner_product::pairing::<E>(&wkey.a, b),
+        let u1 = inner_product::pairing::<E>(a, &vkey.b),
+        let u2 = inner_product::pairing::<E>(&wkey.b, b)
     };
     Ok(Commitment {
         t: t1 + t2,
