@@ -53,14 +53,14 @@ pub struct ProverSRS<E: Pairing> {
     /// We take all powers instead of only ones from n -> 2n-1 (w commitment key
     /// is formed from these powers) since the prover will create a shifted
     /// polynomial of degree 2n-1 when doing the KZG opening proof.
-    pub g_alpha_powers_table: Vec<E::G1Affine>,
+    pub g_alpha_powers: Vec<E::G1Affine>,
     /// $\{h^a^i\}_{i=0}^{n-1}$ - here we don't need to go to 2n-1 since v
     /// commitment key only goes up to n-1 exponent.
-    pub h_alpha_powers_table: Vec<E::G2Affine>,
+    pub h_alpha_powers: Vec<E::G2Affine>,
     /// $\{g^b^i\}_{i=0}^{2n-1}$
-    pub g_beta_powers_table: Vec<E::G1Affine>,
+    pub g_beta_powers: Vec<E::G1Affine>,
     /// $\{h^b^i\}_{i=0}^{n-1}$
-    pub h_beta_powers_table: Vec<E::G2Affine>,
+    pub h_beta_powers: Vec<E::G2Affine>,
     /// commitment key using in MIPP and TIPP
     pub vkey: VKey<E>,
     /// commitment key using in TIPP
@@ -70,15 +70,17 @@ pub struct ProverSRS<E: Pairing> {
 /// Contains the necessary elements to verify an aggregated Groth16 proof; it is of fixed size
 /// regardless of the number of proofs aggregated. However, a verifier SRS will be determined by
 /// the number of proofs being aggregated.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VerifierKey<E: Pairing> {
     pub n: usize,
-    pub g: E::G1,
-    pub h: E::G2,
-    pub g_alpha: E::G1,
-    pub g_beta: E::G1,
-    pub h_alpha: E::G2,
-    pub h_beta: E::G2,
+    pub g: E::G1Affine,
+    pub h: E::G2Affine,
+    pub neg_g: E::G1Affine,
+    pub neg_h: E::G2Affine,
+    pub g_alpha: E::G1Affine,
+    pub g_beta: E::G1Affine,
+    pub h_alpha: E::G2Affine,
+    pub h_beta: E::G2Affine,
 }
 
 impl<E: Pairing> PartialEq for GenericSRS<E> {
@@ -87,17 +89,6 @@ impl<E: Pairing> PartialEq for GenericSRS<E> {
             && self.g_beta_powers == other.g_beta_powers
             && self.h_alpha_powers == other.h_alpha_powers
             && self.h_beta_powers == other.h_beta_powers
-    }
-}
-
-impl<E: Pairing> PartialEq for VerifierKey<E> {
-    fn eq(&self, other: &Self) -> bool {
-        self.g == other.g
-            && self.h == other.h
-            && self.g_alpha == other.g_alpha
-            && self.g_beta == other.g_beta
-            && self.h_alpha == other.h_alpha
-            && self.h_beta == other.h_beta
     }
 }
 
@@ -131,16 +122,16 @@ impl<E: Pairing> GenericSRS<E> {
         let h_low = 0;
         let h_up = h_low + n;
         // TODO  precompute window
-        let g_alpha_powers_table = self.g_alpha_powers[g_low..g_up].to_vec();
-        let g_beta_powers_table = self.g_beta_powers[g_low..g_up].to_vec();
-        let h_alpha_powers_table = self.h_alpha_powers[h_low..h_up].to_vec();
-        let h_beta_powers_table = self.h_beta_powers[h_low..h_up].to_vec();
+        let g_alpha_powers = self.g_alpha_powers[g_low..g_up].to_vec();
+        let g_beta_powers = self.g_beta_powers[g_low..g_up].to_vec();
+        let h_alpha_powers = self.h_alpha_powers[h_low..h_up].to_vec();
+        let h_beta_powers = self.h_beta_powers[h_low..h_up].to_vec();
 
         println!(
             "\nPROVER SRS -- nun_proofs {}, tn {}, alpha_power_table {}\n",
             num_proofs,
             tn,
-            g_alpha_powers_table.len()
+            g_alpha_powers.len()
         );
 
         let v1 = self.h_alpha_powers[h_low..h_up].to_vec();
@@ -154,60 +145,38 @@ impl<E: Pairing> GenericSRS<E> {
         let wkey = WKey::<E> { a: w1, b: w2 };
         assert!(wkey.has_correct_len(n));
         let pk = ProverSRS::<E> {
-            g_alpha_powers_table,
-            g_beta_powers_table,
-            h_alpha_powers_table,
-            h_beta_powers_table,
+            g_alpha_powers,
+            g_beta_powers,
+            h_alpha_powers,
+            h_beta_powers,
             vkey,
             wkey,
             n,
         };
+        let g = self.g_alpha_powers[0];
+        let h = self.h_alpha_powers[0];
+        let neg_g = (-g.into_group()).into();
+        let neg_h = (-h.into_group()).into();
         let vk = VerifierKey::<E> {
             n,
-            g: self.g_alpha_powers[0].into_group(),
-            h: self.h_alpha_powers[0].into_group(),
-            g_alpha: self.g_alpha_powers[1].into_group(),
-            g_beta: self.g_beta_powers[1].into_group(),
-            h_alpha: self.h_alpha_powers[1].into_group(),
-            h_beta: self.h_beta_powers[1].into_group(),
+            g,
+            h,
+            neg_g,
+            neg_h,
+            g_alpha: self.g_alpha_powers[1],
+            g_beta: self.g_beta_powers[1],
+            h_alpha: self.h_alpha_powers[1],
+            h_beta: self.h_beta_powers[1],
         };
         (pk, vk)
     }
 
     pub fn write<W: Write>(&self, mut writer: W) -> Result<(), Error> {
         (self.g_alpha_powers.len() as u32).serialize_compressed(&mut writer)?;
-        write_vec(
-            &mut writer,
-            &self
-                .g_alpha_powers
-                .iter()
-                .map(|e| e.into_group())
-                .collect::<Vec<E::G1>>(),
-        )?;
-        write_vec(
-            &mut writer,
-            &self
-                .g_beta_powers
-                .iter()
-                .map(|e| e.into_group())
-                .collect::<Vec<E::G1>>(),
-        )?;
-        write_vec(
-            &mut writer,
-            &self
-                .h_alpha_powers
-                .iter()
-                .map(|e| e.into_group())
-                .collect::<Vec<E::G2>>(),
-        )?;
-        write_vec(
-            &mut writer,
-            &self
-                .h_beta_powers
-                .iter()
-                .map(|e| e.into_group())
-                .collect::<Vec<E::G2>>(),
-        )?;
+        write_vec(&mut writer, &self.g_alpha_powers)?;
+        write_vec(&mut writer, &self.g_beta_powers)?;
+        write_vec(&mut writer, &self.h_alpha_powers)?;
+        write_vec(&mut writer, &self.h_beta_powers)?;
         Ok(())
     }
 
@@ -219,15 +188,15 @@ impl<E: Pairing> GenericSRS<E> {
     }
 
     pub fn read<R: Read>(mut reader: R) -> Result<Self, Error> {
-        let len = u32::deserialize_compressed(&mut reader).map_err(|e| Error::Serialization(e))?;
+        let len = u32::deserialize_compressed(&mut reader).map_err(Error::Serialization)?;
         if len > MAX_SRS_SIZE as u32 {
             return Err(Error::InvalidSRS("SRS len > maximum".to_string()));
         }
 
-        let g_alpha_powers = read_vec(len, &mut reader).map_err(|e| Error::Serialization(e))?;
-        let g_beta_powers = read_vec(len, &mut reader).map_err(|e| Error::Serialization(e))?;
-        let h_alpha_powers = read_vec(len, &mut reader).map_err(|e| Error::Serialization(e))?;
-        let h_beta_powers = read_vec(len, &mut reader).map_err(|e| Error::Serialization(e))?;
+        let g_alpha_powers = read_vec(len, &mut reader).map_err(Error::Serialization)?;
+        let g_beta_powers = read_vec(len, &mut reader).map_err(Error::Serialization)?;
+        let h_alpha_powers = read_vec(len, &mut reader).map_err(Error::Serialization)?;
+        let h_beta_powers = read_vec(len, &mut reader).map_err(Error::Serialization)?;
 
         Ok(Self {
             g_alpha_powers,
@@ -312,16 +281,16 @@ pub(crate) fn structured_generators_scalar_power<G: CurveGroup>(
     powers_of_g.into_iter().map(|v| v.into_affine()).collect()
 }
 
-fn write_vec<G: Group, W: Write>(mut w: W, v: &[G]) -> Result<(), SerializationError> {
+fn write_vec<G: CanonicalSerialize>(mut w: impl Write, v: &[G]) -> Result<(), SerializationError> {
     for p in v {
         p.serialize_compressed(&mut w)?;
     }
     Ok(())
 }
 
-fn read_vec<G: CanonicalDeserialize, R: Read>(
+fn read_vec<G: CanonicalDeserialize>(
     len: u32,
-    mut r: R,
+    mut r: impl Read,
 ) -> Result<Vec<G>, SerializationError> {
     (0..len)
         .map(|_| G::deserialize_compressed(&mut r))

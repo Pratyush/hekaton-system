@@ -8,11 +8,11 @@ use ark_poly::{univariate::DensePolynomial, DenseUVPolynomial};
 pub(crate) fn prove_commitment_v<G: AffineRepr>(
     srs_powers_alpha: &[G],
     srs_powers_beta: &[G],
-    transcript: &[G::ScalarField],
+    challenges: &[G::ScalarField],
     point: G::ScalarField,
 ) -> Result<EvaluationProof<G>, Error> {
     // f_v
-    let vkey_poly = ipa_polynomial(transcript, G::ScalarField::ONE);
+    let vkey_poly = ipa_polynomial(challenges, G::ScalarField::ONE);
 
     prove_evaluation(srs_powers_alpha, srs_powers_beta, vkey_poly, point)
 }
@@ -20,12 +20,12 @@ pub(crate) fn prove_commitment_v<G: AffineRepr>(
 pub(crate) fn prove_commitment_w<G: AffineRepr>(
     srs_powers_alpha: &[G],
     srs_powers_beta: &[G],
-    transcript: &[G::ScalarField],
+    challenges: &[G::ScalarField],
     r: G::ScalarField,
     point: G::ScalarField,
 ) -> Result<EvaluationProof<G>, Error> {
     // this computes f(X) = \prod (1 + x (rX)^{2^j})
-    let f = ipa_polynomial(transcript, r);
+    let f = ipa_polynomial(challenges, r);
     // this computes f_w(X) = X^n * f(X) - it simply shifts all coefficients to by n
     let fw_coeffs = [vec![G::ScalarField::ZERO; f.len()], f.coeffs].concat();
     let fw = DensePolynomial::from_coefficients_vec(fw_coeffs);

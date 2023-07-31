@@ -58,14 +58,14 @@ impl<E: Pairing> MMT<E> {
         // Complete KZG proofs
         par! {
             let vkey_opening = crate::kzg::prove_commitment_v(
-                &srs.h_alpha_powers_table,
-                &srs.h_beta_powers_table,
+                &srs.h_alpha_powers,
+                &srs.h_beta_powers,
                 &challenges_inv,
                 z,
             ),
             let wkey_opening = crate::kzg::prove_commitment_w(
-                &srs.g_alpha_powers_table,
-                &srs.g_beta_powers_table,
+                &srs.g_alpha_powers,
+                &srs.g_beta_powers,
                 &challenges,
                 r_inverse,
                 z,

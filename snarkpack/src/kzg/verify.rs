@@ -15,56 +15,52 @@ use super::{evaluate_ipa_polynomial, EvaluationProof};
 pub fn verify_kzg_v<E: Pairing>(
     v_srs: &VerifierKey<E>,
     final_vkey: &(E::G2Affine, E::G2Affine),
-    vkey_opening: &EvaluationProof<E::G2Affine>,
+    proof: &EvaluationProof<E::G2Affine>,
     challenges: &[E::ScalarField],
-    kzg_challenge: E::ScalarField,
+    point: E::ScalarField,
     checks: Sender<Option<PairingCheck<E>>>,
 ) {
     // f_v(z)
-    let vpoly_eval_z = evaluate_ipa_polynomial(challenges, kzg_challenge, E::ScalarField::ONE);
+    let v_poly_at_z = evaluate_ipa_polynomial(challenges, point, E::ScalarField::ONE);
     // -g such that when we test a pairing equation we only need to check if
     // it's equal 1 at the end:
     // e(a,b) = e(c,d) <=> e(a,b)e(-c,d) = 1
-    let ng = (-v_srs.g).into_affine();
     // e(A,B) = e(C,D) <=> e(A,B)e(-C,D) == 1 <=> e(A,B)e(C,D)^-1 == 1
 
-    let v1clone = checks.clone();
-    let v2clone = checks.clone();
+    let v1 = checks.clone();
+    let v2 = checks.clone();
 
     par! {
         // e(g, C_f * h^{-y}) == e(v1 * g^{-x}, \pi) = 1
         let _check1 = kzg_check_v::<E>(
             v_srs,
-            ng,
-            kzg_challenge,
-            vpoly_eval_z,
-            final_vkey.0.into_group(),
+            point,
+            v_poly_at_z,
+            final_vkey.0,
             v_srs.g_alpha,
-            vkey_opening.0,
-            v1clone,
+            proof.0,
+            v1,
         ),
 
         // e(g, C_f * h^{-y}) == e(v2 * g^{-x}, \pi) = 1
         let _check2 = kzg_check_v::<E>(
             v_srs,
-            ng,
-            kzg_challenge,
-            vpoly_eval_z,
-            final_vkey.1.into_group(),
+            point,
+            v_poly_at_z,
+            final_vkey.1,
             v_srs.g_beta,
-            vkey_opening.1,
-            v2clone,
+            proof.1,
+            v2,
         )
     };
 }
 
 fn kzg_check_v<E: Pairing>(
     v_srs: &VerifierKey<E>,
-    ng: E::G1Affine,
     x: E::ScalarField,
     y: E::ScalarField,
-    cf: E::G2,
-    vk: E::G1,
+    cf: E::G2Affine,
+    vk: E::G1Affine,
     pi: E::G2Affine,
     checks: Sender<Option<PairingCheck<E>>>,
 ) {
@@ -73,11 +69,14 @@ fn kzg_check_v<E: Pairing>(
     // e(-g, C_f * h^{-y}) * e(vk * g^{-x}, \pi) = 1
 
     // C_f - (y * h)
-    let b = (cf - v_srs.h * y).into();
+    let b = (cf.into_group() - v_srs.h * y).into();
 
     // vk - (g * x)
-    let c = (vk - v_srs.g * x).into_affine();
-    let p = PairingCheck::rand(&[(ng, b), (c, pi)], PairingOutput(E::TargetField::ONE));
+    let c = (vk.into_group() - v_srs.g * x).into_affine();
+    let p = PairingCheck::rand(
+        &[(v_srs.neg_g, b), (c, pi)],
+        PairingOutput(E::TargetField::ONE),
+    );
     checks.send(Some(p)).unwrap();
 }
 
@@ -91,52 +90,47 @@ pub fn verify_kzg_w<E: Pairing>(
     kzg_challenge: E::ScalarField,
     checks: Sender<Option<PairingCheck<E>>>,
 ) {
-    // compute in parallel f(z) and z^n and then combines into f_w(z) = z^n * f(z)
+    // compute in parallel f(z) and z^n and then combine into f_w(z) = z^n * f(z)
     par! {
         let fz = evaluate_ipa_polynomial(challenges, kzg_challenge, r_shift),
         let zn = kzg_challenge.pow(&[v_srs.n as u64])
     };
 
-    let fwz = fz * zn;
+    let w_poly_at_z = fz * zn;
 
-    let nh = (-v_srs.h).into_affine();
-
-    let w1clone = checks.clone();
-    let w2clone = checks.clone();
+    let w1 = checks.clone();
+    let w2 = checks.clone();
     par! {
         // e(C_f * g^{-y}, h) = e(\pi, w1 * h^{-x})
         let _check1 = kzg_check_w::<E>(
             v_srs,
-            nh,
             kzg_challenge,
-            fwz,
-            final_wkey.0.into_group(),
+            w_poly_at_z,
+            final_wkey.0,
             v_srs.h_alpha,
             wkey_opening.0,
-            w1clone,
+            w1,
         ),
 
         // e(C_f * g^{-y}, h) = e(\pi, w2 * h^{-x})
         let _check2 = kzg_check_w::<E>(
             v_srs,
-            nh,
             kzg_challenge,
-            fwz,
-            final_wkey.1.into_group(),
+            w_poly_at_z,
+            final_wkey.1,
             v_srs.h_beta,
             wkey_opening.1,
-            w2clone,
+            w2,
         )
     };
 }
 
 fn kzg_check_w<E: Pairing>(
     v_srs: &VerifierKey<E>,
-    nh: E::G2Affine,
     x: E::ScalarField,
     y: E::ScalarField,
-    cf: E::G1,
-    wk: E::G2,
+    cf: E::G1Affine,
+    wk: E::G2Affine,
     pi: E::G1Affine,
     checks: Sender<Option<PairingCheck<E>>>,
 ) {
@@ -145,10 +139,13 @@ fn kzg_check_w<E: Pairing>(
     // e(C_f * g^{-y}, -h) * e(\pi, wk * h^{-x}) = 1
 
     // C_f - (y * g)
-    let a = (cf - v_srs.g * y).into();
+    let a = (cf.into_group() - v_srs.g * y).into();
 
     // wk - (x * h)
-    let d = (wk - v_srs.h * x).into();
-    let p = PairingCheck::rand(&[(a, nh), (pi, d)], PairingOutput(E::TargetField::ONE));
+    let d = (wk.into_group() - v_srs.h * x).into();
+    let p = PairingCheck::rand(
+        &[(a, v_srs.neg_h), (pi, d)],
+        PairingOutput(E::TargetField::ONE),
+    );
     checks.send(Some(p)).unwrap();
 }
