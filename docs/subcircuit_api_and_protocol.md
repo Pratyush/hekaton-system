@@ -90,26 +90,28 @@ We define here a way of defining interoperable subcircuits using a `HashMap` to 
 
 Recall the trait definitions
 
-    pub trait ConstraintSynthesizer<F: Field> {
-        fn generate_constraints(self, cs: ConstraintSystemRef<F>) -> Result<()>;
+```rust
+pub trait ConstraintSynthesizer<F: Field> {
+    fn generate_constraints(self, cs: ConstraintSystemRef<F>) -> Result<()>;
+}
+
+pub trait MultiStageConstraintSynthesizer<F: Field> {
+    /// The number of stages required to construct the constraint system.
+    fn total_num_stages(&self) -> usize;
+
+    /// The number of stages required to construct the constraint system.
+    fn last_stage(&self) -> usize {
+        self.total_num_stages() - 1
     }
 
-    pub trait MultiStageConstraintSynthesizer<F: Field> {
-        /// The number of stages required to construct the constraint system.
-        fn total_num_stages(&self) -> usize;
-
-        /// The number of stages required to construct the constraint system.
-        fn last_stage(&self) -> usize {
-            self.total_num_stages() - 1
-        }
-
-        /// Generates constraints for the i-th stage.
-        fn generate_constraints(
-            &mut self,
-            stage: usize,
-            cs: &mut MultiStageConstraintSystem<F>,
-        ) -> Result<(), SynthesisError>;
-    }
+    /// Generates constraints for the i-th stage.
+    fn generate_constraints(
+        &mut self,
+        stage: usize,
+        cs: &mut MultiStageConstraintSystem<F>,
+    ) -> Result<(), SynthesisError>;
+}
+```
 
 We need to have users define a circuit with specific points at which it can be split into subcircuits.
 
