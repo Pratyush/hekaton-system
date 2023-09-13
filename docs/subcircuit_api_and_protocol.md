@@ -2,7 +2,7 @@
 
 Let C represent a large circuit. A prover (our end user) wants to distribute the proof of C with inputs `(x, w)`. So they manually split up C into sequential subcircuits C₁, ..., Cₙ such that:
 
-1. Circuit #1 takes in the public input `x` (**question: should we permit other circuits to take public input?)
+1. Circuit #1 takes in the public input `x` (**TODO:** should we permit other circuits to take public input?)
 2. Every Cᵢ can expose values, called _portal wires_, and can reference any previously exposed portal wires
 
 The prover then acts as a _coordinator_, leveraging access to an arbitrary number of _worker nodes_ to compute its proof in as parallel a way as is possible.
@@ -23,14 +23,14 @@ The prover then acts as a _coordinator_, leveraging access to an arbitrary numbe
     3. For each `i`, computes the partial transcript evals `time_tr_{1..i}(chal)` and `addr_tr_{1..i}(chal)`. These partial evals are called `time_pevalᵢ` and `addr_pevalᵢ` respectively.
     4. Computes a Merkle tree where leaf `i` is `(time_pevalᵢ, addr_pevalᵢ)`. Denote the root by `root_pevals`.
 5. For every `i` in parallel, the coordinator:
-    1. Sends `(chal, θᵢ₊₁, time_pevalᵢ, addr_pevalᵢ)` to a worker node, where `θᵢ` is the authentication path for leaf `i`
+    1. Sends `(chal, θᵢ₊₁, time_pevalᵢ, addr_pevalᵢ, fᵢ₋₁)` to a worker node, where `θᵢ` is the authentication path for leaf `i`, and `fᵢ₋₁` is the final entry in `addr_trᵢ₋₁`
     2. Waits for the worker node's CP-Groth16 proof `πᵢ` over `Cᵢ(chal, root_pevals, i; time_trᵢ, addr_trᵢ, time_pevalᵢ, addr_pevalᵢ, θᵢ₊₁)`. Specifically, this proof
-        1. Computes the new partial evals `(time_pevalᵢ₊₁, addr_pevalᵢ₊₁)` using `chal`, `(time_trᵢ, addr_trᵢ)`, and `(time_pevalᵢ, addr_pevalᵢ)`
-        2. Proves that `(time_pevalᵢ₊₁, addr_pevalᵢ₊₁)` occurs at leaf index `i+1`, using `θᵢ₊₁` and `root_pevals`
-        3. **QUESTION: Every circuit now has public input `i`. Can we handle that in the proving scheme?**
-6. The coordinator finally combines `π₁, ..., πₙ` into an aggregate proof `π_agg` that shows that
-    1. `π₁` verifies with some public input, as well as `(hinput₁, houtput₁)`
-    2. Each `πᵢ` is verifies wrt `(chal, root_pevals, i)`
+        1. Performs the actual subcircuit, using values from `time_trᵢ` sequentially, where referenced
+        2. Checks the consistency of `fᵢ₋₁ || addr_trᵢ`, i.e., that the addresses are nondecreasing and that all reads from the address have the same `val`.
+        3. Computes the new partial evals `(time_pevalᵢ₊₁, addr_pevalᵢ₊₁)` using `chal`, `(time_trᵢ, addr_trᵢ)`, and `(time_pevalᵢ, addr_pevalᵢ)`
+        4. Proves that `(time_pevalᵢ₊₁, addr_pevalᵢ₊₁)` occurs at leaf index `i+1`, using `θᵢ₊₁` and `root_pevals`
+        5. **TODO:** Every circuit now has public input `i`. Can we handle that in the proving scheme?
+6. The coordinator finally combines `π₁, ..., πₙ` into an aggregate proof `π_agg` that shows that each `πᵢ` verifies wrt `(chal, root_pevals, i)`.
 7. In addition, the coordinator produces an opening `θ_fin` for final Merkle leaf, which should be of the form `(s, s)`. The coordinator produces a polynomial evaluation proof `π_poly` wrt `com_tr` that `tr(chal) == s`. The final proof is thus `(com_tr, root_pevals, θ_fin, π_agg, π_poly)`.
 
 ---
