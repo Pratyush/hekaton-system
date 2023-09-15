@@ -2,7 +2,7 @@
 
 Let C represent a large circuit. A prover (our end user) wants to distribute the proof of C with inputs `(x, w)`. So they manually split up C into sequential subcircuits C₁, ..., Cₙ such that:
 
-1. Circuit #1 takes in the public input `x` (**TODO:** should we permit other circuits to take public input?)
+1. Circuit #1 takes in the public input `x`
 2. Every Cᵢ can expose values, called _portal wires_, and can reference any previously exposed portal wires
 
 The prover then acts as a _coordinator_, leveraging access to an arbitrary number of _worker nodes_ to compute its proof in as parallel a way as is possible.
@@ -13,7 +13,7 @@ The prover then acts as a _coordinator_, leveraging access to an arbitrary numbe
 2. Begin the commit-and-prove process. For each `i`, the coordinator:
     1. Computes `time_trᵢ` — the trace of `(val, addr)` pairs that the subcircuit accessed, in chronological order of access.
     2. Computes `addr_trᵢ` — a list of `(val, addr)` pairs of the same length as `time_trᵢ`, taken from the address-sorted trace
-    3. Sends `(time_trᵢ, addr_trᵢ)` to a worker node (**TODO:** this excludes the first subcircuit, which takes public input)
+    3. Sends `(time_trᵢ, addr_trᵢ)` to a worker node. If `i = 1`, then the coordinator also sends the public input `x`.
 3. Each worker node i:
     1. Uses the commit-and-prove scheme to compute the commitment `(com_trᵢ, opening_trᵢ) := Com(trᵢ)`.
     2. Sends `com_trᵢ`, and saves the commitment and opening. It will need them in step 4.
@@ -24,13 +24,13 @@ The prover then acts as a _coordinator_, leveraging access to an arbitrary numbe
     4. Computes a Merkle tree where leaf `i` is `(time_pevalᵢ, addr_pevalᵢ)`. Denote the root by `root_pevals`.
 5. For every `i` in parallel, the coordinator:
     1. Sends `(chal, θᵢ₊₁, time_pevalᵢ, addr_pevalᵢ, fᵢ₋₁)` to a worker node, where `θᵢ` is the authentication path for leaf `i`, and `fᵢ₋₁` is the final entry in `addr_trᵢ₋₁`
-    2. Waits for the worker node's CP-Groth16 proof `πᵢ` over `Cᵢ(chal, root_pevals, i; time_trᵢ, addr_trᵢ, time_pevalᵢ, addr_pevalᵢ, θᵢ₊₁)`. Specifically, this proof
+    2. Waits for the worker node's CP-Groth16 proof `πᵢ` over `Cᵢ(chal, root_pevals; time_trᵢ, addr_trᵢ, time_pevalᵢ, addr_pevalᵢ, θᵢ₊₁)`. Specifically, this proof
         1. Performs the actual subcircuit, using values from `time_trᵢ` sequentially, where referenced
         2. Checks the consistency of `fᵢ₋₁ || addr_trᵢ`, i.e., that the addresses are nondecreasing and that all reads from the address have the same `val`.
         3. Computes the new partial evals `(time_pevalᵢ₊₁, addr_pevalᵢ₊₁)` using `chal`, `(time_trᵢ, addr_trᵢ)`, and `(time_pevalᵢ, addr_pevalᵢ)`
         4. Proves that `(time_pevalᵢ₊₁, addr_pevalᵢ₊₁)` occurs at leaf index `i+1`, using `θᵢ₊₁` and `root_pevals`
-        5. **TODO:** Every circuit now has public input `i`. Can we handle that in the proving scheme?
-6. The coordinator finally combines `π₁, ..., πₙ` into an aggregate proof `π_agg` that shows that each `πᵢ` verifies wrt `(chal, root_pevals, i)`.
+        5. (only for `i=1`) Takes the public input `x` and processes it into however many shared wires it needs
+6. The coordinator finally combines `π₁, ..., πₙ` into an aggregate proof `π_agg` that shows that each `πᵢ` verifies wrt `(chal, root_pevals)` (and `x`, for `i=1`). Note that `i` is not a public input, rather it is a const in Cᵢ.
 7. In addition, the coordinator produces an opening `θ_fin` for final Merkle leaf, which should be of the form `(s, s)`. The coordinator produces a polynomial evaluation proof `π_poly` wrt `com_tr` that `tr(chal) == s`. The final proof is thus `(com_tr, root_pevals, θ_fin, π_agg, π_poly)`.
 
 ---
