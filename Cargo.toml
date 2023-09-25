@@ -3,6 +3,7 @@
 members = [
     "cp-groth16",
     "snarkpack",
+    "distributed-prover",
 
     "tinyram-emu",
     "tinyram-constraints",

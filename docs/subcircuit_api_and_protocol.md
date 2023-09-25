@@ -18,85 +18,27 @@ The prover then acts as a _coordinator_, leveraging access to an arbitrary numbe
     1. Uses the commit-and-prove scheme to compute the commitment `(com_trᵢ, opening_trᵢ) := Com((time_trᵢ, addr_trᵢ))`.
     2. Sends `com_trᵢ`, and saves the commitment and opening. It will need them in step 4.
 4. The coordinator gets all the worker node's commitments, and
-    1. Computes two challenges`tr_chal, entry_chal = Hash(com_tr₁, ..., com_trₙ)`
+    1. Computes an IPP commitment to all the subtranscripts commitments, `(com_tr, opening_tr) := IPPCom(com_tr₁, ..., com_trₙ)`
+    1. Computes two challenges`tr_chal, entry_chal = Hash(com_tr)`
         * `entry_chal` is used to compress `(val, addr)` to a single field element `val + entry_chal*addr`
         * `tr_chal` is used to compress the transcript (with hashed entries) to a single field element `Π (tr_chal - hashed_entryᵢ)`
     2. For each `i`, computes the partial transcript evals `time_tr_{1..i}(chal)` and `addr_tr_{1..i}(chal)`. These partial evals are called `time_pevalᵢ` and `addr_pevalᵢ` respectively.
     3. Computes a Merkle tree with leaf `i` being `(time_pevalᵢ, addr_pevalᵢ, fᵢ₋₁)`, where `fᵢ` denotes the final entry of `addr_trᵢ`. Denote the root by `root_pevals`.
 5. For every `i` in parallel, the coordinator:
-    1. Sends `(chal, θᵢ₊₁, time_pevalᵢ, addr_pevalᵢ, fᵢ₋₁)` to a worker node, where `θᵢ` is the authentication path for leaf `i`, and `fᵢ₋₁` is the final entry in `addr_trᵢ₋₁`
-    2. Waits for the worker node's CP-Groth16 proof `πᵢ` over `Cᵢ(chal, root_pevals; time_trᵢ, addr_trᵢ, time_pevalᵢ, addr_pevalᵢ, θᵢ₊₁)`. Specifically, this proof
+    1. Sends `(entry_chal, tr_chal, θᵢ₊₁, time_pevalᵢ, addr_pevalᵢ, fᵢ₋₁)` to a worker node, where `θᵢ` is the authentication path for leaf `i`, and `fᵢ₋₁` is the final entry in `addr_trᵢ₋₁`
+    2. Waits for the worker node's CP-Groth16 proof `πᵢ` over `Cᵢ(entry_chal, tr_cahl, root_pevals; time_trᵢ, addr_trᵢ, time_pevalᵢ, addr_pevalᵢ, θᵢ₊₁)`. Specifically, this proof
         1. Performs the actual subcircuit, using values from `time_trᵢ` sequentially, where referenced
         2. Checks the consistency of `fᵢ₋₁ || addr_trᵢ`, i.e., that the addresses are nondecreasing and that all reads from the address have the same `val`.
-        3. Computes the new partial evals `(time_pevalᵢ₊₁, addr_pevalᵢ₊₁)` using `chal`, `(time_trᵢ, addr_trᵢ)`, and `(time_pevalᵢ, addr_pevalᵢ)`
+        3. Computes the new partial evals `(time_pevalᵢ₊₁, addr_pevalᵢ₊₁)` using `*_chal`, `(time_trᵢ, addr_trᵢ)`, and `(time_pevalᵢ, addr_pevalᵢ)`
         4. Lets `fᵢ := addr_trᵢ[-1]`
         5. Checks that `(time_pevalᵢ₊₁, addr_pevalᵢ₊₁, fᵢ)` occurs at leaf index `i+1`, using `θᵢ₊₁` and `root_pevals`
         6. Only for `i=1`:
             * Takes the public input `x` and processes it into however many shared wires it needs
             * Checks that `fᵢ₋₁ = (0, 0)` and `(time_pevalᵢ, addr_pevalᵢ) = (0, 0)`
-6. The coordinator finally combines `π₁, ..., πₙ` into an aggregate proof `π_agg` that shows that each `πᵢ` verifies wrt `(chal, root_pevals)` (and `x`, for `i=1`). Note that `i` is not a public input, rather it is a const in Cᵢ.
-7. In addition, the coordinator produces an opening `θ_fin` for final Merkle leaf, which should be of the form `(s, s, fₙ₋₁)`. The final proof is thus `({com_trᵢ}ᵢ, root_pevals, θ_fin, π_agg)`.
+6. The coordinator finally combines `π₁, ..., πₙ` into an aggregate proof `π_agg` using IPP that shows that each `πᵢ` verifies wrt `(com_trᵢ, entry_chal, tr_chal, root_pevals)` (and `x`, for `i=1`). Note that `i` is not a public input, rather it is a const in Cᵢ.
+7. In addition, the coordinator produces an opening `θ_fin` for final Merkle leaf, which should be of the form `(s, s, fₙ₋₁)`. The final proof is thus `(com_tr, root_pevals, θ_fin, π_agg)`.
 
 TODO: Need to hide the fₙ₋₁ in the final Merkle leaf. Maybe do this as a commitment.
-
-TODO: Proof size requires all
-
----
-
-# OLD OLD OLD
-
-# Data structures for the above protocol
-
-## Step 0
-
-Before anything happens, the worker nodes need the CRS for the circuit(s) in question. For now, we will not split up the subcircuit CRSs. We will simply send the same large `cp_groth16::ProvingKey` to every worker node. This can bundled with the step 2's communications.
-
-## Step 1
-
-No communication here.
-
-## Step 2
-
-We need a data structure to hold the inputs and outputs. To avoid errors, let's assume that every input and output has a variable name, and has been serialized to field elements. We will define a type that represents the set of these variables:
-```rust
-type CircuitEnv = HashMap<String, Vec<F>>
-```
-
-The coordinator will send every worker node data in the form:
-```rust
-struct TraceChunk {
-    subcircuit_idx: usize,
-    inputs: CircuitEnv,
-    outputs: CircuitEnv,
-}
-```
-
-The worker will commit to the inputs and the outputs separately, using the `cp_groth16::CommitmentBuilder` functionality, and return commitments in the form
-```rust
-struct TraceChunkComs {
-    subcircuit_idx: usize,
-    inputs_com: Comm,
-    outputs_com: Comm,
-}
-```
-
-Each worker node will also save its `CommitmentBuilder` state, so that it can run the last stage, which is proving.
-
-**TODO: There currently is no way to serialize a `CommitmentBuilder`!**
-
-## Step 3
-
-No communication here
-
-## Step 4
-
-The coordinator sends to every worker node `chal: F`.
-
-Each worker loads up its `CommitmentBuilder`. It passes `chal` as a public input to the final stage, i.e., the proving stage. It then sends back the final `cp_groth16::Proof` to the coordinator.
-
-## Step 5
-
-No communication here
 
 # A prover API
 
@@ -133,33 +75,117 @@ We need to have users define a circuit with specific points at which it can be s
 
 Here's a very basic, very not fun to use flow:
 ```rust
-type CircuitEnv = HashMap<String, Vec<F>>;
-type CircuitEnvVar = HashMap<String, Vec<FpVar<F>>>;
+/// The address of a portal wire is just the hash of its name (which is unique)
+type PortalWireAddr = [u8; 256];
+type PortalWireAddrVar<F> = F;
+
+// An execution trace entry is an addr-value pair
+type TraceEntry<F> = (PortalWireAddr, F)
+type TraceEntryVar<F> = (PortalWireAddrVar<F>, FpVar<F>)
+
+/// A trait for getting and setting portal wires in partitioned circuits
+trait PortalManager {
+    /// Gets the portal wire of the given name. Panics if no such wire exists.
+    fn get(&mut self, name: &str) -> FpVar<F>;
+
+    /// Sets the portal wire of the given name. Panics if the wire is already set.
+    fn set(&mut self, name: &str, val: &FpVar<F>);
+}
+
+/// This portal manager is used by the coordinator to produce the trace
+struct SetupPortalManager {
+    pub trace: Vec<TraceEntry<F>>,
+
+    cs: ConstraintSystemRef<F>,
+
+    // Technically not necessary, but useful for sanity checks
+    map: HashMap<String, F>,
+}
+
+impl PortalManager for SetupPortalManager {
+    /// Gets the value from the map and adds the pair to the trace
+    fn get(&mut self, name: &str) -> FpVar<F> {
+        let val = self.map.get(name).expect(format!("cannot get portal wire '{name}'"));
+        let val_var = FpVar::new_witness(ns!(self.cs, "wireval"), || Ok(val)).unwrap();
+        self.trace.push(hash(name), val);
+
+        val_var
+    }
+
+    /// Sets the value in the map and adds the pair to the trace
+    fn set(&mut self, name: &str, val: &FpVar<F>) {
+        assert!(
+            map.get(name).is_none(),
+            "cannot set portal wire more than once; wire '{name}'"
+        );
+        self.map.insert(name, val);
+        self.trace.push((hash(name), val.value().unwrap()));
+    }
+}
+
+/// This portal manager is used by a subcircuit prover. It takes the subtrace for this subcircuit as
+/// well as the running evals up until this point. These values are used in the CircuitWithPortals
+/// construction later.
+struct ProverPortalManager {
+    pub time_ordered_subtrace_var: Vec<TraceEntryVar<F>>,
+    pub addr_ordered_subtrace_var: Vec<TraceEntryVar<F>>,
+    pub running_evals_var: RunningEvalsVar<F>,
+
+    cs: ConstraintSystemRef<F>,
+
+    // Technically not necessary, but useful for sanity checks
+    map: HashMap<String, F>,
+}
+
+impl PortalManager for ProverPortalManager {
+    /// Pops off the subtrace, sanity checks that the names match, updates the running polyn
+    /// evals to reflect the read op, and does one step of the name-ordered coherence check.
+    fn get(&mut self, name: &str) -> FpVar<F> {
+        // Pop the value and sanity check the name
+        let (hashed_name, val) = self.time_ordered_subtrace_var.pop()?;
+        assert_eq!(hashed_name.value().unwrap(), hash(expected_name));
+
+        // Update the running polyn
+        self.running_evals.update(hashed_name, val);
+
+        // On our other subtrace, do one step of a memory-ordering check
+        let (cur_addr, cur_val) = self.addr_ordered_subtrace_var.pop().unwrap();
+        let (next_addr, next_val) = self.addr_ordered_subtrace_var.first().unwrap();
+        // Check cur_addr <= next_addr
+        cur_addr.enforce_cmp(next_addr, Ordering::Less, true);
+        // Check cur_val == next_val if cur_addr == next_addr
+        let is_same_addr = cur_addr.is_eq(next_addr);
+        cur_val.conditional_enforce_equal(next_val, is_same_addr);
+
+        // Return the val from the subtrace
+        val
+    }
+
+    /// Set is no different from get in circuit land. This does the same thing, and also enforce
+    /// that `val` equals the popped subtrace value.
+    fn set(&mut self, name: &str, val: &FpVar<F>) {
+        let trace_val = self.get(name);
+        val.enforce_eq(trace_val)?;
+    }
+}
 
 struct MyCircuit {
     public_bytestring: Vec<u8>,
 }
 
 impl MyCircuit {
-    fn step_0(cs: &mut ConstraintSystem<F>) -> CircuitEnvVar {
-        // ...
-        // foo, bar, and baz all impl ToConstraintFieldGadget
-        // Maybe make a macro that does this, like env!(foo, bar, baz)
-        return HashMap::from([
-            ("foo", foo.to_constraint_field()),
-            ("bar", bar.to_constraint_field()),
-            ("baz", baz.to_constraint_field()),
-        ])
+    fn subcirc_0(cs: &mut ConstraintSystem<F>, pm: &mut impl PortalManager) {
+        // Blah
+        pm.set("foo", foo);
+        pm.set("bar", bar);
+        // Whatever
     }
 
-    fn step_1(
-        cs: &mut ConstraintSystem<F>,
-        env: CircuitEnvVar,
-    ) {
-        let foo_fps = env.get("foo").unwrap();
-        let bar_fps = env.get("bar").unwrap();
-        let baz_fps = env.get("baz").unwrap();
-        // Manual conversion back into the original representation
+    fn subcirc_1(cs: &mut ConstraintSystem<F>, pm: &mut impl PortalManager) {
+        let foo = pm.get("foo").unwrap();
+        let bar = pm.get("bar").unwrap();
+        // Whatever
+        pm.set("baz", baz);
     }
 }
 
@@ -176,25 +202,52 @@ impl CircuitWithPortals for MyCircuit {
     /// Generates constraints for the i-th subcircuit.
     fn generate_constraints(
         &mut self,
-        env: CircuitEnvVar,
+        pm: &mut impl PortalManager,
         subcircuit_idx: usize,
         cs: &mut ConstraintSystem<F>,
     ) -> Result<CircuitEnvVar, SynthesisError> {
         match subcircuit_idx {
-            0 => self.step_0(),
-            1 => self.step_1(env),
+            0 => self.subcirc_1(cs, pm),
+            1 => self.subcirc_2(cs, pm),
         }
     }
+}
+
+/// Every Merkle leaf contains a running evaluation and the final element of the previous
+/// address-ordered subtrace
+struct Leaf<F> {
+    evals: RunningEvals<F>,
+    last_subtrace_entry: TraceEntry<F>,
+}
+struct LeafVar<F> {
+    evals: RunningEvalsVar<F>,
+    last_subtrace_entry: TraceEntryVar<F>,
 }
 
 // Define a way to commit and prove to just one subcircuit
 struct CpPortalProver<P: CircuitWithPortals> {
     subcircuit_idx: usize,
-    input: CircuitEnv,
-    input_var: CircuitEnvVar,
-    output: CircuitEnv,
-    output_var: CircuitEnvVar,
     circ: P,
+
+    // Stage 0 committed values
+    pub time_ordered_subtrace: Vec<TraceEntry<F>>,
+    pub addr_ordered_subtrace: Vec<TraceEntry<F>>,
+    pub time_ordered_subtrace_var: Vec<TraceEntryVar<F>>,
+    pub addr_ordered_subtrace_var: Vec<TraceEntryVar<F>>,
+
+    // Stage 1 witnesses
+    pub running_evals: RunningEvals<F>,
+    pub running_evals_var: RunningEvalsVar<F>,
+    pub next_leaf: (Leaf<F>, MerkleAuthPath<F>),
+    pub next_leaf_var: (LeafVar<F>, MerkleAuthPathVar<F>),
+
+    // Stage 1 public inputs
+    pub entry_chal: F,
+    pub tr_chal: F,
+    pub root: MerkleRoot<F>,
+    pub entry_chal_var: FpVar<F>,
+    pub tr_chal_var: FpVar<F>,
+    pub root_var: MerkleRootVar<F>,
 }
 
 
@@ -211,11 +264,39 @@ impl<P: CircuitWithPortals> MultiStageConstraintSynthesizer for CpPortalProver {
         cs: &mut MultiStageConstraintSystem<F>,
     ) -> Result<(), SynthesisError> {
         match stage {
-            0 => cs.synthesize_with(|c| self.input_var = CircuitEnvVar::new_witness(c, || Ok(self.input))),
-            1 => cs.synthesize_with(|c| self.output_var = CircuitEnvVar::new_witness(c, || Ok(self.output))),
+            0 => cs.synthesize_with(|c| /* Witness the time- and memory-ordered subtraces */),
+            1 => cs.synthesize_with(|c| /* Witness the rest of the stage 1 values */),
             2 => cs.synthesize_with(|c| {
-                let computed_output = self.circ.generate_constraints(self.input, self.subcircuit_idx)?;
-                computed_output.enforce_equal(self.output_var)?;
+                // Construct the portal manager
+                // The addr-sorted subtrace starts with the last entry from the previous subtrace
+                let addr_subtrace = [
+                    self.next_leaf_var.0.last_subtrace_entry,
+                    self.addr_ordered_subtrace_var,
+                ].concat();
+                let mut pm = ProverPortalManager::new(
+                    self.time_ordered_subtrace_var,
+                    self.addr_ordered_subtrace_var,
+                    self.running_evals_var,
+                    self.entry_chal_var,
+                    self.tr_chal_var,
+                    c,
+                );
+                // Run the circuit
+                self.circ.generate_constraints(&mut pm, self.subcircuit_idx)?;
+
+                // Do some followup checks
+
+                // Sanity checks: make sure all the subtraces were used
+                assert!(
+                    pm.time_ordered_subtrace_var.empty() && pm.addr_ordered_subtrace_var.empty()
+                );
+
+                // Make sure the resulting running evals are equal to the ones in the Merkle tree
+                let next_running_evals = self.next_leaf.0.evals;
+                pm.running_evals_var.enforce_equal(next_running_evals);
+
+                // Check the leaf membership in the merkle tree
+                self.root_var.enforce_membership(self.next_leaf_var.0, self.next_leaf_var.1)?;
             }),
         }
     }
