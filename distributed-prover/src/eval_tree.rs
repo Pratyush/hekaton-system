@@ -39,9 +39,9 @@ type TwoToOneParamVar<CG, C, F> =
         F,
     >>::ParametersVar;
 
-struct Leaf<'a, F: PrimeField> {
+struct Leaf<F: PrimeField> {
     evals: RunningEvals<F>,
-    last_subtrace_entry: RomTranscriptEntry<'a, F>,
+    last_subtrace_entry: RomTranscriptEntry<F>,
 }
 
 struct LeafVar<F: PrimeField> {
@@ -49,8 +49,8 @@ struct LeafVar<F: PrimeField> {
     last_subtrace_entry: RomTranscriptEntryVar<F>,
 }
 
-impl<'a, F: PrimeField> AllocVar<Leaf<'a, F>, F> for LeafVar<F> {
-    fn new_variable<T: Borrow<Leaf<'a, F>>>(
+impl<F: PrimeField> AllocVar<Leaf<F>, F> for LeafVar<F> {
+    fn new_variable<T: Borrow<Leaf<F>>>(
         cs: impl Into<Namespace<F>>,
         f: impl FnOnce() -> Result<T, SynthesisError>,
         mode: AllocationMode,
@@ -77,7 +77,7 @@ impl<'a, F: PrimeField> AllocVar<Leaf<'a, F>, F> for LeafVar<F> {
 }
 
 // Define a way to commit and prove to just one subcircuit
-struct CpPortalProver<'a, F, P, C, CG>
+struct CpPortalProver<F, P, C, CG>
 where
     F: PrimeField,
     P: CircuitWithPortals<F>,
@@ -92,14 +92,14 @@ where
     pub two_to_one_params: TwoToOneParam<C>,
 
     // Stage 0 committed values
-    pub time_ordered_subtrace: Vec<RomTranscriptEntry<'a, F>>,
-    pub addr_ordered_subtrace: Vec<RomTranscriptEntry<'a, F>>,
+    pub time_ordered_subtrace: Vec<RomTranscriptEntry<F>>,
+    pub addr_ordered_subtrace: Vec<RomTranscriptEntry<F>>,
     pub time_ordered_subtrace_var: Vec<RomTranscriptEntryVar<F>>,
     pub addr_ordered_subtrace_var: Vec<RomTranscriptEntryVar<F>>,
 
     // Stage 1 witnesses
     pub running_evals: RunningEvals<F>,
-    pub cur_leaf: Leaf<'a, F>,
+    pub cur_leaf: Leaf<F>,
     pub next_leaf_membership: MerklePath<C>,
     pub running_evals_var: RunningEvalsVar<F>,
     pub cur_leaf_var: LeafVar<F>,
@@ -114,7 +114,7 @@ where
     pub root_var: MerkleRootVar<C, F, CG>,
 }
 
-impl<'a, F, P, C, CG> MultiStageConstraintSynthesizer<F> for CpPortalProver<'a, F, P, C, CG>
+impl<F, P, C, CG> MultiStageConstraintSynthesizer<F> for CpPortalProver<F, P, C, CG>
 where
     F: PrimeField,
     P: CircuitWithPortals<F>,

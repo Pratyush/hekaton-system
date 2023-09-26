@@ -10,17 +10,17 @@ use ark_relations::{
 };
 
 /// A trait for getting and setting portal wires in partitioned circuits
-pub(crate) trait PortalManager<'a, F: PrimeField> {
+pub(crate) trait PortalManager<F: PrimeField> {
     /// Gets the portal wire of the given name. Panics if no such wire exists.
-    fn get(&mut self, name: &'a str) -> Result<FpVar<F>, SynthesisError>;
+    fn get(&mut self, name: &str) -> Result<FpVar<F>, SynthesisError>;
 
     /// Sets the portal wire of the given name. Panics if the wire is already set.
-    fn set(&mut self, name: &'a str, val: &FpVar<F>) -> Result<(), SynthesisError>;
+    fn set(&mut self, name: String, val: &FpVar<F>) -> Result<(), SynthesisError>;
 }
 
 /// This portal manager is used by the coordinator to produce the trace
-struct SetupPortalManager<'a, F: PrimeField> {
-    pub trace: Vec<RomTranscriptEntry<'a, F>>,
+pub struct SetupPortalManager<F: PrimeField> {
+    pub trace: Vec<RomTranscriptEntry<F>>,
 
     cs: ConstraintSystemRef<F>,
 
@@ -28,9 +28,19 @@ struct SetupPortalManager<'a, F: PrimeField> {
     map: HashMap<String, F>,
 }
 
-impl<'a, F: PrimeField> PortalManager<'a, F> for SetupPortalManager<'a, F> {
+impl<F: PrimeField> SetupPortalManager<F> {
+    pub fn new(cs: ConstraintSystemRef<F>) -> Self {
+        SetupPortalManager {
+            cs,
+            trace: Vec::new(),
+            map: HashMap::new(),
+        }
+    }
+}
+
+impl<F: PrimeField> PortalManager<F> for SetupPortalManager<F> {
     /// Gets the value from the map, witnesses it, and adds the entry to the trace
-    fn get(&mut self, name: &'a str) -> Result<FpVar<F>, SynthesisError> {
+    fn get(&mut self, name: &str) -> Result<FpVar<F>, SynthesisError> {
         // Get the value
         let val = *self
             .map
@@ -39,17 +49,20 @@ impl<'a, F: PrimeField> PortalManager<'a, F> for SetupPortalManager<'a, F> {
         // Witness the value
         let val_var = FpVar::new_witness(ns!(self.cs, "wireval"), || Ok(val))?;
         // Make the transcript entry
-        self.trace.push(RomTranscriptEntry { name, val });
+        self.trace.push(RomTranscriptEntry {
+            name: name.to_string(),
+            val,
+        });
 
         // Return the witnessed value
         Ok(val_var)
     }
 
     /// Sets the value in the map and adds the entry to the trace
-    fn set(&mut self, name: &'a str, val: &FpVar<F>) -> Result<(), SynthesisError> {
+    fn set(&mut self, name: String, val: &FpVar<F>) -> Result<(), SynthesisError> {
         // This is ROM. You cannot overwrite values
         assert!(
-            self.map.get(name).is_none(),
+            self.map.get(&name).is_none(),
             "cannot set portal wire more than once; wire '{name}'"
         );
 
@@ -73,7 +86,7 @@ pub(crate) struct ProverPortalManager<F: PrimeField> {
     pub running_evals: RunningEvalsVar<F>,
 }
 
-impl<'a, F: PrimeField> PortalManager<'a, F> for ProverPortalManager<F> {
+impl<F: PrimeField> PortalManager<F> for ProverPortalManager<F> {
     /// Pops off the subtrace, sanity checks that the names match, updates the running polyn
     /// evals to reflect the read op, and does one step of the name-ordered coherence check.
     fn get(&mut self, name: &str) -> Result<FpVar<F>, SynthesisError> {
@@ -111,8 +124,8 @@ impl<'a, F: PrimeField> PortalManager<'a, F> for ProverPortalManager<F> {
 
     /// Set is no different from get in circuit land. This does the same thing, and also enforce
     /// that `val` equals the popped subtrace value.
-    fn set(&mut self, name: &str, val: &FpVar<F>) -> Result<(), SynthesisError> {
-        let trace_val = self.get(name)?;
+    fn set(&mut self, name: String, val: &FpVar<F>) -> Result<(), SynthesisError> {
+        let trace_val = self.get(&name)?;
         val.enforce_equal(&trace_val)?;
 
         Ok(())

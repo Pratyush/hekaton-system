@@ -14,6 +14,7 @@ use xxhash_rust::xxh3::xxh3_64;
 mod eval_tree;
 mod portal_manager;
 //mod worker_node;
+mod tree_hash_circuit;
 
 use portal_manager::PortalManager;
 
@@ -38,7 +39,7 @@ impl<F: PrimeField> RunningEvals<F> {
     fn update_time_ordered(&mut self, entry: &RomTranscriptEntry<F>) {
         // The single-field-element representation of a transcript entry is val + entry_chal*addr,
         // where addr is the hash of the name
-        let entry_repr = entry.val + self.entry_chal * &varname_hasher(entry.name);
+        let entry_repr = entry.val + self.entry_chal * &varname_hasher(&entry.name);
 
         // Now add the entry to the running polynomial eval. The polynomial is Π (X - entryᵢ)
         // evaluated at X=tr_chal
@@ -49,7 +50,7 @@ impl<F: PrimeField> RunningEvals<F> {
     fn update_addr_ordered(&mut self, entry: &RomTranscriptEntry<F>) {
         // The single-field-element representation of a transcript entry is val + entry_chal*addr,
         // where addr is the hash of the name
-        let entry_repr = entry.val + self.entry_chal * &varname_hasher(entry.name);
+        let entry_repr = entry.val + self.entry_chal * &varname_hasher(&entry.name);
 
         // Now add the entry to the running polynomial eval. The polynomial is Π (X - entryᵢ)
         // evaluated at X=tr_chal
@@ -123,8 +124,8 @@ impl<F: PrimeField> AllocVar<RunningEvals<F>, F> for RunningEvalsVar<F> {
 
 /// An entry in the transcript of portal wire reads
 #[derive(Clone)]
-pub(crate) struct RomTranscriptEntry<'a, F: PrimeField> {
-    name: &'a str,
+pub struct RomTranscriptEntry<F: PrimeField> {
+    name: String,
     val: F,
 }
 
@@ -136,8 +137,8 @@ pub(crate) struct RomTranscriptEntryVar<F: PrimeField> {
     addr: FpVar<F>,
 }
 
-impl<'a, F: PrimeField> AllocVar<RomTranscriptEntry<'a, F>, F> for RomTranscriptEntryVar<F> {
-    fn new_variable<T: Borrow<RomTranscriptEntry<'a, F>>>(
+impl<F: PrimeField> AllocVar<RomTranscriptEntry<F>, F> for RomTranscriptEntryVar<F> {
+    fn new_variable<T: Borrow<RomTranscriptEntry<F>>>(
         cs: impl Into<Namespace<F>>,
         f: impl FnOnce() -> Result<T, SynthesisError>,
         mode: AllocationMode,
@@ -149,7 +150,7 @@ impl<'a, F: PrimeField> AllocVar<RomTranscriptEntry<'a, F>, F> for RomTranscript
         let entry = res.as_ref().map(|e| e.borrow()).map_err(|err| *err);
 
         // Hash the variable name into a field element
-        let name_hash: Result<F, _> = entry.map(|e| e.name).map(varname_hasher);
+        let name_hash: Result<F, _> = entry.map(|e| e.name.as_str()).map(varname_hasher);
 
         let val = FpVar::new_variable(ns!(cs, "val"), || entry.map(|e| F::from(e.val)), mode)?;
         let addr = FpVar::new_variable(ns!(cs, "addr"), || name_hash, mode)?;
@@ -161,7 +162,7 @@ impl<'a, F: PrimeField> AllocVar<RomTranscriptEntry<'a, F>, F> for RomTranscript
 /// A generic trait that any partitionable circuit has to impl
 pub(crate) trait CircuitWithPortals<F: PrimeField> {
     /// Generates constraints for the subcircuit at the given index
-    fn generate_constraints<'a, P: PortalManager<'a, F>>(
+    fn generate_constraints<P: PortalManager<F>>(
         &mut self,
         cs: ConstraintSystemRef<F>,
         subcircuit_idx: usize,
