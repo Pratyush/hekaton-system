@@ -67,7 +67,7 @@ impl<'a, F: PrimeField> PortalManager<'a, F> for SetupPortalManager<'a, F> {
 /// This portal manager is used by a subcircuit prover. It takes the subtrace for this subcircuit as
 /// well as the running evals up until this point. These values are used in the CircuitWithPortals
 /// construction later.
-struct ProverPortalManager<F: PrimeField> {
+pub(crate) struct ProverPortalManager<F: PrimeField> {
     pub time_ordered_subtrace: Vec<RomTranscriptEntryVar<F>>,
     pub addr_ordered_subtrace: Vec<RomTranscriptEntryVar<F>>,
     pub running_evals: RunningEvalsVar<F>,

@@ -26,7 +26,7 @@ The prover then acts as a _coordinator_, leveraging access to an arbitrary numbe
     3. Computes a Merkle tree with leaf `i` being `(time_pevalᵢ, addr_pevalᵢ, fᵢ₋₁)`, where `fᵢ` denotes the final entry of `addr_trᵢ`. Denote the root by `root_pevals`.
 5. For every `i` in parallel, the coordinator:
     1. Sends `(entry_chal, tr_chal, θᵢ₊₁, time_pevalᵢ, addr_pevalᵢ, fᵢ₋₁)` to a worker node, where `θᵢ` is the authentication path for leaf `i`, and `fᵢ₋₁` is the final entry in `addr_trᵢ₋₁`
-    2. Waits for the worker node's CP-Groth16 proof `πᵢ` over `Cᵢ(entry_chal, tr_cahl, root_pevals; time_trᵢ, addr_trᵢ, time_pevalᵢ, addr_pevalᵢ, θᵢ₊₁)`. Specifically, this proof
+    2. Waits for the worker node's CP-Groth16 proof `πᵢ` over `Cᵢ(entry_chal, tr_chal, root_pevals; time_trᵢ, addr_trᵢ, time_pevalᵢ, addr_pevalᵢ, θᵢ₊₁)`. Specifically, this proof
         1. Performs the actual subcircuit, using values from `time_trᵢ` sequentially, where referenced
         2. Checks the consistency of `fᵢ₋₁ || addr_trᵢ`, i.e., that the addresses are nondecreasing and that all reads from the address have the same `val`.
         3. Computes the new partial evals `(time_pevalᵢ₊₁, addr_pevalᵢ₊₁)` using `*_chal`, `(time_trᵢ, addr_trᵢ)`, and `(time_pevalᵢ, addr_pevalᵢ)`
@@ -193,8 +193,9 @@ trait CircuitWithPortals {
     /// Generates constraints for the i-th subcircuit.
     fn generate_constraints(
         &mut self,
-        subcircuit_idx: usize,
         cs: &mut ConstraintSystem<F>,
+        subcircuit_idx: usize,
+        pm: &mut impl PortalManager,
     ) -> Result<(), SynthesisError>;
 }
 
@@ -202,9 +203,9 @@ impl CircuitWithPortals for MyCircuit {
     /// Generates constraints for the i-th subcircuit.
     fn generate_constraints(
         &mut self,
-        pm: &mut impl PortalManager,
-        subcircuit_idx: usize,
         cs: &mut ConstraintSystem<F>,
+        subcircuit_idx: usize,
+        pm: &mut impl PortalManager,
     ) -> Result<CircuitEnvVar, SynthesisError> {
         match subcircuit_idx {
             0 => self.subcirc_1(cs, pm),
@@ -238,8 +239,10 @@ struct CpPortalProver<P: CircuitWithPortals> {
     // Stage 1 witnesses
     pub running_evals: RunningEvals<F>,
     pub running_evals_var: RunningEvalsVar<F>,
-    pub next_leaf: (Leaf<F>, MerkleAuthPath<F>),
-    pub next_leaf_var: (LeafVar<F>, MerkleAuthPathVar<F>),
+    pub cur_leaf: Leaf<F>
+    pub next_leaf_membership: MerkleAuthPath<F>,
+    pub cur_leaf_var: LeafVar<F>
+    pub next_leaf_membership_var: MerkleAuthPathVar<F>,
 
     // Stage 1 public inputs
     pub entry_chal: F,
@@ -252,9 +255,9 @@ struct CpPortalProver<P: CircuitWithPortals> {
 
 
 impl<P: CircuitWithPortals> MultiStageConstraintSynthesizer for CpPortalProver {
-    // Three stages: input wires, output wires, and the circuit body
+    // Two stages: Subtrace commit, and the rest
     fn total_num_stages(&self) -> usize {
-        3
+        2
     }
 
     /// Generates constraints for the i-th stage.
@@ -265,8 +268,9 @@ impl<P: CircuitWithPortals> MultiStageConstraintSynthesizer for CpPortalProver {
     ) -> Result<(), SynthesisError> {
         match stage {
             0 => cs.synthesize_with(|c| /* Witness the time- and memory-ordered subtraces */),
-            1 => cs.synthesize_with(|c| /* Witness the rest of the stage 1 values */),
-            2 => cs.synthesize_with(|c| {
+            1 => cs.synthesize_with(|c| {
+                // Omitted: witnessing and inputting all the stage 1 values
+
                 // Construct the portal manager
                 // The addr-sorted subtrace starts with the last entry from the previous subtrace
                 let addr_subtrace = [
@@ -282,7 +286,7 @@ impl<P: CircuitWithPortals> MultiStageConstraintSynthesizer for CpPortalProver {
                     c,
                 );
                 // Run the circuit
-                self.circ.generate_constraints(&mut pm, self.subcircuit_idx)?;
+                self.circ.generate_constraints(c, self.subcircuit_idx, &mut pm)?;
 
                 // Do some followup checks
 
