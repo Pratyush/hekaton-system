@@ -1,6 +1,10 @@
 use crate::{portal_manager::PortalManager, CircuitWithPortals};
 
-use ark_crypto_primitives::crh::sha256::constraints::{DigestVar, Sha256Gadget};
+use ark_crypto_primitives::crh::sha256::{
+    constraints::{DigestVar, Sha256Gadget},
+    digest::Digest,
+    Sha256,
+};
 use ark_ff::PrimeField;
 use ark_r1cs_std::{
     alloc::AllocVar,
@@ -13,12 +17,12 @@ use ark_relations::{
     r1cs::{ConstraintSystemRef, SynthesisError},
 };
 
-type TestLeaf = [u8; 31];
-type Digest = [u8; 31];
+type TestLeaf = [u8; 32];
+type InnerHash = [u8; 31];
 
 struct MerkleTreeCircuit {
     leaves: Vec<TestLeaf>,
-    root_hash: Digest,
+    root_hash: InnerHash,
 }
 
 /// Truncates the SHA256 hash to 31 bytes, converts to bits (each byte to little-endian), and
@@ -33,10 +37,21 @@ fn digest_to_fpvar<F: PrimeField>(digest: DigestVar<F>) -> Result<FpVar<F>, Synt
     Boolean::le_bits_to_fp_var(&bits)
 }
 
+/// Converts a field element back into the truncated digest that created it
+fn fpvar_to_digest<F: PrimeField>(f: FpVar<F>) -> Result<Vec<UInt8<F>>, SynthesisError> {
+    let bytes = f
+        .to_bits_le()?
+        .chunks(8)
+        .take(31)
+        .map(UInt8::from_bits_le)
+        .collect::<Vec<_>>();
+    Ok(bytes)
+}
+
 /// Takes a digest as public input to the circuit
 fn input_digest<F: PrimeField>(
     cs: ConstraintSystemRef<F>,
-    digest: Digest,
+    digest: InnerHash,
 ) -> Result<FpVar<F>, SynthesisError> {
     // TODO: Make this an actual public input, not just a witness
     let bits = digest
@@ -82,16 +97,8 @@ impl<F: PrimeField> CircuitWithPortals<F> for MerkleTreeCircuit {
             let right_child_hash = pm.get(&format!("node {right} hash"))?;
 
             // Convert the hashes back into bytes and concat them
-            let left_bytes = left_child_hash
-                .to_bits_le()?
-                .chunks(8)
-                .map(UInt8::from_bits_le)
-                .collect::<Vec<_>>();
-            let right_bytes = right_child_hash
-                .to_bits_le()?
-                .chunks(8)
-                .map(UInt8::from_bits_le)
-                .collect::<Vec<_>>();
+            let left_bytes = fpvar_to_digest(left_child_hash)?;
+            let right_bytes = fpvar_to_digest(right_child_hash)?;
             let concatted_bytes = [left_bytes, right_bytes].concat();
 
             // Compute the parent hash and store it in the portal manager
@@ -115,6 +122,32 @@ impl<F: PrimeField> CircuitWithPortals<F> for MerkleTreeCircuit {
     }
 }
 
+// Calculates the Merkle tree root in the same way as is calculated above. That is, truncating each
+// hash to 31 bytes, and computing parents as H(left || right).
+pub(crate) fn calculate_root(leaves: &[TestLeaf]) -> InnerHash {
+    // Compute all the leaf digests
+    let mut cur_level = leaves.iter().map(Sha256::digest).collect::<Vec<_>>();
+
+    // Compute all the parents level by level until there's only 1 element left (the root)
+    let mut next_level = Vec::new();
+    while cur_level.len() > 1 {
+        for siblings in cur_level.chunks(2) {
+            let left = siblings[0];
+            let right = siblings[1];
+            let parent = Sha256::digest([&left[..31], &right[..31]].concat());
+            next_level.push(parent)
+        }
+
+        cur_level = next_level.clone();
+        next_level.clear();
+    }
+
+    let mut root = [0u8; 31];
+    root.copy_from_slice(&cur_level[0][..31]);
+    root
+}
+
+/// Converts a u8 to its little-endian bit representation
 fn u8_le_bits(x: u8) -> [bool; 8] {
     [
         x & 0b00000001 != 0,
@@ -128,7 +161,7 @@ fn u8_le_bits(x: u8) -> [bool; 8] {
     ]
 }
 
-// TREE MATH //
+/******** TREE MATH ********/
 
 // We use a mapping of subcircuit idx to tree node as follows. Stolen from the MLS spec
 //
@@ -202,21 +235,62 @@ mod test {
     use ark_relations::r1cs::ConstraintSystem;
     use ark_std::{rand::Rng, test_rng};
 
+    // Digests truncated to 31 bytes and stored as portal wires. When we get the portal wire, we
+    // have to unpack back into bytes. This test checks that the structure is preserved
+    // preserves their structure.
     #[test]
-    fn test_merkle_tree_runs() {
+    fn test_digest_fpvar_roundtrip() {
         let mut rng = test_rng();
-        // Make a random set of leaves
-        let mut leaves = vec![TestLeaf::default(); 16];
-        leaves.iter_mut().for_each(|l| rng.fill(l));
+        let cs = ConstraintSystemRef::<Fr>::new(ConstraintSystem::default());
 
-        let mut circ = MerkleTreeCircuit {
-            leaves,
-            root_hash: Digest::default(),
-        };
+        for _ in 0..10 {
+            // Pick a random digest
+            let digest: [u8; 32] = rng.gen();
+            let digest_var = DigestVar(UInt8::new_input_vec(ns!(cs, "digest"), &digest).unwrap());
+
+            // Convert to an FpVar. This truncates to 31 bytes
+            let fp = digest_to_fpvar(digest_var.clone()).unwrap();
+
+            // Convert back into a digest
+            let digest_again = fpvar_to_digest(fp).unwrap();
+
+            // Check that the resulting value equals the original truncated digest
+            digest_again.enforce_equal(&digest_var.0[..31]).unwrap();
+            assert!(cs.is_satisfied().unwrap());
+        }
+    }
+
+    /// Tests that the circuit's Merkle root matches the one computed natively
+    #[test]
+    fn test_merkle_tree_correctness() {
+        let mut rng = test_rng();
+        let num_leaves = 16;
+
+        // Make a Merkle tree with a random set of leaves
+        let mut leaves = vec![TestLeaf::default(); num_leaves];
+        leaves.iter_mut().for_each(|l| rng.fill(l));
+        let root_hash = calculate_root(&leaves);
+        let mut circ = MerkleTreeCircuit { leaves, root_hash };
+
+        // Make a fresh portal manager
         let cs = ConstraintSystemRef::<Fr>::new(ConstraintSystem::default());
         let mut pm = SetupPortalManager::new(cs.clone());
-        let subcircuit_idx = 0;
-        circ.generate_constraints(cs, subcircuit_idx, &mut pm)
-            .unwrap();
+
+        // Evaluate the tree level by level. Parents need the values of their children before they
+        // can run.
+        for level in 0..=level(root_idx(num_leaves)) {
+            // Every index at level l is of the form 0X011...1 where there are l trailing ones
+            let upper_half_size = log2(num_leaves) as u32 - level;
+            let trailing_ones = (1 << level) - 1;
+
+            for upper_half in 0..(1 << upper_half_size) {
+                let subcircuit_idx = (upper_half << (level + 1)) + trailing_ones;
+
+                circ.generate_constraints(cs.clone(), subcircuit_idx, &mut pm)
+                    .unwrap();
+            }
+        }
+
+        assert!(cs.is_satisfied().unwrap());
     }
 }
