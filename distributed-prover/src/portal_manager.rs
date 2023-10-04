@@ -20,7 +20,7 @@ pub(crate) trait PortalManager<F: PrimeField> {
 
 /// This portal manager is used by the coordinator to produce the trace
 pub struct SetupPortalManager<F: PrimeField> {
-    pub trace: Vec<RomTranscriptEntry<F>>,
+    pub subtraces: Vec<Vec<RomTranscriptEntry<F>>>,
 
     cs: ConstraintSystemRef<F>,
 
@@ -32,9 +32,13 @@ impl<F: PrimeField> SetupPortalManager<F> {
     pub fn new(cs: ConstraintSystemRef<F>) -> Self {
         SetupPortalManager {
             cs,
-            trace: Vec::new(),
+            subtraces: Vec::new(),
             map: HashMap::new(),
         }
+    }
+
+    pub(crate) fn start_subtrace(&mut self) {
+        self.subtraces.push(Vec::new());
     }
 }
 
@@ -49,10 +53,13 @@ impl<F: PrimeField> PortalManager<F> for SetupPortalManager<F> {
         // Witness the value
         let val_var = FpVar::new_witness(ns!(self.cs, "wireval"), || Ok(val))?;
         // Make the transcript entry
-        self.trace.push(RomTranscriptEntry {
-            name: name.to_string(),
-            val,
-        });
+        self.subtraces
+            .last_mut()
+            .expect("must run start_subtrace() before using SetupPortalManager")
+            .push(RomTranscriptEntry {
+                name: name.to_string(),
+                val,
+            });
 
         // Return the witnessed value
         Ok(val_var)
@@ -68,10 +75,13 @@ impl<F: PrimeField> PortalManager<F> for SetupPortalManager<F> {
 
         // Log the concrete (not ZK) entry
         self.map.insert(name.to_string(), val.value().unwrap());
-        self.trace.push(RomTranscriptEntry {
-            name,
-            val: val.value().unwrap(),
-        });
+        self.subtraces
+            .last_mut()
+            .expect("must run start_subtrace() before using SetupPortalManager")
+            .push(RomTranscriptEntry {
+                name,
+                val: val.value().unwrap(),
+            });
 
         Ok(())
     }

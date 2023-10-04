@@ -26,7 +26,7 @@ The prover then acts as a _coordinator_, leveraging access to an arbitrary numbe
     3. Computes a Merkle tree with leaf `i` being `(time_pevalᵢ, addr_pevalᵢ, fᵢ₋₁)`, where `fᵢ` denotes the final entry of `addr_trᵢ`. Denote the root by `root_pevals`.
 5. For every `i` in parallel, the coordinator:
     1. Sends `(entry_chal, tr_chal, θᵢ₊₁, time_pevalᵢ, addr_pevalᵢ, fᵢ₋₁)` to a worker node, where `θᵢ` is the authentication path for leaf `i`, and `fᵢ₋₁` is the final entry in `addr_trᵢ₋₁`
-    2. Waits for the worker node's CP-Groth16 proof `πᵢ` over `Cᵢ(entry_chal, tr_chal, root_pevals; time_trᵢ, addr_trᵢ, time_pevalᵢ, addr_pevalᵢ, θᵢ₊₁)`. Specifically, this proof
+    2. Waits for the worker node's CP-Groth16 proof `πᵢ` over `Cᵢ(entry_chal, tr_chal, root_pevals; time_trᵢ, addr_trᵢ, time_pevalᵢ, addr_pevalᵢ, θᵢ₊₁; com_trᵢ)`. Specifically, this proof
         1. Performs the actual subcircuit, using values from `time_trᵢ` sequentially, where referenced
         2. Checks the consistency of `fᵢ₋₁ || addr_trᵢ`, i.e., that the addresses are nondecreasing and that all reads from the address have the same `val`.
         3. Computes the new partial evals `(time_pevalᵢ₊₁, addr_pevalᵢ₊₁)` using `*_chal`, `(time_trᵢ, addr_trᵢ)`, and `(time_pevalᵢ, addr_pevalᵢ)`
@@ -38,7 +38,9 @@ The prover then acts as a _coordinator_, leveraging access to an arbitrary numbe
 6. The coordinator finally combines `π₁, ..., πₙ` into an aggregate proof `π_agg` using IPP that shows that each `πᵢ` verifies wrt `(com_trᵢ, entry_chal, tr_chal, root_pevals)` (and `x`, for `i=1`). Note that `i` is not a public input, rather it is a const in Cᵢ.
 7. In addition, the coordinator produces an opening `θ_fin` for final Merkle leaf, which should be of the form `(s, s, fₙ₋₁)`. The final proof is thus `(com_tr, root_pevals, θ_fin, π_agg)`.
 
-TODO: Need to hide the fₙ₋₁ in the final Merkle leaf. Maybe do this as a commitment.
+TODO: Need to hide the `fₙ₋₁` in the final Merkle leaf. Maybe do this as a commitment. Alternatively, just SET a high, unused, memory address to 0.
+
+TODO: How to phrase public input `in` to the circuit? Hash it and put it as element in the Merkle tree at a special location. Then add that Merkle membership proof `θ^*` to the proof. The verifier then checks `H(in) ∈ tree` using `root_hash` and `θ^*`.
 
 # A prover API
 

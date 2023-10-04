@@ -27,7 +27,9 @@ struct MerkleTreeCircuit {
 
 /// Truncates the SHA256 hash to 31 bytes, converts to bits (each byte to little-endian), and
 /// interprets the resulting bitstring as a little-endian-encoded field element
-fn digest_to_fpvar<F: PrimeField>(digest: DigestVar<F>) -> Result<FpVar<F>, SynthesisError> {
+pub(crate) fn digest_to_fpvar<F: PrimeField>(
+    digest: DigestVar<F>,
+) -> Result<FpVar<F>, SynthesisError> {
     let bits = digest
         .0
         .into_iter()
@@ -54,25 +56,54 @@ fn input_digest<F: PrimeField>(
     digest: InnerHash,
 ) -> Result<FpVar<F>, SynthesisError> {
     // TODO: Make this an actual public input, not just a witness
-    let bits = digest
-        .into_iter()
-        .flat_map(u8_le_bits)
-        .map(|bit| Boolean::new_witness(ns!(cs, "bit"), || Ok(bit)))
-        .collect::<Result<Vec<_>, _>>()?;
-    Boolean::le_bits_to_fp_var(&bits)
+    let fp = F::from_le_bytes_mod_order(&digest);
+    FpVar::new_witness(ns!(cs, "elem"), || Ok(fp))
+}
+
+/// The tree thas to be evaluated level-by-level. So we need to be able to map a subcircuit idx to
+/// a node in the tree in a specific order
+fn subcircuit_idx_to_node_idx(subcircuit_idx: usize, num_leaves: usize) -> u32 {
+    let mut i = 0;
+
+    // Create all the node_idxs in order. Stop when i == subcircuit_idx
+    for level in 0..=level(root_idx(num_leaves)) {
+        // Every index at level l is of the form 0X011...1 where there are l trailing ones
+        let upper_half_size = log2(num_leaves) as u32 - level;
+        let trailing_ones = (1 << level) - 1;
+
+        for upper_half in 0..(1 << upper_half_size) {
+            let node_idx = (upper_half << (level + 1)) + trailing_ones;
+
+            if i == subcircuit_idx {
+                return node_idx;
+            } else {
+                i += 1;
+            }
+        }
+    }
+
+    panic!("invalid subcircuit idx {subcircuit_idx} for a tree of {num_leaves} leaves");
 }
 
 impl<F: PrimeField> CircuitWithPortals<F> for MerkleTreeCircuit {
+    fn num_subcircuits(&self) -> usize {
+        // A tree has 2l - 1 nodes where l is the number of leaves
+        2 * self.leaves.len() - 1
+    }
+
     fn generate_constraints<P: PortalManager<F>>(
         &mut self,
         cs: ConstraintSystemRef<F>,
         subcircuit_idx: usize,
         pm: &mut P,
     ) -> Result<(), SynthesisError> {
-        let node_idx = subcircuit_idx as u32;
+        let num_leaves = self.leaves.len();
+
+        // The subcircuit ordering is level by level. Pick the right node idx
+        let node_idx = subcircuit_idx_to_node_idx(subcircuit_idx, num_leaves);
 
         let is_leaf = level(node_idx) == 0;
-        let is_root = root_idx(self.leaves.len()) == node_idx;
+        let is_root = root_idx(num_leaves) == node_idx;
 
         if is_leaf {
             // Every leaf idx is even
@@ -230,7 +261,7 @@ fn root_idx(num_leaves: usize) -> u32 {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::portal_manager::SetupPortalManager;
+    use crate::{portal_manager::SetupPortalManager, CircuitWithPortals};
     use ark_bls12_381::Fr;
     use ark_relations::r1cs::ConstraintSystem;
     use ark_std::{rand::Rng, test_rng};
@@ -275,20 +306,13 @@ mod test {
         // Make a fresh portal manager
         let cs = ConstraintSystemRef::<Fr>::new(ConstraintSystem::default());
         let mut pm = SetupPortalManager::new(cs.clone());
+        // Make it all one subtrace. We're not really testing this part
+        pm.start_subtrace();
 
-        // Evaluate the tree level by level. Parents need the values of their children before they
-        // can run.
-        for level in 0..=level(root_idx(num_leaves)) {
-            // Every index at level l is of the form 0X011...1 where there are l trailing ones
-            let upper_half_size = log2(num_leaves) as u32 - level;
-            let trailing_ones = (1 << level) - 1;
-
-            for upper_half in 0..(1 << upper_half_size) {
-                let subcircuit_idx = (upper_half << (level + 1)) + trailing_ones;
-
-                circ.generate_constraints(cs.clone(), subcircuit_idx, &mut pm)
-                    .unwrap();
-            }
+        let num_subcircuits = <MerkleTreeCircuit as CircuitWithPortals<Fr>>::num_subcircuits(&circ);
+        for subcircuit_idx in 0..num_subcircuits {
+            circ.generate_constraints(cs.clone(), subcircuit_idx, &mut pm)
+                .unwrap();
         }
 
         assert!(cs.is_satisfied().unwrap());
