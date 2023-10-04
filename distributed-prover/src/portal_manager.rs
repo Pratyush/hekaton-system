@@ -116,10 +116,8 @@ impl<F: PrimeField> PortalManager<F> for ProverPortalManager<F> {
 
         // Pop off a value and peek the next one. Unpack both
         // TODO: Make this a vecdeque and use pop_front
-        let RomTranscriptEntryVar {
-            addr: cur_addr,
-            val: cur_val,
-        } = self.addr_ordered_subtrace.remove(0);
+        let cur_entry = self.addr_ordered_subtrace.remove(0);
+        let (cur_addr, cur_val) = (&cur_entry.addr, &cur_entry.val);
         let RomTranscriptEntryVar {
             addr: next_addr,
             val: next_val,
@@ -130,6 +128,9 @@ impl<F: PrimeField> PortalManager<F> for ProverPortalManager<F> {
         // Check cur_val == next_val if cur_addr == next_addr
         let is_same_addr = cur_addr.is_eq(next_addr)?;
         cur_val.conditional_enforce_equal(next_val, &is_same_addr)?;
+
+        // Throw the entry from addr-ordered trace in the running eval
+        self.running_evals.update_addr_ordered(&cur_entry);
 
         // Return the val from the subtrace
         Ok(entry.val)

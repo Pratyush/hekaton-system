@@ -63,6 +63,14 @@ struct Leaf<F: PrimeField> {
 }
 
 impl<F: PrimeField> Leaf<F> {
+    /// Returns a leaf with empty running evals and a transcript entry that's just padding
+    fn padding() -> Self {
+        Leaf {
+            evals: RunningEvals::default(),
+            last_subtrace_entry: RomTranscriptEntry::padding(),
+        }
+    }
+
     fn to_bytes(&self) -> Vec<u8> {
         [self.evals.to_bytes(), self.last_subtrace_entry.to_bytes()].concat()
     }
@@ -377,15 +385,10 @@ where
         tree_leaves.get(subcircuit_idx - 1).unwrap().clone()
     } else {
         // Otherwise we need to make a padding leaf. This is all 0s.
-        Leaf {
-            evals: RunningEvals {
-                time_ordered_eval: F::zero(),
-                addr_ordered_eval: F::zero(),
-                // Every copy of `challenges` is the same here
-                challenges: tree_leaves[0].evals.challenges.clone(),
-            },
-            last_subtrace_entry: RomTranscriptEntry::padding(),
-        }
+        let mut leaf = Leaf::padding();
+        // Every copy of `challenges` is the same here
+        leaf.evals.challenges = tree_leaves[0].evals.challenges.clone();
+        leaf
     };
 
     let next_leaf_membership = eval_tree
@@ -590,7 +593,6 @@ where
                 evals: pm.running_evals,
                 last_subtrace_entry,
             };
-            dbg!(next_leaf.value());
             next_leaf_membership_var
                 .verify_membership(
                     &leaf_params_var,
@@ -599,11 +601,9 @@ where
                     &next_leaf.to_bytes()?,
                 )?
                 .enforce_equal(&Boolean::TRUE)?;
-            /*
 
             // TODO: Ensure that at i==0, the provided given evals are 0 and the provided last
             // subtrace entry is (0, 0)
-            */
 
             Ok(())
         })
@@ -626,7 +626,9 @@ mod test {
     };
 
     use ark_bls12_381::{Bls12_381 as E, Fr};
+    use ark_cp_groth16::verifier::{prepare_verifying_key, verify_proof};
     use ark_ed_on_bls12_381::{constraints::FqVar, JubjubConfig};
+    use ark_ff::ToConstraintField;
 
     #[derive(Clone, PartialEq, Eq, Hash)]
     struct LeafWindow;
@@ -682,6 +684,7 @@ mod test {
         )
     }
 
+    // Checks that the SubcircuitWithPortalsProver is satisfied when the correct inputs are given
     #[test]
     fn test_subcircuit_portal_prover_satisfied() {
         let mut rng = test_rng();
@@ -711,8 +714,6 @@ mod test {
         // Now prove a subcircuit
 
         let subcircuit_idx = 0;
-
-        dbg!(&leaves[subcircuit_idx]);
 
         let mut real_circ = SubcircuitWithPortalsProver {
             subcircuit_idx,
@@ -780,6 +781,7 @@ mod test {
         // Now prove a subcircuit
 
         let subcircuit_idx = 0;
+        let pk = &pks[subcircuit_idx];
 
         let real_circ = SubcircuitWithPortalsProver {
             subcircuit_idx,
@@ -798,7 +800,7 @@ mod test {
             _marker: PhantomData::<TestParamsVar>,
         };
 
-        let mut cb = G16CommitmentBuilder::<_, E, QAP>::new(real_circ, &pks[subcircuit_idx]);
+        let mut cb = G16CommitmentBuilder::<_, E, QAP>::new(real_circ, &pk);
         let mut subcircuit_rng = {
             let com_seed = coms_and_seeds[subcircuit_idx].1.clone();
             ChaCha12Rng::from_seed(com_seed)
@@ -808,5 +810,15 @@ mod test {
         assert_eq!(com, coms_and_seeds[subcircuit_idx].0);
 
         let proof = cb.prove(&[com], &[rand], &mut rng).unwrap();
+
+        // Verify
+        let pvk = prepare_verifying_key(&pk.vk());
+        let inputs = [
+            entry_chal.to_field_elements().unwrap(),
+            tr_chal.to_field_elements().unwrap(),
+            root.to_field_elements().unwrap(),
+        ]
+        .concat();
+        assert!(verify_proof(&pvk, &proof, &inputs).unwrap());
     }
 }

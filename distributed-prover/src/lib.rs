@@ -34,7 +34,7 @@ pub(crate) fn varname_hasher<F: PrimeField>(name: &str) -> F {
     }
 }
 
-#[derive(Clone, Default, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct RunningEvals<F: PrimeField> {
     // Stored values that are updated
     pub(crate) time_ordered_eval: F,
@@ -43,6 +43,16 @@ pub(crate) struct RunningEvals<F: PrimeField> {
     // Values specific to the global polynomial. These are need by the update function. Contains
     // `(entry_chal, tr_chal)`.
     challenges: Option<(F, F)>,
+}
+
+impl<F: PrimeField> Default for RunningEvals<F> {
+    fn default() -> Self {
+        RunningEvals {
+            time_ordered_eval: F::one(),
+            addr_ordered_eval: F::one(),
+            challenges: None,
+        }
+    }
 }
 
 impl<F: PrimeField> RunningEvals<F> {
@@ -116,7 +126,7 @@ impl<F: PrimeField> RunningEvalsVar<F> {
     }
 
     /// Updates the running evaluation of the addr-ordered transcript polyn
-    fn addr_time_ordered(&mut self, entry: &RomTranscriptEntryVar<F>) {
+    fn update_addr_ordered(&mut self, entry: &RomTranscriptEntryVar<F>) {
         let (entry_chal, tr_chal) = self
             .challenges
             .as_ref()
@@ -243,7 +253,7 @@ impl<F: PrimeField> R1CSVar<F> for RomTranscriptEntryVar<F> {
 
 impl<F: PrimeField> ToBytesGadget<F> for RomTranscriptEntryVar<F> {
     fn to_bytes(&self) -> Result<Vec<UInt8<F>>, SynthesisError> {
-        Ok([self.val.to_bytes()?, self.addr.to_bytes()?].concat())
+        Ok([self.addr.to_bytes()?, self.val.to_bytes()?].concat())
     }
 }
 
@@ -280,4 +290,52 @@ pub(crate) trait CircuitWithPortals<F: PrimeField> {
         subcircuit_idx: usize,
         pm: &mut P,
     ) -> Result<(), SynthesisError>;
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    use ark_bls12_381::{Bls12_381 as E, Fr};
+    use ark_ff::UniformRand;
+    use ark_relations::{
+        ns,
+        r1cs::{ConstraintSystem, ConstraintSystemRef, Namespace, SynthesisError},
+    };
+    use ark_std::test_rng;
+
+    #[test]
+    fn running_eval_update_correctness() {
+        let mut rng = test_rng();
+        let cs = ConstraintSystemRef::<Fr>::new(ConstraintSystem::default());
+
+        let mut re = RunningEvals {
+            time_ordered_eval: Fr::rand(&mut rng),
+            addr_ordered_eval: Fr::rand(&mut rng),
+            challenges: Some((Fr::rand(&mut rng), Fr::rand(&mut rng))),
+        };
+        let mut re_var = RunningEvalsVar::new_constant(cs.clone(), &re).unwrap();
+        re_var.challenges = Some((
+            FpVar::new_constant(cs.clone(), re.challenges.unwrap().0).unwrap(),
+            FpVar::new_constant(cs.clone(), re.challenges.unwrap().1).unwrap(),
+        ));
+
+        let entry = RomTranscriptEntry {
+            name: "test".to_string(),
+            val: Fr::rand(&mut rng),
+        };
+        let entry_var = RomTranscriptEntryVar::new_constant(cs.clone(), &entry).unwrap();
+        re.update_time_ordered(&entry);
+        re_var.update_time_ordered(&entry_var);
+
+        let entry = RomTranscriptEntry {
+            name: "test".to_string(),
+            val: Fr::rand(&mut rng),
+        };
+        let entry_var = RomTranscriptEntryVar::new_constant(cs.clone(), &entry).unwrap();
+        re.update_addr_ordered(&entry);
+        re_var.update_addr_ordered(&entry_var);
+
+        assert_eq!(re, re_var.value().unwrap());
+    }
 }
