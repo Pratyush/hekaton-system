@@ -1,12 +1,20 @@
 use crate::{
     portal_manager::{ProverPortalManager, SetupPortalManager},
+    util::log2,
     varname_hasher, CircuitWithPortals, RomTranscriptEntry, RomTranscriptEntryVar, RunningEvals,
     RunningEvalsVar, PADDING_VARNAME,
 };
 
-use core::borrow::Borrow;
+use core::{borrow::Borrow, marker::PhantomData};
 
-use ark_cp_groth16::{MultiStageConstraintSynthesizer, MultiStageConstraintSystem};
+use ark_cp_groth16::{
+    committer::CommitmentBuilder as G16CommitmentBuilder,
+    data_structures::{
+        Comm as G16Com, ProvingKey as G16ProvingKey, VerifyingKey as G16VerifyingKey,
+    },
+    r1cs_to_qap::LibsnarkReduction as QAP,
+    MultiStageConstraintSynthesizer, MultiStageConstraintSystem,
+};
 
 use ark_crypto_primitives::{
     crh::{
@@ -18,10 +26,11 @@ use ark_crypto_primitives::{
         Config as TreeConfig, LeafParam, MerkleTree, Path as MerklePath, TwoToOneParam,
     },
 };
+use ark_ec::pairing::Pairing;
 use ark_ff::PrimeField;
 use ark_r1cs_std::{
     alloc::{AllocVar, AllocationMode},
-    bits::boolean::Boolean,
+    bits::{boolean::Boolean, uint8::UInt8, ToBytesGadget},
     eq::EqGadget,
     fields::fp::FpVar,
 };
@@ -30,6 +39,8 @@ use ark_relations::{
     r1cs::{ConstraintSystem, ConstraintSystemRef, Namespace, SynthesisError},
 };
 use ark_serialize::CanonicalSerialize;
+use rand::{Rng, SeedableRng};
+use rand_chacha::ChaCha12Rng;
 
 type MerkleRoot<C> = <C as TreeConfig>::InnerDigest;
 type MerkleRootVar<C, F, CG> = <CG as TreeConfigGadget<C, F>>::InnerDigest;
@@ -44,15 +55,30 @@ type TwoToOneParamVar<CG, C, F> =
         F,
     >>::ParametersVar;
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 struct Leaf<F: PrimeField> {
     evals: RunningEvals<F>,
     last_subtrace_entry: RomTranscriptEntry<F>,
 }
 
+impl<F: PrimeField> Leaf<F> {
+    fn to_bytes(&self) -> Vec<u8> {
+        [self.evals.to_bytes(), self.last_subtrace_entry.to_bytes()].concat()
+    }
+}
+
 struct LeafVar<F: PrimeField> {
     evals: RunningEvalsVar<F>,
     last_subtrace_entry: RomTranscriptEntryVar<F>,
+}
+
+type SerializedLeaf = [u8];
+type SerializedLeafVar<F> = [UInt8<F>];
+
+impl<F: PrimeField> ToBytesGadget<F> for LeafVar<F> {
+    fn to_bytes(&self) -> Result<Vec<UInt8<F>>, SynthesisError> {
+        Ok([self.evals.to_bytes()?, self.last_subtrace_entry.to_bytes()?].concat())
+    }
 }
 
 impl<F: PrimeField> AllocVar<Leaf<F>, F> for LeafVar<F> {
@@ -102,38 +128,126 @@ where
     pm.subtraces
 }
 
-// TODO: Fill in with a real IPP commitment at some point
-type Com = [u8; 32];
-fn commit_to_trace<F: PrimeField>(subtraces: &[Vec<RomTranscriptEntry<F>>]) -> Com {
-    // This will eventually be a real commitment. In the meantime, just hash the entire trace
+fn gen_subcircuit_proving_keys<C, CG, E, P>(
+    leaf_params: &LeafParam<C>,
+    two_to_one_params: &TwoToOneParam<C>,
+    circ: P,
+) -> Vec<G16ProvingKey<E>>
+where
+    E: Pairing,
+    C: TreeConfig<Leaf = SerializedLeaf>,
+    CG: TreeConfigGadget<C, E::ScalarField, Leaf = SerializedLeafVar<E::ScalarField>>,
+    P: CircuitWithPortals<E::ScalarField> + Clone,
+{
+    let mut rng = rand::thread_rng();
+    let num_subcircuits = circ.num_subcircuits();
+    let time_ordered_subtraces = get_subtraces::<C, _, _>(circ.clone());
+
+    // Create a Groth16 instance for each subcircuit
+    time_ordered_subtraces
+        .into_iter()
+        .enumerate()
+        .map(|(subcircuit_idx, subtrace)| {
+            let mut subcirc = SubcircuitWithPortalsProver::<_, P, _, CG>::new(
+                leaf_params.clone(),
+                two_to_one_params.clone(),
+                num_subcircuits,
+            );
+
+            // Set the index and the underlying circuit
+            subcirc.subcircuit_idx = subcircuit_idx;
+            subcirc.circ = Some(circ.clone());
+
+            // Make the subtraces the same. These are just placeholders anyway. They just have to be
+            // the right length.
+            subcirc.time_ordered_subtrace = subtrace.clone();
+            subcirc.addr_ordered_subtrace = subtrace.clone();
+
+            // Generate the CRS
+            ark_cp_groth16::generator::generate_parameters::<_, E, QAP>(subcirc, &mut rng).unwrap()
+        })
+        .collect()
+}
+
+// TODO: This is clearly not an IPP com. Make it so once it's ready
+type IppCom = [u8; 32];
+
+/// Commits to the full set of CP-Groth16 stage 0 commitments
+// TODO: Make this an IPP commitment. For now it is just SHA256
+fn commit_to_g16_coms<E: Pairing, B: Borrow<G16Com<E>>>(
+    coms: impl IntoIterator<Item = B>,
+) -> IppCom {
     let mut hasher = Sha256::default();
-    for st in subtraces {
-        for entry in st {
-            let entry_addr: F = varname_hasher(&entry.name);
-            let entry_val = entry.val;
-            let mut buf = Vec::new();
-            entry_addr.serialize_uncompressed(&mut buf).unwrap();
-            entry_val.serialize_uncompressed(&mut buf).unwrap();
-            hasher.update(buf);
-        }
+    for com in coms.into_iter() {
+        let mut buf = Vec::new();
+        com.borrow().serialize_uncompressed(&mut buf).unwrap();
+        hasher.update(buf);
     }
 
     hasher.finalize().into()
 }
 
+/// A seed used for the RNG in stage 0 commitments. Each worker saves this and redoes the
+/// commitment once it's asked to do stage 1
+type ComSeed = [u8; 32];
+
 // TODO: This will be outsourced to worker nodes
-fn compute_stage0_commitments<F: PrimeField, C: CircuitWithPortals<F>>(
-    time_subtraces: &[Vec<RomTranscriptEntry<F>>],
-    addr_subtraces: &[Vec<RomTranscriptEntry<F>>],
-) -> Vec<Com> {
-    //let mut cb = CommitmentBuilder::<_, E, QAP>::new(circuit, &pk);
-    //let (comm, rand) = cb.commit(&mut rng).unwrap();
-    todo!()
+fn compute_stage0_commitments<E, P, C, CG>(
+    pks: &[G16ProvingKey<E>],
+    leaf_params: &LeafParam<C>,
+    two_to_one_params: &TwoToOneParam<C>,
+    time_subtraces: &[Vec<RomTranscriptEntry<E::ScalarField>>],
+    addr_subtraces: &[Vec<RomTranscriptEntry<E::ScalarField>>],
+) -> Vec<(G16Com<E>, ComSeed)>
+where
+    E: Pairing,
+    P: CircuitWithPortals<E::ScalarField> + Clone,
+    C: TreeConfig<Leaf = SerializedLeaf>,
+    CG: TreeConfigGadget<C, E::ScalarField, Leaf = SerializedLeafVar<E::ScalarField>>,
+{
+    let mut rng = rand::thread_rng();
+
+    // Iterate through all the subcircuits, commit to their stage 0 inputs (ie the subtraces), and
+    // save the commitments and RNG seeds
+    time_subtraces
+        .iter()
+        .zip(addr_subtraces.iter())
+        .zip(pks.iter())
+        .enumerate()
+        .map(|(subcircuit_idx, ((time_st, addr_st), pk))| {
+            // Make an empty prover
+            // The number of subcircuits dictates the size of the Merkle tree. This is irrelevant
+            // here because we're only running stage 0 of the circuit, which involves no tree ops
+            let num_subcircuits = 0;
+            let mut prover = SubcircuitWithPortalsProver::<_, P, _, CG>::new(
+                leaf_params.clone(),
+                two_to_one_params.clone(),
+                num_subcircuits,
+            );
+
+            // Fill in the correct subcircuit index and subtrace data
+            prover.subcircuit_idx = subcircuit_idx;
+            prover.time_ordered_subtrace = time_st.clone();
+            prover.addr_ordered_subtrace = addr_st.clone();
+
+            // Create a seed and make an RNG from it
+            let com_seed = rng.gen::<ComSeed>();
+            let mut subcircuit_rng = ChaCha12Rng::from_seed(com_seed);
+
+            // Commit to the stage 0 values (the subtraces)
+            let mut cb = G16CommitmentBuilder::<_, E, QAP>::new(prover.clone(), pk);
+            let (com, _) = cb
+                .commit(&mut subcircuit_rng)
+                .expect("failed to commit to subtrace");
+
+            (com, com_seed)
+        })
+        .collect()
 }
 
 /// Hashes the trace commitment and returns `(entry_chal, tr_chal)`
 /// TODO: Add a lot of context binding here. Don't want a weak fiat shamir
-fn get_chals<F: PrimeField>(com: &Com) -> (F, F) {
+fn get_chals<F: PrimeField>(com: &IppCom) -> (F, F) {
     // Generate two challenges by hashing com with two different context strings
     let entry_chal = {
         let mut hasher = Sha256::default();
@@ -156,7 +270,7 @@ fn get_chals<F: PrimeField>(com: &Com) -> (F, F) {
 
 /// Flattens the subtraces into one big trace, sorts it by address, and chunks it back into the
 /// same-sized subtraces
-fn sort_subtrace_by_addr<F: PrimeField>(
+fn sort_subtraces_by_addr<F: PrimeField>(
     time_ordered_subtraces: &[Vec<RomTranscriptEntry<F>>],
 ) -> Vec<Vec<RomTranscriptEntry<F>>> {
     // Make the (flattened) address-sorted trace
@@ -182,37 +296,29 @@ fn sort_subtrace_by_addr<F: PrimeField>(
 /// time_eval and addr_eval are the time- and address-ordered evals AFTER running subcircuit i, and
 /// where `last_trace_elem` is the last element of the i-th address-ordered subtrace. Returns the
 /// computed tree and its leaves
-fn generate_tree<F, C>(
+fn generate_tree<E, C>(
     leaf_params: &LeafParam<C>,
     two_to_one_params: &TwoToOneParam<C>,
-    subtraces: &[Vec<RomTranscriptEntry<F>>],
-) -> (MerkleTree<C>, Vec<Leaf<F>>)
+    super_com: IppCom,
+    time_ordered_subtraces: &[Vec<RomTranscriptEntry<E::ScalarField>>],
+    addr_ordered_subtraces: &[Vec<RomTranscriptEntry<E::ScalarField>>],
+) -> (MerkleTree<C>, Vec<Leaf<E::ScalarField>>)
 where
-    F: PrimeField,
-    C: TreeConfig<Leaf = Leaf<F>>,
+    E: Pairing,
+    C: TreeConfig<Leaf = SerializedLeaf>,
 {
-    let com = commit_to_trace(subtraces);
-    let (entry_chal, tr_chal) = get_chals(&com);
-
-    // Make the (flattened) address-sorted trace
-    let addr_ordered_trace = {
-        // Flatten the trace
-        let mut flat_trace = subtraces.iter().flat_map(|st| st).collect::<Vec<_>>();
-        // Sort by address, i.e., the hash of the name
-        flat_trace.sort_by_key(|entry| varname_hasher::<F>(&entry.name));
-        flat_trace
-    };
-    let addr_trace_it = &mut addr_ordered_trace.into_iter();
+    let (entry_chal, tr_chal) = get_chals(&super_com);
 
     // Generate the tree's leaves by computing the partial evals for each subtrace
     let mut evals = RunningEvals::default();
     evals.challenges = Some((entry_chal, tr_chal));
     let mut leaves = Vec::new();
-    for time_st in subtraces {
-        let addr_st = addr_trace_it.take(time_st.len());
-
+    for (time_st, addr_st) in time_ordered_subtraces
+        .iter()
+        .zip(addr_ordered_subtraces.iter())
+    {
         // Every leaf conttains the last entry of the addr-ordered subtrace
-        let mut last_subtrace_entry = RomTranscriptEntry::<F>::default();
+        let mut last_subtrace_entry = RomTranscriptEntry::<E::ScalarField>::default();
         for (time_entry, addr_entry) in time_st.iter().zip(addr_st) {
             // Eval everything in this subtrace
             evals.update_time_ordered(time_entry);
@@ -229,14 +335,17 @@ where
         leaves.push(leaf);
     }
 
+    dbg!(leaves.len());
+    let serialized_leaves = leaves.iter().map(|leaf| leaf.to_bytes());
+
     (
-        MerkleTree::new(leaf_params, two_to_one_params, &leaves).unwrap(),
+        MerkleTree::new(leaf_params, two_to_one_params, serialized_leaves).unwrap(),
         leaves,
     )
 }
 
 /// Generates the witnesses necessary for stage 1 of the subcircuit at the given index
-fn stage1_witnesses<C, F>(subcircuit_idx: usize, eval_tree: MerkleTree<C>, tree_leaves: &[Leaf<F>])
+fn stage1_witnesses<C, F>(subcircuit_idx: usize, eval_tree: &MerkleTree<C>, tree_leaves: &[Leaf<F>])
 where
     C: TreeConfig,
     F: PrimeField,
@@ -260,7 +369,12 @@ where
         }
     };
 
-    let next_leaf_membership = eval_tree.generate_proof(subcircuit_idx);
+    let next_leaf_membership = eval_tree
+        .generate_proof(subcircuit_idx)
+        .expect("invalid subcircuit idx");
+    dbg!(next_leaf_membership.auth_path.len());
+
+    todo!()
 }
 
 // Define a way to commit and prove just one subcircuit
@@ -287,16 +401,77 @@ where
     // Stage 1 witnesses
     pub cur_leaf: Leaf<F>,
     pub next_leaf_membership: MerklePath<C>,
-    pub cur_leaf_var: LeafVar<F>,
-    pub next_leaf_membership_var: MerklePathVar<C, F, CG>,
 
     // Stage 1 public inputs
     pub entry_chal: F,
     pub tr_chal: F,
     pub root: MerkleRoot<C>,
-    pub entry_chal_var: FpVar<F>,
-    pub tr_chal_var: FpVar<F>,
-    pub root_var: MerkleRootVar<C, F, CG>,
+
+    _marker: PhantomData<CG>,
+}
+
+impl<F, P, C, CG> Clone for SubcircuitWithPortalsProver<F, P, C, CG>
+where
+    F: PrimeField,
+    P: CircuitWithPortals<F> + Clone,
+    C: TreeConfig,
+    CG: TreeConfigGadget<C, F>,
+{
+    fn clone(&self) -> Self {
+        SubcircuitWithPortalsProver {
+            subcircuit_idx: self.subcircuit_idx,
+            circ: self.circ.clone(),
+            leaf_params: self.leaf_params.clone(),
+            two_to_one_params: self.two_to_one_params.clone(),
+            time_ordered_subtrace: self.time_ordered_subtrace.clone(),
+            addr_ordered_subtrace: self.addr_ordered_subtrace.clone(),
+            time_ordered_subtrace_var: self.time_ordered_subtrace_var.clone(),
+            addr_ordered_subtrace_var: self.addr_ordered_subtrace_var.clone(),
+            cur_leaf: self.cur_leaf.clone(),
+            next_leaf_membership: self.next_leaf_membership.clone(),
+            entry_chal: self.entry_chal.clone(),
+            tr_chal: self.tr_chal.clone(),
+            root: self.root.clone(),
+            _marker: self._marker.clone(),
+        }
+    }
+}
+
+impl<F, P, C, CG> SubcircuitWithPortalsProver<F, P, C, CG>
+where
+    F: PrimeField,
+    P: CircuitWithPortals<F>,
+    C: TreeConfig,
+    CG: TreeConfigGadget<C, F>,
+{
+    // Makes a new struct with subcircuit idx 0, no subtraces, and an empty Merkle auth path
+    fn new(
+        leaf_params: LeafParam<C>,
+        two_to_one_params: TwoToOneParam<C>,
+        num_subcircuits: usize,
+    ) -> Self {
+        // Create an auth path of the correct length
+        let auth_path_len = log2(num_subcircuits);
+        let mut auth_path = MerklePath::default();
+        auth_path.auth_path = vec![C::InnerDigest::default(); dbg!(auth_path_len)];
+
+        SubcircuitWithPortalsProver {
+            subcircuit_idx: 0,
+            circ: None,
+            leaf_params,
+            two_to_one_params,
+            time_ordered_subtrace: Vec::new(),
+            addr_ordered_subtrace: Vec::new(),
+            time_ordered_subtrace_var: Vec::new(),
+            addr_ordered_subtrace_var: Vec::new(),
+            cur_leaf: Leaf::default(),
+            next_leaf_membership: auth_path,
+            entry_chal: F::zero(),
+            tr_chal: F::zero(),
+            root: MerkleRoot::<C>::default(),
+            _marker: PhantomData,
+        }
+    }
 }
 
 impl<F, P, C, CG> MultiStageConstraintSynthesizer<F> for SubcircuitWithPortalsProver<F, P, C, CG>
@@ -304,7 +479,7 @@ where
     F: PrimeField,
     P: CircuitWithPortals<F>,
     C: TreeConfig,
-    CG: TreeConfigGadget<C, F, Leaf = LeafVar<F>>,
+    CG: TreeConfigGadget<C, F, Leaf = SerializedLeafVar<F>>,
 {
     /// Two stages: Subtrace commit, and the rest
     fn total_num_stages(&self) -> usize {
@@ -343,33 +518,31 @@ where
         cs.synthesize_with(|c| {
             // Witness all the necessary variables
             // This does NOT witness the RunningEvals challenges. That must be done separately
-            self.cur_leaf_var = LeafVar::new_witness(ns!(c, "leaf"), || Ok(&self.cur_leaf))?;
-            self.next_leaf_membership_var =
-                MerklePathVar::new_witness(ns!(c, "path"), || Ok(&self.next_leaf_membership))?;
-            self.entry_chal_var = FpVar::new_input(ns!(c, "entry chal"), || Ok(&self.entry_chal))?;
-            self.tr_chal_var = FpVar::new_input(ns!(c, "tr chal"), || Ok(&self.tr_chal))?;
-            self.root_var =
-                MerkleRootVar::<_, _, CG>::new_input(ns!(c, "root"), || Ok(&self.root))?;
+            let cur_leaf_var = LeafVar::new_witness(ns!(c, "leaf"), || Ok(&self.cur_leaf))?;
+            let next_leaf_membership_var =
+                MerklePathVar::<_, _, CG>::new_witness(ns!(c, "path"), || {
+                    Ok(&self.next_leaf_membership)
+                })?;
+            let entry_chal_var = FpVar::new_input(ns!(c, "entry chal"), || Ok(&self.entry_chal))?;
+            let tr_chal_var = FpVar::new_input(ns!(c, "tr chal"), || Ok(&self.tr_chal))?;
+            let root_var = MerkleRootVar::<_, _, CG>::new_input(ns!(c, "root"), || Ok(&self.root))?;
 
-            // Witness the Merkle tree params too
+            // Input the Merkle tree params as constants
             let leaf_params_var =
-                LeafParamVar::<CG, _, _>::new_witness(ns!(c, "leaf param"), || {
-                    Ok(&self.leaf_params)
-                })?;
-            let two_to_one_params_var =
-                TwoToOneParamVar::<CG, _, _>::new_witness(ns!(c, "2-to-1 param"), || {
-                    Ok(&self.two_to_one_params)
-                })?;
+                LeafParamVar::<CG, _, _>::new_constant(ns!(c, "leaf param"), &self.leaf_params)?;
+            let two_to_one_params_var = TwoToOneParamVar::<CG, _, _>::new_constant(
+                ns!(c, "2-to-1 param"),
+                &self.two_to_one_params,
+            )?;
 
             // Set the challenge values so the running evals knows how to update itself
-            let mut running_evals_var = self.cur_leaf_var.evals.clone();
-            running_evals_var.challenges =
-                Some((self.entry_chal_var.clone(), self.tr_chal_var.clone()));
+            let mut running_evals_var = cur_leaf_var.evals.clone();
+            running_evals_var.challenges = Some((entry_chal_var, tr_chal_var));
 
             // Prepend the last subtrace entry to the addr-ordered subtrace. This necessary for the
             // consistency check.
             let full_addr_ordered_subtrace = [
-                &[self.cur_leaf_var.last_subtrace_entry.clone()][..],
+                &[cur_leaf_var.last_subtrace_entry.clone()][..],
                 &self.addr_ordered_subtrace_var,
             ]
             .concat();
@@ -389,20 +562,22 @@ where
                 .expect("must provide circuit for stage 1 computation")
                 .generate_constraints(c.clone(), self.subcircuit_idx, &mut pm)?;
 
-            // Sanity checks: make sure all the subtraces were used
-            assert!(pm.time_ordered_subtrace.is_empty() && pm.addr_ordered_subtrace.is_empty());
+            // Sanity checks: make sure all the subtraces were used. The addr-ordered one has 1
+            // remaining because it starts with 1 extra. The last one is used, but it's not popped.
+            assert_eq!(pm.time_ordered_subtrace.len(), 0);
+            assert_eq!(pm.addr_ordered_subtrace.len(), 1);
 
             // Make sure the resulting tree leaf appears in the Merkle Tree
             let next_leaf = LeafVar {
                 evals: pm.running_evals,
                 last_subtrace_entry,
             };
-            self.next_leaf_membership_var
+            next_leaf_membership_var
                 .verify_membership(
                     &leaf_params_var,
                     &two_to_one_params_var,
-                    &self.root_var,
-                    &next_leaf,
+                    &root_var,
+                    &next_leaf.to_bytes()?,
                 )?
                 .enforce_equal(&Boolean::TRUE)?;
 
@@ -414,33 +589,114 @@ where
     }
 }
 
-/*
 #[cfg(test)]
 mod test {
+    use super::*;
+    use crate::tree_hash_circuit::*;
+
+    use ark_std::test_rng;
+
     use ark_crypto_primitives::{
-        crh::{bowe_hopwood, pedersen},
-        merkle_tree::Config,
+        crh::{bowe_hopwood, pedersen, CRHScheme, TwoToOneCRHScheme},
+        merkle_tree::{
+            constraints::{BytesVarDigestConverter, ConfigGadget},
+            ByteDigestConverter, Config,
+        },
     };
 
-    use ark_ed_on_bls12_381::EdwardsParameters;
-    use ark_std::rand::RngCore;
+    use ark_bls12_381::{Bls12_381 as E, Fr};
+    use ark_ed_on_bls12_381::{constraints::FqVar, JubjubConfig};
 
     #[derive(Clone, PartialEq, Eq, Hash)]
-    struct Window;
+    struct LeafWindow;
+    #[derive(Clone, PartialEq, Eq, Hash)]
+    struct InnerWindow;
 
-    impl pedersen::Window for Window {
+    impl pedersen::Window for LeafWindow {
+        const WINDOW_SIZE: usize = 63;
+        const NUM_WINDOWS: usize = 6;
+    }
+
+    impl pedersen::Window for InnerWindow {
         const WINDOW_SIZE: usize = 63;
         const NUM_WINDOWS: usize = 9;
     }
 
+    type LeafH = bowe_hopwood::CRH<JubjubConfig, LeafWindow>;
+    type LeafHG = bowe_hopwood::constraints::CRHGadget<JubjubConfig, FqVar>;
+
+    type CompressH = bowe_hopwood::TwoToOneCRH<JubjubConfig, InnerWindow>;
+    type CompressHG = bowe_hopwood::constraints::TwoToOneCRHGadget<JubjubConfig, FqVar>;
+
     #[derive(Clone)]
-    struct JubJubMerkleTreeParams;
-    impl Config for JubJubMerkleTreeParams {
-        type LeafHash = H;
-        type TwoToOneHash = H;
+    struct TestParams;
+    impl Config for TestParams {
+        type Leaf = SerializedLeaf;
+
+        type LeafHash = LeafH;
+        type TwoToOneHash = CompressH;
+
+        type LeafDigest = <LeafH as CRHScheme>::Output;
+        type LeafInnerDigestConverter = ByteDigestConverter<Self::LeafDigest>;
+        type InnerDigest = <CompressH as TwoToOneCRHScheme>::Output;
     }
 
-    type JubJubMerkleTree = SparseMerkleTree<JubJubMerkleTreeParams>;
-    type H = bowe_hopwood::CRH<EdwardsParameters, Window>;
+    struct TestParamsVar;
+    impl ConfigGadget<TestParams, Fr> for TestParamsVar {
+        type Leaf = SerializedLeafVar<Fr>;
+
+        type LeafDigest = <LeafHG as CRHSchemeGadget<LeafH, Fr>>::OutputVar;
+        type LeafInnerConverter = BytesVarDigestConverter<Self::LeafDigest, Fr>;
+        type InnerDigest = <CompressHG as TwoToOneCRHSchemeGadget<CompressH, Fr>>::OutputVar;
+        type LeafHash = LeafHG;
+        type TwoToOneHash = CompressHG;
+    }
+
+    type JubJubMerkleTree = MerkleTree<TestParams>;
+
+    fn gen_merkle_params(mut rng: impl Rng) -> (LeafParam<TestParams>, TwoToOneParam<TestParams>) {
+        (
+            <LeafH as CRHScheme>::setup(&mut rng).unwrap(),
+            <CompressH as TwoToOneCRHScheme>::setup(&mut rng).unwrap(),
+        )
+    }
+
+    #[test]
+    fn test_e2e_prover() {
+        let mut rng = test_rng();
+
+        // Make a random Merkle tree
+        let num_leaves = 4;
+        let circ = MerkleTreeCircuit::rand(&mut rng, num_leaves);
+
+        let (leaf_params, two_to_one_params) = gen_merkle_params(&mut rng);
+        let pks: Vec<G16ProvingKey<E>> = gen_subcircuit_proving_keys::<
+            TestParams,
+            TestParamsVar,
+            _,
+            _,
+        >(&leaf_params, &two_to_one_params, circ.clone());
+
+        let time_subtraces = get_subtraces::<TestParams, Fr, _>(circ);
+        let addr_subtraces = sort_subtraces_by_addr(&time_subtraces);
+        let coms_and_seeds =
+            compute_stage0_commitments::<E, MerkleTreeCircuit, TestParams, TestParamsVar>(
+                &pks,
+                &leaf_params,
+                &two_to_one_params,
+                &time_subtraces,
+                &addr_subtraces,
+            );
+        let super_com = commit_to_g16_coms::<E, _>(coms_and_seeds.iter().map(|(com, _)| com));
+
+        let (tree, leaves) = generate_tree::<E, TestParams>(
+            &leaf_params,
+            &two_to_one_params,
+            super_com,
+            &time_subtraces,
+            &addr_subtraces,
+        );
+
+        stage1_witnesses(0, &tree, &leaves);
+    }
 }
-*/

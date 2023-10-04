@@ -1,8 +1,9 @@
 use core::borrow::Borrow;
 
-use ark_ff::PrimeField;
+use ark_ff::{BigInteger, PrimeField};
 use ark_r1cs_std::{
     alloc::{AllocVar, AllocationMode},
+    bits::{uint8::UInt8, ToBytesGadget},
     fields::fp::FpVar,
 };
 use ark_relations::{
@@ -15,6 +16,7 @@ mod eval_tree;
 mod portal_manager;
 //mod worker_node;
 mod tree_hash_circuit;
+mod util;
 
 use portal_manager::PortalManager;
 
@@ -43,6 +45,14 @@ pub(crate) struct RunningEvals<F: PrimeField> {
 }
 
 impl<F: PrimeField> RunningEvals<F> {
+    fn to_bytes(&self) -> Vec<u8> {
+        [
+            self.time_ordered_eval.into_bigint().to_bytes_le(),
+            self.addr_ordered_eval.into_bigint().to_bytes_le(),
+        ]
+        .concat()
+    }
+
     /// Updates the running evaluation of the time-ordered transcript polyn
     fn update_time_ordered(&mut self, entry: &RomTranscriptEntry<F>) {
         // Unpack challenges
@@ -121,6 +131,16 @@ impl<F: PrimeField> RunningEvalsVar<F> {
     }
 }
 
+impl<F: PrimeField> ToBytesGadget<F> for RunningEvalsVar<F> {
+    fn to_bytes(&self) -> Result<Vec<UInt8<F>>, SynthesisError> {
+        Ok([
+            self.time_ordered_eval.to_bytes()?,
+            self.addr_ordered_eval.to_bytes()?,
+        ]
+        .concat())
+    }
+}
+
 impl<F: PrimeField> AllocVar<RunningEvals<F>, F> for RunningEvalsVar<F> {
     fn new_variable<T: Borrow<RunningEvals<F>>>(
         cs: impl Into<Namespace<F>>,
@@ -153,12 +173,28 @@ pub struct RomTranscriptEntry<F: PrimeField> {
     val: F,
 }
 
+impl<F: PrimeField> RomTranscriptEntry<F> {
+    fn to_bytes(&self) -> Vec<u8> {
+        [
+            varname_hasher::<F>(&self.name).into_bigint().to_bytes_le(),
+            self.val.into_bigint().to_bytes_le(),
+        ]
+        .concat()
+    }
+}
+
 /// An entry in the transcript of portal wire reads
 #[derive(Clone)]
 pub(crate) struct RomTranscriptEntryVar<F: PrimeField> {
     val: FpVar<F>,
     /// The hash of the variable name
     addr: FpVar<F>,
+}
+
+impl<F: PrimeField> ToBytesGadget<F> for RomTranscriptEntryVar<F> {
+    fn to_bytes(&self) -> Result<Vec<UInt8<F>>, SynthesisError> {
+        Ok([self.val.to_bytes()?, self.addr.to_bytes()?].concat())
+    }
 }
 
 impl<F: PrimeField> AllocVar<RomTranscriptEntry<F>, F> for RomTranscriptEntryVar<F> {

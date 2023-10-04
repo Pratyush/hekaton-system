@@ -105,7 +105,9 @@ impl<F: PrimeField> PortalManager<F> for ProverPortalManager<F> {
             .time_ordered_subtrace
             .pop()
             .expect("ran out of trace elements");
-        assert_eq!(entry.addr.value().unwrap(), varname_hasher(name));
+        if let Ok(addr) = entry.addr.value() {
+            assert_eq!(addr, varname_hasher(name));
+        }
 
         // Update the running polyn
         self.running_evals.update_time_ordered(&entry);

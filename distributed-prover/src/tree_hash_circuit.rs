@@ -1,4 +1,4 @@
-use crate::{portal_manager::PortalManager, CircuitWithPortals};
+use crate::{portal_manager::PortalManager, util::log2, CircuitWithPortals};
 
 use ark_crypto_primitives::crh::sha256::{
     constraints::{DigestVar, Sha256Gadget},
@@ -17,12 +17,16 @@ use ark_relations::{
     r1cs::{ConstraintSystemRef, SynthesisError},
 };
 
-type TestLeaf = [u8; 32];
+#[cfg(test)]
+use rand::Rng;
+
+pub(crate) type TestLeaf = [u8; 32];
 type InnerHash = [u8; 31];
 
-struct MerkleTreeCircuit {
-    leaves: Vec<TestLeaf>,
-    root_hash: InnerHash,
+#[derive(Clone)]
+pub(crate) struct MerkleTreeCircuit {
+    pub(crate) leaves: Vec<TestLeaf>,
+    pub(crate) root_hash: InnerHash,
 }
 
 /// Truncates the SHA256 hash to 31 bytes, converts to bits (each byte to little-endian), and
@@ -85,10 +89,22 @@ fn subcircuit_idx_to_node_idx(subcircuit_idx: usize, num_leaves: usize) -> u32 {
     panic!("invalid subcircuit idx {subcircuit_idx} for a tree of {num_leaves} leaves");
 }
 
+#[cfg(test)]
+impl MerkleTreeCircuit {
+    /// Makes a Merkle tree with a random set of leaves
+    pub(crate) fn rand(mut rng: impl Rng, num_leaves: usize) -> Self {
+        let mut leaves = vec![TestLeaf::default(); num_leaves];
+        leaves.iter_mut().for_each(|l| rng.fill(l));
+        let root_hash = calculate_root(&leaves);
+        MerkleTreeCircuit { leaves, root_hash }
+    }
+}
+
 impl<F: PrimeField> CircuitWithPortals<F> for MerkleTreeCircuit {
     fn num_subcircuits(&self) -> usize {
-        // A tree has 2l - 1 nodes where l is the number of leaves
-        2 * self.leaves.len() - 1
+        // A tree has 2l - 1 nodes where l is the number of leaves. We pad with 1 extra circuit to
+        // get to a power of two
+        2 * self.leaves.len()
     }
 
     fn generate_constraints<P: PortalManager<F>>(
@@ -97,6 +113,12 @@ impl<F: PrimeField> CircuitWithPortals<F> for MerkleTreeCircuit {
         subcircuit_idx: usize,
         pm: &mut P,
     ) -> Result<(), SynthesisError> {
+        // Special padding subcircuit. If it's the last subcircuit, do nothing. This pads us out to
+        // a power of two
+        if subcircuit_idx == <Self as CircuitWithPortals<F>>::num_subcircuits(&self) - 1 {
+            return Ok(());
+        }
+
         let num_leaves = self.leaves.len();
 
         // The subcircuit ordering is level by level. Pick the right node idx
@@ -211,19 +233,6 @@ fn u8_le_bits(x: u8) -> [bool; 8] {
 //
 //   Node: 0  1  2  3  4  5  6  7  8  9 10 11 12 13 14
 
-fn log2(x: usize) -> usize {
-    // We set log2(0) == 0
-    if x == 0 {
-        0
-    } else {
-        let mut k = 0;
-        while (x >> k) > 0 {
-            k += 1;
-        }
-        k - 1
-    }
-}
-
 // The level of an internal node is how "odd" it is, i.e., how many trailing ones it has in its
 // binary representation
 fn level(node: u32) -> u32 {
@@ -297,11 +306,8 @@ mod test {
         let mut rng = test_rng();
         let num_leaves = 16;
 
-        // Make a Merkle tree with a random set of leaves
-        let mut leaves = vec![TestLeaf::default(); num_leaves];
-        leaves.iter_mut().for_each(|l| rng.fill(l));
-        let root_hash = calculate_root(&leaves);
-        let mut circ = MerkleTreeCircuit { leaves, root_hash };
+        // Make a random Merkle tree
+        let mut circ = MerkleTreeCircuit::rand(&mut rng, num_leaves);
 
         // Make a fresh portal manager
         let cs = ConstraintSystemRef::<Fr>::new(ConstraintSystem::default());
