@@ -217,8 +217,9 @@ where
         .map(|(subcircuit_idx, ((time_st, addr_st), pk))| {
             // Make an empty prover
             // The number of subcircuits dictates the size of the Merkle tree. This is irrelevant
-            // here because we're only running stage 0 of the circuit, which involves no tree ops
-            let num_subcircuits = 0;
+            // here because we're only running stage 0 of the circuit, which involves no tree ops.
+            // Make it 2 so that we don't get underflow by accident
+            let num_subcircuits = 2;
             let mut prover = SubcircuitWithPortalsProver::<_, P, _, CG>::new(
                 leaf_params.clone(),
                 two_to_one_params.clone(),
@@ -313,12 +314,13 @@ where
     let mut evals = RunningEvals::default();
     evals.challenges = Some((entry_chal, tr_chal));
     let mut leaves = Vec::new();
+
+    // Every leaf conttains the last entry of the addr-ordered subtrace
+    let mut last_subtrace_entry = RomTranscriptEntry::<E::ScalarField>::padding();
     for (time_st, addr_st) in time_ordered_subtraces
         .iter()
         .zip(addr_ordered_subtraces.iter())
     {
-        // Every leaf conttains the last entry of the addr-ordered subtrace
-        let mut last_subtrace_entry = RomTranscriptEntry::<E::ScalarField>::default();
         for (time_entry, addr_entry) in time_st.iter().zip(addr_st) {
             // Eval everything in this subtrace
             evals.update_time_ordered(time_entry);
@@ -330,12 +332,11 @@ where
         // Push the leaf
         let leaf = Leaf {
             evals: evals.clone(),
-            last_subtrace_entry,
+            last_subtrace_entry: last_subtrace_entry.clone(),
         };
         leaves.push(leaf);
     }
 
-    dbg!(leaves.len());
     let serialized_leaves = leaves.iter().map(|leaf| leaf.to_bytes());
 
     (
@@ -362,17 +363,13 @@ where
                 // Every copy of `challenges` is the same here
                 challenges: tree_leaves[0].evals.challenges.clone(),
             },
-            last_subtrace_entry: RomTranscriptEntry {
-                name: PADDING_VARNAME.to_string(), // This makes the address 0
-                val: F::zero(),
-            },
+            last_subtrace_entry: RomTranscriptEntry::padding(),
         }
     };
 
     let next_leaf_membership = eval_tree
         .generate_proof(subcircuit_idx)
         .expect("invalid subcircuit idx");
-    dbg!(next_leaf_membership.auth_path.len());
 
     todo!()
 }
@@ -451,9 +448,9 @@ where
         num_subcircuits: usize,
     ) -> Self {
         // Create an auth path of the correct length
-        let auth_path_len = log2(num_subcircuits);
+        let auth_path_len = log2(num_subcircuits) - 1;
         let mut auth_path = MerklePath::default();
-        auth_path.auth_path = vec![C::InnerDigest::default(); dbg!(auth_path_len)];
+        auth_path.auth_path = vec![C::InnerDigest::default(); auth_path_len];
 
         SubcircuitWithPortalsProver {
             subcircuit_idx: 0,
@@ -547,7 +544,7 @@ where
             ]
             .concat();
             // Save the last subtrace entry for a check later
-            let last_subtrace_entry = self.addr_ordered_subtrace_var.last().unwrap().clone();
+            let last_subtrace_entry = full_addr_ordered_subtrace.last().unwrap().clone();
 
             // Create the portal manager to give to the circuit
             let mut pm = ProverPortalManager {

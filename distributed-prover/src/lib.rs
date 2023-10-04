@@ -181,6 +181,15 @@ impl<F: PrimeField> RomTranscriptEntry<F> {
         ]
         .concat()
     }
+
+    /// Returns an entry that always gets serialized as (0, 0). This is to pad the head of the
+    /// address-sorted transcript
+    fn padding() -> Self {
+        RomTranscriptEntry {
+            name: PADDING_VARNAME.to_string(), // This makes the address 0
+            val: F::zero(),
+        }
+    }
 }
 
 /// An entry in the transcript of portal wire reads
