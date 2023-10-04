@@ -5,6 +5,7 @@ use ark_r1cs_std::{
     alloc::{AllocVar, AllocationMode},
     bits::{uint8::UInt8, ToBytesGadget},
     fields::fp::FpVar,
+    R1CSVar,
 };
 use ark_relations::{
     ns,
@@ -33,7 +34,7 @@ pub(crate) fn varname_hasher<F: PrimeField>(name: &str) -> F {
     }
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone, Default, Debug, PartialEq, Eq)]
 pub(crate) struct RunningEvals<F: PrimeField> {
     // Stored values that are updated
     pub(crate) time_ordered_eval: F,
@@ -131,6 +132,31 @@ impl<F: PrimeField> RunningEvalsVar<F> {
     }
 }
 
+impl<F: PrimeField> R1CSVar<F> for RunningEvalsVar<F> {
+    type Value = RunningEvals<F>;
+
+    fn cs(&self) -> ConstraintSystemRef<F> {
+        self.time_ordered_eval.cs().or(self.addr_ordered_eval.cs())
+    }
+
+    fn value(&self) -> Result<Self::Value, SynthesisError> {
+        let challenges = self
+            .challenges
+            .as_ref()
+            .map(|(a, b)| {
+                a.value()
+                    .and_then(|aa| b.value().and_then(|bb| Ok((aa, bb))))
+            })
+            .transpose()?;
+
+        Ok(RunningEvals {
+            time_ordered_eval: self.time_ordered_eval.value()?,
+            addr_ordered_eval: self.addr_ordered_eval.value()?,
+            challenges,
+        })
+    }
+}
+
 impl<F: PrimeField> ToBytesGadget<F> for RunningEvalsVar<F> {
     fn to_bytes(&self) -> Result<Vec<UInt8<F>>, SynthesisError> {
         Ok([
@@ -167,7 +193,7 @@ impl<F: PrimeField> AllocVar<RunningEvals<F>, F> for RunningEvalsVar<F> {
 }
 
 /// An entry in the transcript of portal wire reads
-#[derive(Clone, Default)]
+#[derive(Clone, Default, Debug, PartialEq, Eq)]
 pub struct RomTranscriptEntry<F: PrimeField> {
     name: String,
     val: F,
@@ -198,6 +224,21 @@ pub(crate) struct RomTranscriptEntryVar<F: PrimeField> {
     val: FpVar<F>,
     /// The hash of the variable name
     addr: FpVar<F>,
+}
+
+impl<F: PrimeField> R1CSVar<F> for RomTranscriptEntryVar<F> {
+    type Value = RomTranscriptEntry<F>;
+
+    fn cs(&self) -> ConstraintSystemRef<F> {
+        self.val.cs().or(self.addr.cs())
+    }
+
+    fn value(&self) -> Result<Self::Value, SynthesisError> {
+        Ok(RomTranscriptEntry {
+            val: self.val.value()?,
+            name: "[name]".to_string(),
+        })
+    }
 }
 
 impl<F: PrimeField> ToBytesGadget<F> for RomTranscriptEntryVar<F> {

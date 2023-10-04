@@ -115,10 +115,11 @@ impl<F: PrimeField> PortalManager<F> for ProverPortalManager<F> {
         // On our other subtrace, do one step of a memory-ordering check
 
         // Pop off a value and peek the next one. Unpack both
+        // TODO: Make this a vecdeque and use pop_front
         let RomTranscriptEntryVar {
             addr: cur_addr,
             val: cur_val,
-        } = self.addr_ordered_subtrace.pop().unwrap();
+        } = self.addr_ordered_subtrace.remove(0);
         let RomTranscriptEntryVar {
             addr: next_addr,
             val: next_val,

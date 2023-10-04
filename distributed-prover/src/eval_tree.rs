@@ -33,6 +33,7 @@ use ark_r1cs_std::{
     bits::{boolean::Boolean, uint8::UInt8, ToBytesGadget},
     eq::EqGadget,
     fields::fp::FpVar,
+    R1CSVar,
 };
 use ark_relations::{
     ns,
@@ -55,7 +56,7 @@ type TwoToOneParamVar<CG, C, F> =
         F,
     >>::ParametersVar;
 
-#[derive(Clone, Default)]
+#[derive(Clone, Default, Debug, PartialEq, Eq)]
 struct Leaf<F: PrimeField> {
     evals: RunningEvals<F>,
     last_subtrace_entry: RomTranscriptEntry<F>,
@@ -74,6 +75,21 @@ struct LeafVar<F: PrimeField> {
 
 type SerializedLeaf = [u8];
 type SerializedLeafVar<F> = [UInt8<F>];
+
+impl<F: PrimeField> R1CSVar<F> for LeafVar<F> {
+    type Value = Leaf<F>;
+
+    fn cs(&self) -> ConstraintSystemRef<F> {
+        self.evals.cs().or(self.last_subtrace_entry.cs())
+    }
+
+    fn value(&self) -> Result<Self::Value, SynthesisError> {
+        Ok(Leaf {
+            evals: self.evals.value()?,
+            last_subtrace_entry: self.last_subtrace_entry.value()?,
+        })
+    }
+}
 
 impl<F: PrimeField> ToBytesGadget<F> for LeafVar<F> {
     fn to_bytes(&self) -> Result<Vec<UInt8<F>>, SynthesisError> {
@@ -345,8 +361,13 @@ where
     )
 }
 
-/// Generates the witnesses necessary for stage 1 of the subcircuit at the given index
-fn stage1_witnesses<C, F>(subcircuit_idx: usize, eval_tree: &MerkleTree<C>, tree_leaves: &[Leaf<F>])
+/// Generates the witnesses necessary for stage 1 of the subcircuit at the given index.
+/// Specifically, generates `(cur_leaf, next_leaf_membership)`
+fn stage1_witnesses<C, F>(
+    subcircuit_idx: usize,
+    eval_tree: &MerkleTree<C>,
+    tree_leaves: &[Leaf<F>],
+) -> (Leaf<F>, MerklePath<C>)
 where
     C: TreeConfig,
     F: PrimeField,
@@ -371,7 +392,7 @@ where
         .generate_proof(subcircuit_idx)
         .expect("invalid subcircuit idx");
 
-    todo!()
+    (cur_leaf, next_leaf_membership)
 }
 
 // Define a way to commit and prove just one subcircuit
@@ -569,6 +590,7 @@ where
                 evals: pm.running_evals,
                 last_subtrace_entry,
             };
+            dbg!(next_leaf.value());
             next_leaf_membership_var
                 .verify_membership(
                     &leaf_params_var,
@@ -577,9 +599,11 @@ where
                     &next_leaf.to_bytes()?,
                 )?
                 .enforce_equal(&Boolean::TRUE)?;
+            /*
 
             // TODO: Ensure that at i==0, the provided given evals are 0 and the provided last
             // subtrace entry is (0, 0)
+            */
 
             Ok(())
         })
@@ -659,6 +683,61 @@ mod test {
     }
 
     #[test]
+    fn test_subcircuit_portal_prover_satisfied() {
+        let mut rng = test_rng();
+
+        // Make a random Merkle tree
+        let num_leaves = 4;
+        let circ = MerkleTreeCircuit::rand(&mut rng, num_leaves);
+
+        let (leaf_params, two_to_one_params) = gen_merkle_params(&mut rng);
+
+        let time_subtraces = get_subtraces::<TestParams, Fr, _>(circ.clone());
+        let addr_subtraces = sort_subtraces_by_addr(&time_subtraces);
+        let super_com: IppCom = rng.gen();
+        let (entry_chal, tr_chal) = get_chals(&super_com);
+
+        let (tree, leaves) = generate_tree::<E, TestParams>(
+            &leaf_params,
+            &two_to_one_params,
+            super_com,
+            &time_subtraces,
+            &addr_subtraces,
+        );
+        let root = tree.root();
+
+        let (cur_leaf, next_leaf_membership) = stage1_witnesses(0, &tree, &leaves);
+
+        // Now prove a subcircuit
+
+        let subcircuit_idx = 0;
+
+        dbg!(&leaves[subcircuit_idx]);
+
+        let mut real_circ = SubcircuitWithPortalsProver {
+            subcircuit_idx,
+            circ: Some(circ),
+            leaf_params,
+            two_to_one_params,
+            time_ordered_subtrace: time_subtraces[0].clone(),
+            addr_ordered_subtrace: addr_subtraces[0].clone(),
+            time_ordered_subtrace_var: Vec::new(),
+            addr_ordered_subtrace_var: Vec::new(),
+            cur_leaf,
+            next_leaf_membership,
+            entry_chal,
+            tr_chal,
+            root,
+            _marker: PhantomData::<TestParamsVar>,
+        };
+        let mut mcs = MultiStageConstraintSystem::default();
+        real_circ.generate_constraints(0, &mut mcs).unwrap();
+        real_circ.generate_constraints(1, &mut mcs).unwrap();
+
+        assert!(mcs.is_satisfied().unwrap());
+    }
+
+    #[test]
     fn test_e2e_prover() {
         let mut rng = test_rng();
 
@@ -674,7 +753,7 @@ mod test {
             _,
         >(&leaf_params, &two_to_one_params, circ.clone());
 
-        let time_subtraces = get_subtraces::<TestParams, Fr, _>(circ);
+        let time_subtraces = get_subtraces::<TestParams, Fr, _>(circ.clone());
         let addr_subtraces = sort_subtraces_by_addr(&time_subtraces);
         let coms_and_seeds =
             compute_stage0_commitments::<E, MerkleTreeCircuit, TestParams, TestParamsVar>(
@@ -685,6 +764,7 @@ mod test {
                 &addr_subtraces,
             );
         let super_com = commit_to_g16_coms::<E, _>(coms_and_seeds.iter().map(|(com, _)| com));
+        let (entry_chal, tr_chal) = get_chals(&super_com);
 
         let (tree, leaves) = generate_tree::<E, TestParams>(
             &leaf_params,
@@ -693,7 +773,40 @@ mod test {
             &time_subtraces,
             &addr_subtraces,
         );
+        let root = tree.root();
 
-        stage1_witnesses(0, &tree, &leaves);
+        let (cur_leaf, next_leaf_membership) = stage1_witnesses(0, &tree, &leaves);
+
+        // Now prove a subcircuit
+
+        let subcircuit_idx = 0;
+
+        let real_circ = SubcircuitWithPortalsProver {
+            subcircuit_idx,
+            circ: Some(circ),
+            leaf_params,
+            two_to_one_params,
+            time_ordered_subtrace: time_subtraces[0].clone(),
+            addr_ordered_subtrace: addr_subtraces[0].clone(),
+            time_ordered_subtrace_var: Vec::new(),
+            addr_ordered_subtrace_var: Vec::new(),
+            cur_leaf,
+            next_leaf_membership,
+            entry_chal,
+            tr_chal,
+            root,
+            _marker: PhantomData::<TestParamsVar>,
+        };
+
+        let mut cb = G16CommitmentBuilder::<_, E, QAP>::new(real_circ, &pks[subcircuit_idx]);
+        let mut subcircuit_rng = {
+            let com_seed = coms_and_seeds[subcircuit_idx].1.clone();
+            ChaCha12Rng::from_seed(com_seed)
+        };
+
+        let (com, rand) = cb.commit(&mut subcircuit_rng).unwrap();
+        assert_eq!(com, coms_and_seeds[subcircuit_idx].0);
+
+        let proof = cb.prove(&[com], &[rand], &mut rng).unwrap();
     }
 }
