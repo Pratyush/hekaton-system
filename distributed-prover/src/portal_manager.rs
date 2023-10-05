@@ -1,6 +1,9 @@
 use crate::{varname_hasher, RomTranscriptEntry, RomTranscriptEntryVar, RunningEvalsVar};
 
-use std::{cmp::Ordering, collections::HashMap};
+use std::{
+    cmp::Ordering,
+    collections::{HashMap, VecDeque},
+};
 
 use ark_ff::PrimeField;
 use ark_r1cs_std::{alloc::AllocVar, eq::EqGadget, fields::fp::FpVar, R1CSVar};
@@ -20,7 +23,7 @@ pub(crate) trait PortalManager<F: PrimeField> {
 
 /// This portal manager is used by the coordinator to produce the trace
 pub struct SetupPortalManager<F: PrimeField> {
-    pub subtraces: Vec<Vec<RomTranscriptEntry<F>>>,
+    pub subtraces: Vec<VecDeque<RomTranscriptEntry<F>>>,
 
     cs: ConstraintSystemRef<F>,
 
@@ -38,7 +41,7 @@ impl<F: PrimeField> SetupPortalManager<F> {
     }
 
     pub(crate) fn start_subtrace(&mut self) {
-        self.subtraces.push(Vec::new());
+        self.subtraces.push(VecDeque::new());
     }
 }
 
@@ -56,7 +59,7 @@ impl<F: PrimeField> PortalManager<F> for SetupPortalManager<F> {
         self.subtraces
             .last_mut()
             .expect("must run start_subtrace() before using SetupPortalManager")
-            .push(RomTranscriptEntry {
+            .push_back(RomTranscriptEntry {
                 name: name.to_string(),
                 val,
             });
@@ -78,7 +81,7 @@ impl<F: PrimeField> PortalManager<F> for SetupPortalManager<F> {
         self.subtraces
             .last_mut()
             .expect("must run start_subtrace() before using SetupPortalManager")
-            .push(RomTranscriptEntry {
+            .push_back(RomTranscriptEntry {
                 name,
                 val: val.value().unwrap(),
             });
@@ -91,8 +94,8 @@ impl<F: PrimeField> PortalManager<F> for SetupPortalManager<F> {
 /// well as the running evals up until this point. These values are used in the CircuitWithPortals
 /// construction later.
 pub(crate) struct ProverPortalManager<F: PrimeField> {
-    pub time_ordered_subtrace: Vec<RomTranscriptEntryVar<F>>,
-    pub addr_ordered_subtrace: Vec<RomTranscriptEntryVar<F>>,
+    pub time_ordered_subtrace: VecDeque<RomTranscriptEntryVar<F>>,
+    pub addr_ordered_subtrace: VecDeque<RomTranscriptEntryVar<F>>,
     pub running_evals: RunningEvalsVar<F>,
 }
 
@@ -101,7 +104,10 @@ impl<F: PrimeField> PortalManager<F> for ProverPortalManager<F> {
     /// evals to reflect the read op, and does one step of the name-ordered coherence check.
     fn get(&mut self, name: &str) -> Result<FpVar<F>, SynthesisError> {
         // Pop the value and sanity check the name
-        let entry = self.time_ordered_subtrace.remove(0);
+        let entry = self
+            .time_ordered_subtrace
+            .pop_front()
+            .expect("ran out of time-ordered subtrace entries");
         if let Ok(addr) = entry.addr.value() {
             assert_eq!(addr, varname_hasher(name));
         }
@@ -116,8 +122,11 @@ impl<F: PrimeField> PortalManager<F> for ProverPortalManager<F> {
         let RomTranscriptEntryVar {
             addr: cur_addr,
             val: cur_val,
-        } = self.addr_ordered_subtrace.remove(0);
-        let next_entry = self.addr_ordered_subtrace.first().unwrap();
+        } = self
+            .addr_ordered_subtrace
+            .pop_front()
+            .expect("ran out of addr-ordered subtrace entries");
+        let next_entry = self.addr_ordered_subtrace.front().unwrap();
         let (next_addr, next_val) = (&next_entry.addr, &next_entry.val);
 
         // Check cur_addr <= next_addr

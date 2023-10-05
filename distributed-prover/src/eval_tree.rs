@@ -2,16 +2,14 @@ use crate::{
     portal_manager::{ProverPortalManager, SetupPortalManager},
     util::log2,
     varname_hasher, CircuitWithPortals, RomTranscriptEntry, RomTranscriptEntryVar, RunningEvals,
-    RunningEvalsVar, PADDING_VARNAME,
+    RunningEvalsVar,
 };
 
-use core::{borrow::Borrow, marker::PhantomData};
+use std::{borrow::Borrow, collections::VecDeque, marker::PhantomData};
 
 use ark_cp_groth16::{
     committer::CommitmentBuilder as G16CommitmentBuilder,
-    data_structures::{
-        Comm as G16Com, ProvingKey as G16ProvingKey, VerifyingKey as G16VerifyingKey,
-    },
+    data_structures::{Comm as G16Com, ProvingKey as G16ProvingKey},
     r1cs_to_qap::LibsnarkReduction as QAP,
     MultiStageConstraintSynthesizer, MultiStageConstraintSystem,
 };
@@ -132,7 +130,7 @@ impl<F: PrimeField> AllocVar<Leaf<F>, F> for LeafVar<F> {
     }
 }
 
-fn get_subtraces<C, F, P>(mut circuit: P) -> Vec<Vec<RomTranscriptEntry<F>>>
+fn get_subtraces<C, F, P>(mut circuit: P) -> Vec<VecDeque<RomTranscriptEntry<F>>>
 where
     C: TreeConfig,
     F: PrimeField,
@@ -220,8 +218,8 @@ fn compute_stage0_commitments<E, P, C, CG>(
     pks: &[G16ProvingKey<E>],
     leaf_params: &LeafParam<C>,
     two_to_one_params: &TwoToOneParam<C>,
-    time_subtraces: &[Vec<RomTranscriptEntry<E::ScalarField>>],
-    addr_subtraces: &[Vec<RomTranscriptEntry<E::ScalarField>>],
+    time_subtraces: &[VecDeque<RomTranscriptEntry<E::ScalarField>>],
+    addr_subtraces: &[VecDeque<RomTranscriptEntry<E::ScalarField>>],
 ) -> Vec<(G16Com<E>, ComSeed)>
 where
     E: Pairing,
@@ -296,8 +294,8 @@ fn get_chals<F: PrimeField>(com: &IppCom) -> (F, F) {
 /// Flattens the subtraces into one big trace, sorts it by address, and chunks it back into the
 /// same-sized subtraces
 fn sort_subtraces_by_addr<F: PrimeField>(
-    time_ordered_subtraces: &[Vec<RomTranscriptEntry<F>>],
-) -> Vec<Vec<RomTranscriptEntry<F>>> {
+    time_ordered_subtraces: &[VecDeque<RomTranscriptEntry<F>>],
+) -> Vec<VecDeque<RomTranscriptEntry<F>>> {
     // Make the (flattened) address-sorted trace
     // Flatten the trace
     let mut flat_trace = time_ordered_subtraces
@@ -325,8 +323,8 @@ fn generate_tree<E, C>(
     leaf_params: &LeafParam<C>,
     two_to_one_params: &TwoToOneParam<C>,
     super_com: IppCom,
-    time_ordered_subtraces: &[Vec<RomTranscriptEntry<E::ScalarField>>],
-    addr_ordered_subtraces: &[Vec<RomTranscriptEntry<E::ScalarField>>],
+    time_ordered_subtraces: &[VecDeque<RomTranscriptEntry<E::ScalarField>>],
+    addr_ordered_subtraces: &[VecDeque<RomTranscriptEntry<E::ScalarField>>],
 ) -> (MerkleTree<C>, Vec<Leaf<E::ScalarField>>)
 where
     E: Pairing,
@@ -415,10 +413,10 @@ where
     pub two_to_one_params: TwoToOneParam<C>,
 
     // Stage 0 committed values
-    pub time_ordered_subtrace: Vec<RomTranscriptEntry<F>>,
-    pub addr_ordered_subtrace: Vec<RomTranscriptEntry<F>>,
-    pub time_ordered_subtrace_var: Vec<RomTranscriptEntryVar<F>>,
-    pub addr_ordered_subtrace_var: Vec<RomTranscriptEntryVar<F>>,
+    pub time_ordered_subtrace: VecDeque<RomTranscriptEntry<F>>,
+    pub addr_ordered_subtrace: VecDeque<RomTranscriptEntry<F>>,
+    pub time_ordered_subtrace_var: VecDeque<RomTranscriptEntryVar<F>>,
+    pub addr_ordered_subtrace_var: VecDeque<RomTranscriptEntryVar<F>>,
 
     // Stage 1 witnesses
     pub cur_leaf: Leaf<F>,
@@ -482,10 +480,10 @@ where
             circ: None,
             leaf_params,
             two_to_one_params,
-            time_ordered_subtrace: Vec::new(),
-            addr_ordered_subtrace: Vec::new(),
-            time_ordered_subtrace_var: Vec::new(),
-            addr_ordered_subtrace_var: Vec::new(),
+            time_ordered_subtrace: VecDeque::new(),
+            addr_ordered_subtrace: VecDeque::new(),
+            time_ordered_subtrace_var: VecDeque::new(),
+            addr_ordered_subtrace_var: VecDeque::new(),
             cur_leaf: Leaf::default(),
             next_leaf_membership: auth_path,
             entry_chal: F::zero(),
@@ -521,13 +519,13 @@ where
                     .time_ordered_subtrace
                     .iter()
                     .map(|entry| RomTranscriptEntryVar::new_witness(ns!(c, "time"), || Ok(entry)))
-                    .collect::<Result<Vec<_>, _>>()
+                    .collect::<Result<VecDeque<_>, _>>()
                     .unwrap();
                 self.addr_ordered_subtrace_var = self
                     .addr_ordered_subtrace
                     .iter()
                     .map(|entry| RomTranscriptEntryVar::new_witness(ns!(c, "addr"), || Ok(entry)))
-                    .collect::<Result<Vec<_>, _>>()
+                    .collect::<Result<VecDeque<_>, _>>()
                     .unwrap();
                 Ok(())
             });
@@ -563,13 +561,12 @@ where
 
             // Prepend the last subtrace entry to the addr-ordered subtrace. This necessary for the
             // consistency check.
-            let full_addr_ordered_subtrace = [
-                &[cur_leaf_var.last_subtrace_entry.clone()][..],
-                &self.addr_ordered_subtrace_var,
-            ]
-            .concat();
+            let full_addr_ordered_subtrace = core::iter::once(&cur_leaf_var.last_subtrace_entry)
+                .chain(self.addr_ordered_subtrace_var.iter())
+                .cloned()
+                .collect::<VecDeque<_>>();
             // Save the last subtrace entry for a check later
-            let last_subtrace_entry = full_addr_ordered_subtrace.last().unwrap().clone();
+            let last_subtrace_entry = full_addr_ordered_subtrace.back().unwrap().clone();
 
             // Create the portal manager to give to the circuit
             let mut pm = ProverPortalManager {
@@ -728,8 +725,8 @@ mod test {
                 two_to_one_params: two_to_one_params.clone(),
                 time_ordered_subtrace: time_subtraces[subcircuit_idx].clone(),
                 addr_ordered_subtrace: addr_subtraces[subcircuit_idx].clone(),
-                time_ordered_subtrace_var: Vec::new(),
-                addr_ordered_subtrace_var: Vec::new(),
+                time_ordered_subtrace_var: VecDeque::new(),
+                addr_ordered_subtrace_var: VecDeque::new(),
                 cur_leaf,
                 next_leaf_membership,
                 entry_chal,
@@ -799,8 +796,8 @@ mod test {
             two_to_one_params,
             time_ordered_subtrace: time_subtraces[subcircuit_idx].clone(),
             addr_ordered_subtrace: addr_subtraces[subcircuit_idx].clone(),
-            time_ordered_subtrace_var: Vec::new(),
-            addr_ordered_subtrace_var: Vec::new(),
+            time_ordered_subtrace_var: VecDeque::new(),
+            addr_ordered_subtrace_var: VecDeque::new(),
             cur_leaf,
             next_leaf_membership,
             entry_chal,
