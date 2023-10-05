@@ -30,7 +30,7 @@ use ark_r1cs_std::{
     alloc::{AllocVar, AllocationMode},
     bits::{boolean::Boolean, uint8::UInt8, ToBytesGadget},
     eq::EqGadget,
-    fields::fp::FpVar,
+    fields::{fp::FpVar, FieldVar},
     R1CSVar,
 };
 use ark_relations::{
@@ -555,6 +555,30 @@ where
                 &self.two_to_one_params,
             )?;
 
+            // Ensure that at subcircuit 0, the provided evals and last subtrace entry are the
+            // defaults
+            if self.subcircuit_idx == 0 {
+                // Check the evals are (1, 1)
+                cur_leaf_var
+                    .evals
+                    .time_ordered_eval
+                    .enforce_equal(&FpVar::one())?;
+                cur_leaf_var
+                    .evals
+                    .addr_ordered_eval
+                    .enforce_equal(&FpVar::one())?;
+
+                // Check the padding entry is (0, 0)
+                cur_leaf_var
+                    .last_subtrace_entry
+                    .val
+                    .enforce_equal(&FpVar::zero())?;
+                cur_leaf_var
+                    .last_subtrace_entry
+                    .addr
+                    .enforce_equal(&FpVar::zero())?;
+            }
+
             // Set the challenge values so the running evals knows how to update itself
             let mut running_evals_var = cur_leaf_var.evals.clone();
             running_evals_var.challenges = Some((entry_chal_var, tr_chal_var));
@@ -575,7 +599,7 @@ where
                 running_evals: running_evals_var,
             };
 
-            // Run the circuit with the portal manager
+            // Run the specific subcircuit and give it the prepared portal manager
             self.circ
                 .as_mut()
                 .expect("must provide circuit for stage 1 computation")
@@ -600,8 +624,14 @@ where
                 )?
                 .enforce_equal(&Boolean::TRUE)?;
 
-            // TODO: Ensure that at i==0, the provided given evals are 0 and the provided last
-            // subtrace entry is (0, 0)
+            // If this is the last subcircuit, then verify that the time- and addr-ordered evals
+            // are equal. This completes the permutation check.
+            if self.subcircuit_idx == self.circ.as_ref().unwrap().num_subcircuits() - 1 {
+                next_leaf
+                    .evals
+                    .time_ordered_eval
+                    .enforce_equal(&next_leaf.evals.addr_ordered_eval)?;
+            }
 
             Ok(())
         })
@@ -709,6 +739,12 @@ mod test {
             &addr_subtraces,
         );
         let root = tree.root();
+
+        // Sanity check: the time- and addr-ordered evals in the final leaf should be equal
+        assert_eq!(
+            leaves.last().unwrap().evals.time_ordered_eval,
+            leaves.last().unwrap().evals.addr_ordered_eval
+        );
 
         // Now for every subcircuit, instantiate a subcircuit prover and check that its constraints
         // are satisfied

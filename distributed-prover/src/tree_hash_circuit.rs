@@ -128,7 +128,7 @@ impl<F: PrimeField> CircuitWithPortals<F> for MerkleTreeCircuit {
         let is_root = root_idx(num_leaves) == node_idx;
 
         if is_leaf {
-            // Every leaf idx is even
+            // Which number leaf is it
             let leaf_idx = (node_idx / 2) as usize;
 
             // Witness the leaf
