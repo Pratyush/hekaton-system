@@ -785,46 +785,49 @@ mod test {
 
         // Now prove a subcircuit
 
-        let subcircuit_idx = 0;
-        let (cur_leaf, next_leaf_membership) = stage1_witnesses(subcircuit_idx, &tree, &leaves);
-        let pk = &pks[subcircuit_idx];
+        for subcircuit_idx in
+            0..<MerkleTreeCircuit as CircuitWithPortals<Fr>>::num_subcircuits(&circ)
+        {
+            let (cur_leaf, next_leaf_membership) = stage1_witnesses(subcircuit_idx, &tree, &leaves);
+            let pk = &pks[subcircuit_idx];
 
-        let real_circ = SubcircuitWithPortalsProver {
-            subcircuit_idx,
-            circ: Some(circ),
-            leaf_params,
-            two_to_one_params,
-            time_ordered_subtrace: time_subtraces[subcircuit_idx].clone(),
-            addr_ordered_subtrace: addr_subtraces[subcircuit_idx].clone(),
-            time_ordered_subtrace_var: VecDeque::new(),
-            addr_ordered_subtrace_var: VecDeque::new(),
-            cur_leaf,
-            next_leaf_membership,
-            entry_chal,
-            tr_chal,
-            root,
-            _marker: PhantomData::<TestParamsVar>,
-        };
+            let real_circ = SubcircuitWithPortalsProver {
+                subcircuit_idx,
+                circ: Some(circ.clone()),
+                leaf_params: leaf_params.clone(),
+                two_to_one_params: two_to_one_params.clone(),
+                time_ordered_subtrace: time_subtraces[subcircuit_idx].clone(),
+                addr_ordered_subtrace: addr_subtraces[subcircuit_idx].clone(),
+                time_ordered_subtrace_var: VecDeque::new(),
+                addr_ordered_subtrace_var: VecDeque::new(),
+                cur_leaf,
+                next_leaf_membership,
+                entry_chal,
+                tr_chal,
+                root,
+                _marker: PhantomData::<TestParamsVar>,
+            };
 
-        let mut cb = G16CommitmentBuilder::<_, E, QAP>::new(real_circ, &pk);
-        let mut subcircuit_rng = {
-            let com_seed = coms_and_seeds[subcircuit_idx].1.clone();
-            ChaCha12Rng::from_seed(com_seed)
-        };
+            let mut cb = G16CommitmentBuilder::<_, E, QAP>::new(real_circ, &pk);
+            let mut subcircuit_rng = {
+                let com_seed = coms_and_seeds[subcircuit_idx].1.clone();
+                ChaCha12Rng::from_seed(com_seed)
+            };
 
-        let (com, rand) = cb.commit(&mut subcircuit_rng).unwrap();
-        assert_eq!(com, coms_and_seeds[subcircuit_idx].0);
+            let (com, rand) = cb.commit(&mut subcircuit_rng).unwrap();
+            assert_eq!(com, coms_and_seeds[subcircuit_idx].0);
 
-        let proof = cb.prove(&[com], &[rand], &mut rng).unwrap();
+            let proof = cb.prove(&[com], &[rand], &mut rng).unwrap();
 
-        // Verify
-        let pvk = prepare_verifying_key(&pk.vk());
-        let inputs = [
-            entry_chal.to_field_elements().unwrap(),
-            tr_chal.to_field_elements().unwrap(),
-            root.to_field_elements().unwrap(),
-        ]
-        .concat();
-        assert!(verify_proof(&pvk, &proof, &inputs).unwrap());
+            // Verify
+            let pvk = prepare_verifying_key(&pk.vk());
+            let inputs = [
+                entry_chal.to_field_elements().unwrap(),
+                tr_chal.to_field_elements().unwrap(),
+                root.to_field_elements().unwrap(),
+            ]
+            .concat();
+            assert!(verify_proof(&pvk, &proof, &inputs).unwrap());
+        }
     }
 }
