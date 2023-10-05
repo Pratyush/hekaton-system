@@ -101,10 +101,7 @@ impl<F: PrimeField> PortalManager<F> for ProverPortalManager<F> {
     /// evals to reflect the read op, and does one step of the name-ordered coherence check.
     fn get(&mut self, name: &str) -> Result<FpVar<F>, SynthesisError> {
         // Pop the value and sanity check the name
-        let entry = self
-            .time_ordered_subtrace
-            .pop()
-            .expect("ran out of trace elements");
+        let entry = self.time_ordered_subtrace.remove(0);
         if let Ok(addr) = entry.addr.value() {
             assert_eq!(addr, varname_hasher(name));
         }

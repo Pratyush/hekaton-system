@@ -689,18 +689,21 @@ mod test {
     #[test]
     fn test_subcircuit_portal_prover_satisfied() {
         let mut rng = test_rng();
+        let (leaf_params, two_to_one_params) = gen_merkle_params(&mut rng);
 
         // Make a random Merkle tree
         let num_leaves = 4;
         let circ = MerkleTreeCircuit::rand(&mut rng, num_leaves);
 
-        let (leaf_params, two_to_one_params) = gen_merkle_params(&mut rng);
-
+        // Run the entire tree through and save the subtraces
         let time_subtraces = get_subtraces::<TestParams, Fr, _>(circ.clone());
         let addr_subtraces = sort_subtraces_by_addr(&time_subtraces);
+        // Make the IPP commitment random. This doesn't matter outside of Groth16
         let super_com: IppCom = rng.gen();
+        // Compute the challenges. These can also be totally random
         let (entry_chal, tr_chal) = get_chals(&super_com);
 
+        // Create the tree that stores the partial trace evaluations
         let (tree, leaves) = generate_tree::<E, TestParams>(
             &leaf_params,
             &two_to_one_params,
@@ -710,33 +713,39 @@ mod test {
         );
         let root = tree.root();
 
-        let (cur_leaf, next_leaf_membership) = stage1_witnesses(0, &tree, &leaves);
+        // Now for every subcircuit, instantiate a subcircuit prover and check that its constraints
+        // are satisfied
+        for subcircuit_idx in
+            0..<MerkleTreeCircuit as CircuitWithPortals<Fr>>::num_subcircuits(&circ)
+        {
+            // Get the current positional information in the exec tree
+            let (cur_leaf, next_leaf_membership) = stage1_witnesses(subcircuit_idx, &tree, &leaves);
 
-        // Now prove a subcircuit
+            let mut real_circ = SubcircuitWithPortalsProver {
+                subcircuit_idx,
+                circ: Some(circ.clone()),
+                leaf_params: leaf_params.clone(),
+                two_to_one_params: two_to_one_params.clone(),
+                time_ordered_subtrace: time_subtraces[subcircuit_idx].clone(),
+                addr_ordered_subtrace: addr_subtraces[subcircuit_idx].clone(),
+                time_ordered_subtrace_var: Vec::new(),
+                addr_ordered_subtrace_var: Vec::new(),
+                cur_leaf,
+                next_leaf_membership,
+                entry_chal,
+                tr_chal,
+                root,
+                _marker: PhantomData::<TestParamsVar>,
+            };
 
-        let subcircuit_idx = 0;
+            // Run both stages
+            let mut mcs = MultiStageConstraintSystem::default();
+            real_circ.generate_constraints(0, &mut mcs).unwrap();
+            real_circ.generate_constraints(1, &mut mcs).unwrap();
 
-        let mut real_circ = SubcircuitWithPortalsProver {
-            subcircuit_idx,
-            circ: Some(circ),
-            leaf_params,
-            two_to_one_params,
-            time_ordered_subtrace: time_subtraces[subcircuit_idx].clone(),
-            addr_ordered_subtrace: addr_subtraces[subcircuit_idx].clone(),
-            time_ordered_subtrace_var: Vec::new(),
-            addr_ordered_subtrace_var: Vec::new(),
-            cur_leaf,
-            next_leaf_membership,
-            entry_chal,
-            tr_chal,
-            root,
-            _marker: PhantomData::<TestParamsVar>,
-        };
-        let mut mcs = MultiStageConstraintSystem::default();
-        real_circ.generate_constraints(0, &mut mcs).unwrap();
-        real_circ.generate_constraints(1, &mut mcs).unwrap();
-
-        assert!(mcs.is_satisfied().unwrap());
+            // Check that everything worked
+            assert!(mcs.is_satisfied().unwrap());
+        }
     }
 
     #[test]
