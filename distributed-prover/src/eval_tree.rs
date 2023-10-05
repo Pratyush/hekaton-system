@@ -337,6 +337,7 @@ where
     // Generate the tree's leaves by computing the partial evals for each subtrace
     let mut evals = RunningEvals::default();
     evals.challenges = Some((entry_chal, tr_chal));
+
     let mut leaves = Vec::new();
 
     // Every leaf conttains the last entry of the addr-ordered subtrace
@@ -720,8 +721,8 @@ mod test {
             circ: Some(circ),
             leaf_params,
             two_to_one_params,
-            time_ordered_subtrace: time_subtraces[0].clone(),
-            addr_ordered_subtrace: addr_subtraces[0].clone(),
+            time_ordered_subtrace: time_subtraces[subcircuit_idx].clone(),
+            addr_ordered_subtrace: addr_subtraces[subcircuit_idx].clone(),
             time_ordered_subtrace_var: Vec::new(),
             addr_ordered_subtrace_var: Vec::new(),
             cur_leaf,
@@ -776,11 +777,10 @@ mod test {
         );
         let root = tree.root();
 
-        let (cur_leaf, next_leaf_membership) = stage1_witnesses(0, &tree, &leaves);
-
         // Now prove a subcircuit
 
         let subcircuit_idx = 0;
+        let (cur_leaf, next_leaf_membership) = stage1_witnesses(subcircuit_idx, &tree, &leaves);
         let pk = &pks[subcircuit_idx];
 
         let real_circ = SubcircuitWithPortalsProver {
@@ -788,8 +788,8 @@ mod test {
             circ: Some(circ),
             leaf_params,
             two_to_one_params,
-            time_ordered_subtrace: time_subtraces[0].clone(),
-            addr_ordered_subtrace: addr_subtraces[0].clone(),
+            time_ordered_subtrace: time_subtraces[subcircuit_idx].clone(),
+            addr_ordered_subtrace: addr_subtraces[subcircuit_idx].clone(),
             time_ordered_subtrace_var: Vec::new(),
             addr_ordered_subtrace_var: Vec::new(),
             cur_leaf,
