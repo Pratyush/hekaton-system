@@ -125,7 +125,13 @@ impl<F: PrimeField> CircuitWithPortals<F> for MerkleTreeCircuit {
 
     fn get_serialized_witnesses(&self, subcircuit_idx: usize) -> Vec<u8> {
         let num_leaves = self.leaves.len();
+        let num_subcircuits = <Self as CircuitWithPortals<F>>::num_subcircuits(&self);
         let mut out_buf = Vec::new();
+
+        // If this is a padding circuit, return nothing
+        if subcircuit_idx == num_subcircuits - 1 {
+            return Vec::with_capacity(0);
+        }
 
         // The witnesses for subcircuit i is either a leaf value (in the case this is a leaf) or a
         // root hash (if this is the root)
@@ -151,6 +157,12 @@ impl<F: PrimeField> CircuitWithPortals<F> for MerkleTreeCircuit {
 
     fn set_serialized_witnesses(&mut self, subcircuit_idx: usize, bytes: &[u8]) {
         let num_leaves = self.leaves.len();
+        let num_subcircuits = <Self as CircuitWithPortals<F>>::num_subcircuits(&self);
+
+        // If this is a padding circuit, do nothing
+        if subcircuit_idx == num_subcircuits - 1 {
+            return;
+        }
 
         // The witnesses for subcircuit i is either a leaf value (in the case this is a leaf) or a
         // root hash (if this is the root)

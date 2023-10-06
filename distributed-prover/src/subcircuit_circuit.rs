@@ -360,19 +360,21 @@ mod test {
         let num_leaves = 4;
         let circ = MerkleTreeCircuit::rand(&mut rng, num_leaves);
 
-        let stage0_builder = Stage0PackageBuilder::new::<TestParams>(circ.clone());
         let num_subcircuits = <MerkleTreeCircuit as CircuitWithPortals<Fr>>::num_subcircuits(&circ);
+        let stage0_builder = Stage0PackageBuilder::new::<TestParams>(circ);
         let all_subcircuit_indices = (0..num_subcircuits).collect::<Vec<_>>();
 
         // Worker receives a stage0 package containing all the subtraces it will need for this run.
-        // In this test, it's simply all of them
+        // In this test, it's simply all of them. We imagine that the worker stores its copy of
+        // this for later use in stage 1
         let Stage0WorkerPackage {
             time_ordered_subtraces,
             addr_ordered_subtraces,
+            serialized_witnesses,
             ..
         } = stage0_builder.gen_package(&all_subcircuit_indices);
 
-        // Make a fake Stage0 response that covers all the subcircuits and has random commitments
+        // Make a fake stage0 response that covers all the subcircuits and has random commitments
         let fake_stage0_response = Stage0Response::<E> {
             subcircuit_idxs: all_subcircuit_indices.clone(),
             coms: core::iter::repeat_with(|| G16Com::<E>::rand(&mut rng))
@@ -381,8 +383,10 @@ mod test {
             seeds: vec![G16ComSeed::default(); num_subcircuits],
         };
 
+        // Move on to stage 1
         let stage1_builder = stage0_builder.process_stage0_responses(&[fake_stage0_response]);
 
+        // Compute the values needed to prove stage1. This is for all the subcircuits.
         let Stage1Request {
             subcircuit_idxs,
             cur_leaves,
@@ -399,9 +403,19 @@ mod test {
         {
             let (entry_chal, tr_chal) = cur_leaf.evals.challenges.unwrap();
 
-            let mut real_circ = SubcircuitWithPortalsProver {
+            // Make an empty version of the large circuit and fill in just the witnesses for the
+            // subcircuit we're proving now
+            let mut partial_circ =
+                <MerkleTreeCircuit as CircuitWithPortals<Fr>>::new(num_subcircuits);
+            <MerkleTreeCircuit as CircuitWithPortals<Fr>>::set_serialized_witnesses(
+                &mut partial_circ,
                 subcircuit_idx,
-                circ: Some(circ.clone()),
+                &serialized_witnesses[subcircuit_idx],
+            );
+
+            let mut subcirc_circ = SubcircuitWithPortalsProver {
+                subcircuit_idx,
+                circ: Some(partial_circ),
                 leaf_params: leaf_params.clone(),
                 two_to_one_params: two_to_one_params.clone(),
                 time_ordered_subtrace: time_ordered_subtraces[subcircuit_idx].clone(),
@@ -418,8 +432,8 @@ mod test {
 
             // Run both stages
             let mut mcs = MultiStageConstraintSystem::default();
-            real_circ.generate_constraints(0, &mut mcs).unwrap();
-            real_circ.generate_constraints(1, &mut mcs).unwrap();
+            subcirc_circ.generate_constraints(0, &mut mcs).unwrap();
+            subcirc_circ.generate_constraints(1, &mut mcs).unwrap();
 
             // Check that everything worked
             assert!(mcs.is_satisfied().unwrap());
@@ -444,8 +458,8 @@ mod test {
                 circ.clone(),
             );
 
-        let stage0_builder = Stage0PackageBuilder::new::<TestParams>(circ.clone());
         let num_subcircuits = <MerkleTreeCircuit as CircuitWithPortals<Fr>>::num_subcircuits(&circ);
+        let stage0_builder = Stage0PackageBuilder::new::<TestParams>(circ);
         let all_subcircuit_indices = (0..num_subcircuits).collect::<Vec<_>>();
 
         // Worker receives a stage0 package containing all the subtraces it will need for this run.
@@ -460,8 +474,10 @@ mod test {
             &two_to_one_params,
         );
 
+        // Move on to stage 1
         let stage1_builder = stage0_builder.process_stage0_responses(&[stage0_resp.clone()]);
 
+        // Compute the values needed to prove stage1. This is for all the subcircuits.
         let Stage1Request {
             subcircuit_idxs,
             cur_leaves,
@@ -479,9 +495,19 @@ mod test {
         {
             let (entry_chal, tr_chal) = cur_leaf.evals.challenges.unwrap();
 
+            // Make an empty version of the large circuit and fill in just the witnesses for the
+            // subcircuit we're proving now
+            let mut partial_circ =
+                <MerkleTreeCircuit as CircuitWithPortals<Fr>>::new(num_subcircuits);
+            <MerkleTreeCircuit as CircuitWithPortals<Fr>>::set_serialized_witnesses(
+                &mut partial_circ,
+                subcircuit_idx,
+                &stage0_req.serialized_witnesses[subcircuit_idx],
+            );
+
             let real_circ = SubcircuitWithPortalsProver {
                 subcircuit_idx,
-                circ: Some(circ.clone()),
+                circ: Some(partial_circ),
                 leaf_params: leaf_params.clone(),
                 two_to_one_params: two_to_one_params.clone(),
                 time_ordered_subtrace: stage0_req.time_ordered_subtraces[subcircuit_idx].clone(),

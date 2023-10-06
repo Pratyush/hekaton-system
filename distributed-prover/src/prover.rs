@@ -32,7 +32,7 @@ const MERKLE_HASH_PARAMS_SEED: &'static [u8; 32] = b"horizontal-snark-hash-param
 
 pub use ark_cp_groth16::data_structures::{Comm as G16Com, ProvingKey as G16ProvingKey};
 
-fn get_subtraces<C, F, P>(mut circuit: P) -> Vec<VecDeque<RomTranscriptEntry<F>>>
+fn get_subtraces<C, F, P>(mut circ: P) -> Vec<VecDeque<RomTranscriptEntry<F>>>
 where
     C: TreeConfig,
     F: PrimeField,
@@ -40,14 +40,25 @@ where
 {
     let cs = ConstraintSystemRef::<F>::new(ConstraintSystem::default());
     let mut pm = SetupPortalManager::new(cs.clone());
+    let num_subcircuits = circ.num_subcircuits();
 
-    for subcircuit_idx in 0..circuit.num_subcircuits() {
+    for subcircuit_idx in 0..num_subcircuits {
         // Start a new subtrace and then run the subcircuit
         pm.start_subtrace();
-        circuit
+
+        // To make sure errors are caught early, only set the witnesses that are earmarked for this
+        // subcircuit. Make the rest empty
+        let mut circ_copy = P::new(num_subcircuits);
+        let wits = circ.get_serialized_witnesses(subcircuit_idx);
+        circ_copy.set_serialized_witnesses(subcircuit_idx, &wits);
+
+        // Now generate constraints on that pared down copy
+        circ_copy
             .generate_constraints(cs.clone(), subcircuit_idx, &mut pm)
             .unwrap();
     }
+
+    assert!(cs.is_satisfied().unwrap());
 
     pm.subtraces
 }
@@ -356,19 +367,19 @@ pub struct Stage0WorkerPackage<F: PrimeField> {
     pub(crate) subcircuit_idxs: Vec<usize>,
     pub(crate) time_ordered_subtraces: Vec<VecDeque<RomTranscriptEntry<F>>>,
     pub(crate) addr_ordered_subtraces: Vec<VecDeque<RomTranscriptEntry<F>>>,
+    pub(crate) serialized_witnesses: Vec<Vec<u8>>,
 }
 
-pub struct Stage0WorkerPackageRef<'a, F, P, IR, IU>
+pub struct Stage0WorkerPackageRef<'a, F, IR, IU>
 where
     F: PrimeField,
-    P: CircuitWithPortals<F>,
     IR: Iterator<Item = &'a RomTranscriptEntry<F>>,
     IU: Iterator<Item = usize>,
 {
-    circ: &'a P,
+    subcircuit_idxs: IU,
     time_ordered_subtraces: &'a [IR],
     addr_ordered_subtraces: &'a [IR],
-    subcircuits: IU,
+    pub(crate) serialized_witnesses: &'a [Vec<u8>],
 }
 
 /// The repsonse is the Groth16 commitments and seeds for all the requested subcircuits
@@ -397,10 +408,24 @@ where
 
     /// Creates a stage0 package and request commitment for the given set of subcircuits
     pub fn gen_package(&self, subcircuit_idxs: &[usize]) -> Stage0WorkerPackage<F> {
+        let time_ordered_subtraces = subcircuit_idxs
+            .into_iter()
+            .map(|i| self.time_ordered_subtraces.get(*i).unwrap().clone())
+            .collect();
+        let addr_ordered_subtraces = subcircuit_idxs
+            .into_iter()
+            .map(|i| self.addr_ordered_subtraces.get(*i).unwrap().clone())
+            .collect();
+        let serialized_witnesses = subcircuit_idxs
+            .into_iter()
+            .map(|i| self.circ.get_serialized_witnesses(*i))
+            .collect();
+
         Stage0WorkerPackage {
             subcircuit_idxs: subcircuit_idxs.to_vec(),
-            time_ordered_subtraces: self.time_ordered_subtraces.clone(),
-            addr_ordered_subtraces: self.addr_ordered_subtraces.clone(),
+            time_ordered_subtraces,
+            addr_ordered_subtraces,
+            serialized_witnesses,
         }
     }
 
