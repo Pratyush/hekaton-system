@@ -270,7 +270,6 @@ mod test {
     use super::*;
 
     use crate::{
-        aggregation::IppCom,
         eval_tree::{SerializedLeaf, SerializedLeafVar},
         prover::{
             compute_stage0_response, gen_merkle_params, gen_subcircuit_proving_keys, G16Com,
@@ -294,7 +293,7 @@ mod test {
         },
         merkle_tree::{
             constraints::{BytesVarDigestConverter, ConfigGadget},
-            ByteDigestConverter, Config, MerkleTree,
+            ByteDigestConverter, Config,
         },
     };
     use ark_ed_on_bls12_381::{constraints::FqVar, JubjubConfig};
@@ -347,8 +346,6 @@ mod test {
         type LeafHash = LeafHG;
         type TwoToOneHash = CompressHG;
     }
-
-    type JubJubMerkleTree = MerkleTree<TestParams>;
 
     // Checks that the SubcircuitWithPortalsProver is satisfied when the correct inputs are given
     #[test]
@@ -544,93 +541,4 @@ mod test {
             assert!(verify_proof(&pvk, &proof, &inputs).unwrap());
         }
     }
-
-    /*
-
-        #[test]
-        fn test_e2e_prover() {
-            let mut rng = test_rng();
-
-            // Make a random Merkle tree
-            let num_leaves = 4;
-            let circ = MerkleTreeCircuit::rand(&mut rng, num_leaves);
-
-            let (leaf_params, two_to_one_params) = gen_merkle_params(&mut rng);
-            let pks: Vec<G16ProvingKey<E>> = gen_subcircuit_proving_keys::<
-                TestParams,
-                TestParamsVar,
-                _,
-                _,
-            >(&leaf_params, &two_to_one_params, circ.clone());
-
-            let time_subtraces = get_subtraces::<TestParams, Fr, _>(circ.clone());
-            let addr_subtraces = sort_subtraces_by_addr(&time_subtraces);
-            let coms_and_seeds =
-                compute_stage0_commitments::<E, MerkleTreeCircuit, TestParams, TestParamsVar>(
-                    &pks,
-                    &leaf_params,
-                    &two_to_one_params,
-                    &time_subtraces,
-                    &addr_subtraces,
-                );
-            let super_com = commit_to_g16_coms::<E, _>(coms_and_seeds.iter().map(|(com, _)| com));
-            let (entry_chal, tr_chal) = get_chals(&super_com);
-
-            let (tree, leaves) = generate_tree::<E, TestParams>(
-                &leaf_params,
-                &two_to_one_params,
-                super_com,
-                &time_subtraces,
-                &addr_subtraces,
-            );
-            let root = tree.root();
-
-            // Now prove a subcircuit
-
-            for subcircuit_idx in
-                0..<MerkleTreeCircuit as CircuitWithPortals<Fr>>::num_subcircuits(&circ)
-            {
-                let (cur_leaf, next_leaf_membership) = stage1_witnesses(subcircuit_idx, &tree, &leaves);
-                let pk = &pks[subcircuit_idx];
-
-                let real_circ = SubcircuitWithPortalsProver {
-                    subcircuit_idx,
-                    circ: Some(circ.clone()),
-                    leaf_params: leaf_params.clone(),
-                    two_to_one_params: two_to_one_params.clone(),
-                    time_ordered_subtrace: time_subtraces[subcircuit_idx].clone(),
-                    addr_ordered_subtrace: addr_subtraces[subcircuit_idx].clone(),
-                    time_ordered_subtrace_var: VecDeque::new(),
-                    addr_ordered_subtrace_var: VecDeque::new(),
-                    cur_leaf,
-                    next_leaf_membership,
-                    entry_chal,
-                    tr_chal,
-                    root,
-                    _marker: PhantomData::<TestParamsVar>,
-                };
-
-                let mut cb = G16CommitmentBuilder::<_, E, QAP>::new(real_circ, &pk);
-                let mut subcircuit_rng = {
-                    let com_seed = coms_and_seeds[subcircuit_idx].1.clone();
-                    ChaCha12Rng::from_seed(com_seed)
-                };
-
-                let (com, rand) = cb.commit(&mut subcircuit_rng).unwrap();
-                assert_eq!(com, coms_and_seeds[subcircuit_idx].0);
-
-                let proof = cb.prove(&[com], &[rand], &mut rng).unwrap();
-
-                // Verify
-                let pvk = prepare_verifying_key(&pk.vk());
-                let inputs = [
-                    entry_chal.to_field_elements().unwrap(),
-                    tr_chal.to_field_elements().unwrap(),
-                    root.to_field_elements().unwrap(),
-                ]
-                .concat();
-                assert!(verify_proof(&pvk, &proof, &inputs).unwrap());
-            }
-        }
-    */
 }
