@@ -34,11 +34,10 @@ The prover then acts as a _coordinator_, leveraging access to an arbitrary numbe
         5. Checks that `(time_pevalᵢ₊₁, addr_pevalᵢ₊₁, fᵢ)` occurs at leaf index `i+1`, using `θᵢ₊₁` and `root_pevals`
         6. Only for `i=1`:
             * Takes the public input `x` and processes it into however many shared wires it needs
-            * Checks that `fᵢ₋₁ = (0, 0)` and `(time_pevalᵢ, addr_pevalᵢ) = (0, 0)`
+            * Checks that `fᵢ₋₁ = (0, 0)` and `(time_pevalᵢ, addr_pevalᵢ) = (1, 1)`
+        7. Only for `i=n`: Checks that `time_pevalᵢ₊₁ = addr_pevalᵢ₊₁`
 6. The coordinator finally combines `π₁, ..., πₙ` into an aggregate proof `π_agg` using IPP that shows that each `πᵢ` verifies wrt `(com_trᵢ, entry_chal, tr_chal, root_pevals)` (and `x`, for `i=1`). Note that `i` is not a public input, rather it is a const in Cᵢ.
-7. In addition, the coordinator produces an opening `θ_fin` for final Merkle leaf, which should be of the form `(s, s, fₙ₋₁)`. The final proof is thus `(com_tr, root_pevals, θ_fin, π_agg)`.
-
-TODO: Need to hide the `fₙ₋₁` in the final Merkle leaf. Maybe do this as a commitment. Alternatively, just SET a high, unused, memory address to 0.
+7. The final proof is `(com_tr, root_pevals, π_agg)`.
 
 TODO: How to phrase public input `in` to the circuit? Hash it and put it as element in the Merkle tree at a special location. Then add that Merkle membership proof `θ^*` to the proof. The verifier then checks `H(in) ∈ tree` using `root_hash` and `θ^*`.
 
