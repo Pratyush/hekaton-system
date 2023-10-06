@@ -284,9 +284,21 @@ impl<F: PrimeField> AllocVar<RomTranscriptEntry<F>, F> for RomTranscriptEntryVar
 
 /// A generic trait that any partitionable circuit has to impl
 pub trait CircuitWithPortals<F: PrimeField> {
+    /// The number of subcircuits in this circuit
     fn num_subcircuits(&self) -> usize;
 
-    /// Generates constraints for the subcircuit at the given index
+    /// Creates an empty copy of this circuit with size determined by `num_subcircuits`
+    fn new(num_subcircuits: usize) -> Self;
+
+    /// Gets the list of witnesses that belong to the given subcircuit
+    fn get_serialized_witnesses(&self, subcircuit_idx: usize) -> Vec<u8>;
+
+    /// Sets the list of witnesses that belong to the given subcircuit
+    fn set_serialized_witnesses(&mut self, subcircuit_idx: usize, bytes: &[u8]);
+
+    /// Generates constraints for the subcircuit at the given index. At index i, the ONLY witnesses
+    /// the circuit may use are ones which would be set with
+    /// `self.set_serialized_witnesses(i, ...)`.
     fn generate_constraints<P: PortalManager<F>>(
         &mut self,
         cs: ConstraintSystemRef<F>,

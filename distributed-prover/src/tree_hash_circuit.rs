@@ -16,18 +16,13 @@ use ark_relations::{
     ns,
     r1cs::{ConstraintSystemRef, SynthesisError},
 };
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
 #[cfg(test)]
 use rand::Rng;
 
 pub(crate) type TestLeaf = [u8; 32];
 type InnerHash = [u8; 31];
-
-#[derive(Clone)]
-pub(crate) struct MerkleTreeCircuit {
-    pub(crate) leaves: Vec<TestLeaf>,
-    pub(crate) root_hash: InnerHash,
-}
 
 /// Truncates the SHA256 hash to 31 bytes, converts to bits (each byte to little-endian), and
 /// interprets the resulting bitstring as a little-endian-encoded field element
@@ -89,6 +84,12 @@ fn subcircuit_idx_to_node_idx(subcircuit_idx: usize, num_leaves: usize) -> u32 {
     panic!("invalid subcircuit idx {subcircuit_idx} for a tree of {num_leaves} leaves");
 }
 
+#[derive(Clone)]
+pub(crate) struct MerkleTreeCircuit {
+    pub(crate) leaves: Vec<TestLeaf>,
+    pub(crate) root_hash: InnerHash,
+}
+
 #[cfg(test)]
 impl MerkleTreeCircuit {
     /// Makes a Merkle tree with a random set of leaves
@@ -105,6 +106,70 @@ impl<F: PrimeField> CircuitWithPortals<F> for MerkleTreeCircuit {
         // A tree has 2l - 1 nodes where l is the number of leaves. We pad with 1 extra circuit to
         // get to a power of two
         2 * self.leaves.len()
+    }
+
+    // Make a new empty merkle tree circuit
+    fn new(num_subcircuits: usize) -> Self {
+        // The number of subcircuits MUST be a power of two that's >1 to make any sense
+        assert!(num_subcircuits.is_power_of_two());
+        assert!(num_subcircuits > 1);
+
+        // Set the appropriate number of default leaves
+        let num_leaves = num_subcircuits / 2;
+        let leaves = vec![TestLeaf::default(); num_leaves];
+        // Set the default root hash
+        let root_hash = InnerHash::default();
+
+        MerkleTreeCircuit { leaves, root_hash }
+    }
+
+    fn get_serialized_witnesses(&self, subcircuit_idx: usize) -> Vec<u8> {
+        let num_leaves = self.leaves.len();
+        let mut out_buf = Vec::new();
+
+        // The witnesses for subcircuit i is either a leaf value (in the case this is a leaf) or a
+        // root hash (if this is the root)
+
+        // The subcircuit ordering is level by level. Pick the right node idx
+        let node_idx = subcircuit_idx_to_node_idx(subcircuit_idx, num_leaves);
+
+        let is_leaf = level(node_idx) == 0;
+        let is_root = root_idx(num_leaves) == node_idx;
+
+        // If this is a leaf, return the serialized leaf val
+        if is_leaf {
+            // Which number leaf is it
+            let leaf_idx = (node_idx / 2) as usize;
+            let leaf = self.leaves.get(leaf_idx).unwrap();
+            leaf.serialize_uncompressed(&mut out_buf).unwrap();
+        } else if is_root {
+            self.root_hash.serialize_uncompressed(&mut out_buf).unwrap();
+        }
+
+        out_buf
+    }
+
+    fn set_serialized_witnesses(&mut self, subcircuit_idx: usize, bytes: &[u8]) {
+        let num_leaves = self.leaves.len();
+
+        // The witnesses for subcircuit i is either a leaf value (in the case this is a leaf) or a
+        // root hash (if this is the root)
+
+        // The subcircuit ordering is level by level. Pick the right node idx
+        let node_idx = subcircuit_idx_to_node_idx(subcircuit_idx, num_leaves);
+
+        let is_leaf = level(node_idx) == 0;
+        let is_root = root_idx(num_leaves) == node_idx;
+
+        // If this is a leaf, return the serialized leaf val
+        if is_leaf {
+            // Which number leaf is it
+            let leaf_idx = (node_idx / 2) as usize;
+            let leaf = TestLeaf::deserialize_uncompressed_unchecked(bytes).unwrap();
+            self.leaves[leaf_idx] = leaf;
+        } else if is_root {
+            self.root_hash = InnerHash::deserialize_uncompressed_unchecked(bytes).unwrap();
+        }
     }
 
     fn generate_constraints<P: PortalManager<F>>(
