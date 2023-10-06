@@ -13,7 +13,7 @@ use ark_relations::{
 };
 
 /// A trait for getting and setting portal wires in partitioned circuits
-pub(crate) trait PortalManager<F: PrimeField> {
+pub trait PortalManager<F: PrimeField> {
     /// Gets the portal wire of the given name. Panics if no such wire exists.
     fn get(&mut self, name: &str) -> Result<FpVar<F>, SynthesisError>;
 

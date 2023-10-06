@@ -16,6 +16,9 @@ use xxhash_rust::xxh3::xxh3_128;
 mod eval_tree;
 mod portal_manager;
 //mod worker_node;
+mod aggregation;
+mod prover;
+mod subcircuit_circuit;
 mod tree_hash_circuit;
 mod util;
 
@@ -280,7 +283,7 @@ impl<F: PrimeField> AllocVar<RomTranscriptEntry<F>, F> for RomTranscriptEntryVar
 }
 
 /// A generic trait that any partitionable circuit has to impl
-pub(crate) trait CircuitWithPortals<F: PrimeField> {
+pub trait CircuitWithPortals<F: PrimeField> {
     fn num_subcircuits(&self) -> usize;
 
     /// Generates constraints for the subcircuit at the given index
