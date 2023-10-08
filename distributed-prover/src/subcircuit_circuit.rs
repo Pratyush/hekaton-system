@@ -354,10 +354,10 @@ mod test {
         let (leaf_params, two_to_one_params) = gen_merkle_params::<TestParams>();
 
         // Make a random Merkle tree
-        let num_leaves = 4;
-        let circ = MerkleTreeCircuit::rand(&mut rng, num_leaves);
-
+        let circ_params = MerkleTreeCircuitParams { num_leaves: 4 };
+        let circ = MerkleTreeCircuit::rand(&mut rng, &circ_params);
         let num_subcircuits = <MerkleTreeCircuit as CircuitWithPortals<Fr>>::num_subcircuits(&circ);
+
         let stage0_builder = Stage0PackageBuilder::new::<TestParams>(circ);
         let all_subcircuit_indices = (0..num_subcircuits).collect::<Vec<_>>();
 
@@ -402,8 +402,7 @@ mod test {
 
             // Make an empty version of the large circuit and fill in just the witnesses for the
             // subcircuit we're proving now
-            let mut partial_circ =
-                <MerkleTreeCircuit as CircuitWithPortals<Fr>>::new(num_subcircuits);
+            let mut partial_circ = <MerkleTreeCircuit as CircuitWithPortals<Fr>>::new(&circ_params);
             <MerkleTreeCircuit as CircuitWithPortals<Fr>>::set_serialized_witnesses(
                 &mut partial_circ,
                 subcircuit_idx,
@@ -444,8 +443,9 @@ mod test {
         let (leaf_params, two_to_one_params) = gen_merkle_params::<TestParams>();
 
         // Make a random Merkle tree
-        let num_leaves = 4;
-        let circ = MerkleTreeCircuit::rand(&mut rng, num_leaves);
+        let circ_params = MerkleTreeCircuitParams { num_leaves: 4 };
+        let circ = MerkleTreeCircuit::rand(&mut rng, &circ_params);
+        let num_subcircuits = <MerkleTreeCircuit as CircuitWithPortals<Fr>>::num_subcircuits(&circ);
 
         // Generate proving keys
         let proving_keys: Vec<G16ProvingKey<E>> =
@@ -455,7 +455,6 @@ mod test {
                 circ.clone(),
             );
 
-        let num_subcircuits = <MerkleTreeCircuit as CircuitWithPortals<Fr>>::num_subcircuits(&circ);
         let stage0_builder = Stage0PackageBuilder::new::<TestParams>(circ);
         let all_subcircuit_indices = (0..num_subcircuits).collect::<Vec<_>>();
 
@@ -494,8 +493,7 @@ mod test {
 
             // Make an empty version of the large circuit and fill in just the witnesses for the
             // subcircuit we're proving now
-            let mut partial_circ =
-                <MerkleTreeCircuit as CircuitWithPortals<Fr>>::new(num_subcircuits);
+            let mut partial_circ = <MerkleTreeCircuit as CircuitWithPortals<Fr>>::new(&circ_params);
             <MerkleTreeCircuit as CircuitWithPortals<Fr>>::set_serialized_witnesses(
                 &mut partial_circ,
                 subcircuit_idx,

@@ -40,7 +40,9 @@ where
 {
     let cs = ConstraintSystemRef::<F>::new(ConstraintSystem::default());
     let mut pm = SetupPortalManager::new(cs.clone());
+
     let num_subcircuits = circ.num_subcircuits();
+    let circ_params = circ.get_params();
 
     for subcircuit_idx in 0..num_subcircuits {
         // Start a new subtrace and then run the subcircuit
@@ -48,7 +50,7 @@ where
 
         // To make sure errors are caught early, only set the witnesses that are earmarked for this
         // subcircuit. Make the rest empty
-        let mut circ_copy = P::new(num_subcircuits);
+        let mut circ_copy = P::new(&circ_params);
         let wits = circ.get_serialized_witnesses(subcircuit_idx);
         circ_copy.set_serialized_witnesses(subcircuit_idx, &wits);
 

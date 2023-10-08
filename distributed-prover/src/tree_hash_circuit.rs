@@ -90,11 +90,18 @@ pub(crate) struct MerkleTreeCircuit {
     pub(crate) root_hash: InnerHash,
 }
 
+/// Parameters that define the Merkle tree. For now this is just size
+// TODO: for benchmarking make a variable number of SHA2 iterations, variable # portal wires,
+// variable # witnesses, etc.
+pub struct MerkleTreeCircuitParams {
+    pub num_leaves: usize,
+}
+
 #[cfg(test)]
 impl MerkleTreeCircuit {
-    /// Makes a Merkle tree with a random set of leaves
-    pub(crate) fn rand(mut rng: impl Rng, num_leaves: usize) -> Self {
-        let mut leaves = vec![TestLeaf::default(); num_leaves];
+    /// Makes a Merkle tree with a random set of leaves. The size is given by `params`
+    pub(crate) fn rand(mut rng: impl Rng, params: &MerkleTreeCircuitParams) -> Self {
+        let mut leaves = vec![TestLeaf::default(); params.num_leaves];
         leaves.iter_mut().for_each(|l| rng.fill(l));
         let root_hash = calculate_root(&leaves);
         MerkleTreeCircuit { leaves, root_hash }
@@ -102,21 +109,25 @@ impl MerkleTreeCircuit {
 }
 
 impl<F: PrimeField> CircuitWithPortals<F> for MerkleTreeCircuit {
+    type Parameters = MerkleTreeCircuitParams;
+
     fn num_subcircuits(&self) -> usize {
         // A tree has 2l - 1 nodes where l is the number of leaves. We pad with 1 extra circuit to
         // get to a power of two
         2 * self.leaves.len()
     }
 
-    // Make a new empty merkle tree circuit
-    fn new(num_subcircuits: usize) -> Self {
-        // The number of subcircuits MUST be a power of two that's >1 to make any sense
-        assert!(num_subcircuits.is_power_of_two());
-        assert!(num_subcircuits > 1);
+    fn get_params(&self) -> MerkleTreeCircuitParams {
+        MerkleTreeCircuitParams {
+            num_leaves: self.leaves.len(),
+        }
+    }
 
-        // Set the appropriate number of default leaves
-        let num_leaves = num_subcircuits / 2;
-        let leaves = vec![TestLeaf::default(); num_leaves];
+    // Make a new empty merkle tree circuit
+    fn new(params: &Self::Parameters) -> Self {
+        let MerkleTreeCircuitParams { num_leaves } = params;
+
+        let leaves = vec![TestLeaf::default(); *num_leaves];
         // Set the default root hash
         let root_hash = InnerHash::default();
 
@@ -381,10 +392,10 @@ mod test {
     #[test]
     fn test_merkle_tree_correctness() {
         let mut rng = test_rng();
-        let num_leaves = 16;
+        let circ_params = MerkleTreeCircuitParams { num_leaves: 16 };
 
         // Make a random Merkle tree
-        let mut circ = MerkleTreeCircuit::rand(&mut rng, num_leaves);
+        let mut circ = MerkleTreeCircuit::rand(&mut rng, &circ_params);
 
         // Make a fresh portal manager
         let cs = ConstraintSystemRef::<Fr>::new(ConstraintSystem::default());
