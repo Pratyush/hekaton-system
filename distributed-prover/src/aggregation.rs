@@ -1,4 +1,4 @@
-use crate::prover::G16Com;
+use crate::coordinator::G16Com;
 
 use core::borrow::Borrow;
 

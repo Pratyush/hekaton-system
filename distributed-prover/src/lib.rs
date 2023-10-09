@@ -18,7 +18,7 @@ mod eval_tree;
 mod portal_manager;
 //mod worker_node;
 mod aggregation;
-mod prover;
+mod coordinator;
 mod subcircuit_circuit;
 mod tree_hash_circuit;
 mod util;
