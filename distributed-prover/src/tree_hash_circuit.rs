@@ -93,6 +93,7 @@ pub(crate) struct MerkleTreeCircuit {
 /// Parameters that define the Merkle tree. For now this is just size
 // TODO: for benchmarking make a variable number of SHA2 iterations, variable # portal wires,
 // variable # witnesses, etc.
+#[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct MerkleTreeCircuitParams {
     pub num_leaves: usize,
 }

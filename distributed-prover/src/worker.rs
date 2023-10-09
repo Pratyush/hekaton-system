@@ -13,12 +13,13 @@ use ark_cp_groth16::{
     Proof as G16Proof,
 };
 use ark_ec::pairing::Pairing;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rand::RngCore;
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha12Rng;
 
 /// The repsonse is the Groth16 commitment and seed for the requested subcircuit
-#[derive(Clone)]
+#[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct Stage0Response<E: Pairing> {
     pub(crate) subcircuit_idx: usize,
     pub(crate) com: G16Com<E>,
@@ -26,6 +27,7 @@ pub struct Stage0Response<E: Pairing> {
 }
 
 /// The repsonse is the Groth16 proof for the requested subcircuit
+#[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct Stage1Response<E: Pairing> {
     pub subcircuit_idx: usize,
     pub proof: G16Proof<E>,

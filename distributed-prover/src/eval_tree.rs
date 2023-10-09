@@ -31,7 +31,7 @@ use ark_relations::{
     ns,
     r1cs::{ConstraintSystem, ConstraintSystemRef, Namespace, SynthesisError},
 };
-use ark_serialize::CanonicalSerialize;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha12Rng;
 
@@ -52,7 +52,7 @@ pub(crate) type TwoToOneParamVar<CG, C, F> =
     >>::ParametersVar;
 
 /// A leaf in the execution tree
-#[derive(Clone, Default, Debug, PartialEq, Eq)]
+#[derive(Clone, Default, Debug, PartialEq, Eq, CanonicalSerialize, CanonicalDeserialize)]
 pub(crate) struct ExecTreeLeaf<F: PrimeField> {
     // Leaf i contains the running evals AFTER having run subcircuit i
     pub evals: RunningEvals<F>,

@@ -11,7 +11,7 @@ use ark_relations::{
     ns,
     r1cs::{ConstraintSystemRef, Namespace, SynthesisError},
 };
-use ark_serialize::CanonicalSerialize;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use xxhash_rust::xxh3::xxh3_128;
 
 mod eval_tree;
@@ -39,7 +39,7 @@ pub(crate) fn varname_hasher<F: PrimeField>(name: &str) -> F {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, CanonicalSerialize, CanonicalDeserialize)]
 pub(crate) struct RunningEvals<F: PrimeField> {
     // Stored values that are updated
     pub(crate) time_ordered_eval: F,
@@ -208,7 +208,7 @@ impl<F: PrimeField> AllocVar<RunningEvals<F>, F> for RunningEvalsVar<F> {
 }
 
 /// An entry in the transcript of portal wire reads
-#[derive(Clone, Default, Debug, PartialEq, Eq, CanonicalSerialize)]
+#[derive(Clone, Default, Debug, PartialEq, Eq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct RomTranscriptEntry<F: PrimeField> {
     name: String,
     val: F,
@@ -288,7 +288,7 @@ impl<F: PrimeField> AllocVar<RomTranscriptEntry<F>, F> for RomTranscriptEntryVar
 pub trait CircuitWithPortals<F: PrimeField> {
     // Parameters that define this circuit, e.g., number of subcircuits, number of iterations,
     // public constants, etc.
-    type Parameters;
+    type Parameters: Clone + CanonicalSerialize + CanonicalDeserialize;
 
     /// Retreive the set params from the given circuit
     fn get_params(&self) -> Self::Parameters;

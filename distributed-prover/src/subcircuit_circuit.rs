@@ -271,7 +271,7 @@ mod test {
 
     use crate::{
         aggregation::SuperComCommittingKey,
-        coordinator::{gen_subcircuit_proving_keys, Stage0PackageBuilder, Stage1Request},
+        coordinator::{gen_subcircuit_proving_keys, CoordinatorStage0State, Stage1Request},
         eval_tree::{SerializedLeaf, SerializedLeafVar},
         tree_hash_circuit::*,
         util::{gen_merkle_params, G16Com, G16ComSeed, G16ProvingKey},
@@ -354,7 +354,7 @@ mod test {
         // Make the stage0 coordinator state. The value of the commitment key doesn't really matter
         // since we don't test aggregation here.
         let super_com_key = SuperComCommittingKey::<E>::gen(&mut rng, num_subcircuits);
-        let stage0_builder = Stage0PackageBuilder::new::<TestParams>(circ, super_com_key);
+        let stage0_builder = CoordinatorStage0State::new::<TestParams>(circ, super_com_key);
         let all_subcircuit_indices = (0..num_subcircuits).collect::<Vec<_>>();
 
         // Worker receives a stage0 package containing all the subtraces it will need for this run.
@@ -449,7 +449,7 @@ mod test {
 
         // Make the stage0 coordinator state
         let super_com_key = SuperComCommittingKey::<E>::gen(&mut rng, num_subcircuits);
-        let stage0_builder = Stage0PackageBuilder::new::<TestParams>(circ, super_com_key);
+        let stage0_builder = CoordinatorStage0State::new::<TestParams>(circ, super_com_key);
         let all_subcircuit_indices = (0..num_subcircuits).collect::<Vec<_>>();
 
         // Workers receives stage0 packages containing the subtraces it will need for this run. We
@@ -478,7 +478,7 @@ mod test {
         // Compute the values needed to prove stage1 for all subcircuits
         let stage1_reqs: Vec<Stage1Request<TestParams, _, _>> = all_subcircuit_indices
             .iter()
-            .map(|idx| stage1_builder.gen_request(*idx))
+            .map(|idx| stage1_builder.gen_request(*idx).to_owned())
             .collect();
 
         // Now compute all the proofs and check them

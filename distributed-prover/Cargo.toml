@@ -13,7 +13,7 @@ ark-ff = {version = "0.4", default-features = false }
 ark-poly = { version = "0.4.0" }
 ark-r1cs-std = { version = "0.4", default-features = false }
 ark-relations = { version = "0.4", default-features = false, features = ["std"] }
-ark-serialize = { version = "0.4", default-features = false, features = ["derive"] }
+#ark-serialize = { version = "0.4", default-features = false, features = ["derive"] }
 rand = "0.8"
 tinyram-emu = { path = "../tinyram-emu" }
 ark-cp-groth16 = { path = "../cp-groth16" }
@@ -43,6 +43,7 @@ parallel = ["ark-ff/parallel", "ark-ff/rayon", "ark-poly/parallel", "ark-poly/ra
 git = "ssh://git@github.com/arkworks-rs/r1cs-std.git"
 branch = "refactor-uints"
 
-[patch.crates-io.ark-serialize]
-git = "ssh://git@github.com/rozbb/algebra.git"
+[dependencies.ark-serialize]
+git = "https://github.com/rozbb/algebra.git"
 branch = "canonicalserialize-vecdeque"
+features = ["derive"]
