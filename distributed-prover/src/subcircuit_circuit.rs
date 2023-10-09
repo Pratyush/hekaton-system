@@ -272,9 +272,9 @@ mod test {
     use crate::{
         eval_tree::{SerializedLeaf, SerializedLeafVar},
         prover::{
-            gen_merkle_params, gen_subcircuit_proving_keys, G16Com, G16ComSeed, G16ProvingKey,
-            Stage0PackageBuilder, Stage0Request, Stage0Response, Stage0WorkerPackageRef,
-            Stage1Request, Stage1Response, WorkerStateStage0, WorkerStateStage1,
+            gen_merkle_params, gen_subcircuit_proving_keys, process_stage0_request,
+            process_stage1_request, G16Com, G16ComSeed, G16ProvingKey, Stage0PackageBuilder,
+            Stage0Request, Stage0Response, Stage0WorkerPackageRef, Stage1Request, Stage1Response,
         },
         tree_hash_circuit::*,
     };
@@ -455,14 +455,6 @@ mod test {
         let stage0_builder = Stage0PackageBuilder::new::<TestParams>(circ);
         let all_subcircuit_indices = (0..num_subcircuits).collect::<Vec<_>>();
 
-        //MerkleTreeCircuit,
-
-        // Workers set up state. Initially they're all the same
-        let worker_states: Vec<WorkerStateStage0<TestParams, TestParamsVar, E, _>> =
-            core::iter::repeat_with(|| WorkerStateStage0::new(|idx| proving_keys[idx].clone()))
-                .take(num_subcircuits)
-                .collect();
-
         // Workers receives stage0 packages containing the subtraces it will need for this run. We
         // imagine the worker saves their package to disk.
         let stage0_reqs = all_subcircuit_indices
@@ -473,45 +465,48 @@ mod test {
         // Make stage0 responses wrt the real proving keys. This contains all the commitments
         let stage0_resps = stage0_reqs
             .iter()
-            .zip(worker_states.iter())
-            .map(|(req, worker_state)| {
-                worker_state.process_request::<MerkleTreeCircuit, _>(&mut rng, req.clone())
+            .zip(proving_keys.iter())
+            .map(|(req, pk)| {
+                process_stage0_request::<_, TestParamsVar, _, MerkleTreeCircuit, _>(
+                    &mut rng,
+                    pk,
+                    req.clone(),
+                )
             })
             .collect::<Vec<_>>();
 
         // Move on to stage 1
         let stage1_builder = stage0_builder.process_stage0_responses(&stage0_resps);
 
-        // Build the worker states for stage 1
-        let worker_states: Vec<WorkerStateStage1<TestParams, TestParamsVar, E>> = stage0_reqs
-            .into_iter()
-            .zip(stage0_resps.into_iter())
-            .zip(proving_keys.into_iter())
-            .map(|((stage0_req, stage0_resp), pk)| {
-                WorkerStateStage1::new(pk, stage0_req, stage0_resp)
-            })
+        // Compute the values needed to prove stage1 for all subcircuits
+        let stage1_reqs: Vec<Stage1Request<TestParams, _, _>> = all_subcircuit_indices
+            .iter()
+            .map(|idx| stage1_builder.gen_request(*idx))
             .collect();
 
-        // Compute the values needed to prove stage1 for all subcircuits
-        let stage1_reqs: Vec<Stage1Request<TestParams, Fr, MerkleTreeCircuit>> =
-            all_subcircuit_indices
-                .iter()
-                .map(|idx| stage1_builder.gen_request(*idx))
-                .collect();
-
         // Now compute all the proofs and check them
-        for (worker_state, stage1_req) in worker_states.into_iter().zip(stage1_reqs.into_iter()) {
+        for (((stage0_req, stage0_resp), stage1_req), pk) in stage0_reqs
+            .into_iter()
+            .zip(stage0_resps.into_iter())
+            .zip(stage1_reqs.into_iter())
+            .zip(proving_keys.into_iter())
+        {
             // Save these value for verification later
             let (entry_chal, tr_chal) = stage1_req.cur_leaf.evals.challenges.unwrap().clone();
-            let root: MerkleRoot<TestParams> = stage1_req.root.clone();
+            let root = stage1_req.root.clone();
 
             // Compute the proof
-            let Stage1Response { proof, .. } =
-                worker_state.process_request::<MerkleTreeCircuit, _>(&mut rng, stage1_req);
+            let Stage1Response { proof, .. } = process_stage1_request::<_, TestParamsVar, _, _, _>(
+                &mut rng,
+                &pk,
+                stage0_req,
+                stage0_resp,
+                stage1_req,
+            );
 
             // Verify
 
-            let pvk = prepare_verifying_key(&worker_state.pk.vk());
+            let pvk = prepare_verifying_key(&pk.vk());
             let inputs = [
                 entry_chal.to_field_elements().unwrap(),
                 tr_chal.to_field_elements().unwrap(),
