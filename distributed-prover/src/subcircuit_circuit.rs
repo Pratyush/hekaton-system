@@ -54,7 +54,7 @@ where
     pub tr_chal: F,
     pub root: MerkleRoot<C>,
 
-    _marker: PhantomData<CG>,
+    pub _marker: PhantomData<CG>,
 }
 
 impl<F, P, C, CG> Clone for SubcircuitWithPortalsProver<F, P, C, CG>
@@ -272,9 +272,9 @@ mod test {
     use crate::{
         eval_tree::{SerializedLeaf, SerializedLeafVar},
         prover::{
-            compute_stage0_response, gen_merkle_params, gen_subcircuit_proving_keys, G16Com,
-            G16ComSeed, G16ProvingKey, Stage0PackageBuilder, Stage0Response, Stage0WorkerPackage,
-            Stage0WorkerPackageRef, Stage1Request,
+            gen_merkle_params, gen_subcircuit_proving_keys, G16Com, G16ComSeed, G16ProvingKey,
+            Stage0PackageBuilder, Stage0Request, Stage0Response, Stage0WorkerPackageRef,
+            Stage1Request, Stage1Response, WorkerStateStage0, WorkerStateStage1,
         },
         tree_hash_circuit::*,
     };
@@ -382,23 +382,19 @@ mod test {
         // Move on to stage 1
         let stage1_builder = stage0_builder.process_stage0_responses(&fake_stage0_resps);
 
-        // Compute the values needed to prove stage1. This is for all the subcircuits.
-        let Stage1Request {
-            subcircuit_idxs,
-            cur_leaves,
-            next_leaf_memberships,
-            root,
-        } = stage1_builder.gen_request(&all_subcircuit_indices);
+        // Compute the values needed to prove stage1 for all subcircuits
+        let stage1_reqs = all_subcircuit_indices
+            .iter()
+            .map(|idx| stage1_builder.gen_request(*idx))
+            .collect::<Vec<_>>();
 
         // Now for every subcircuit, instantiate a subcircuit prover and check that its constraints
         // are satisfied
-        for (((subcircuit_idx, cur_leaf), next_leaf_membership), stage0_req) in subcircuit_idxs
-            .into_iter()
-            .zip(cur_leaves.into_iter())
-            .zip(next_leaf_memberships.into_iter())
-            .zip(stage0_reqs.into_iter())
-        {
-            let (entry_chal, tr_chal) = cur_leaf.evals.challenges.unwrap();
+        for (stage0_req, stage1_req) in stage0_reqs.into_iter().zip(stage1_reqs.into_iter()) {
+            assert_eq!(stage0_req.subcircuit_idx, stage1_req.subcircuit_idx);
+            let subcircuit_idx = stage0_req.subcircuit_idx;
+
+            let (entry_chal, tr_chal) = stage1_req.cur_leaf.evals.challenges.unwrap();
 
             // Make an empty version of the large circuit and fill in just the witnesses for the
             // subcircuit we're proving now
@@ -406,7 +402,7 @@ mod test {
             <MerkleTreeCircuit as CircuitWithPortals<Fr>>::set_serialized_witnesses(
                 &mut partial_circ,
                 subcircuit_idx,
-                &stage0_req.serialized_witnesses,
+                &stage1_req.serialized_witnesses,
             );
 
             let mut subcirc_circ = SubcircuitWithPortalsProver {
@@ -418,11 +414,11 @@ mod test {
                 addr_ordered_subtrace: stage0_req.addr_ordered_subtrace.clone(),
                 time_ordered_subtrace_var: VecDeque::new(),
                 addr_ordered_subtrace_var: VecDeque::new(),
-                cur_leaf,
-                next_leaf_membership,
+                cur_leaf: stage1_req.cur_leaf,
+                next_leaf_membership: stage1_req.next_leaf_membership,
                 entry_chal,
                 tr_chal,
-                root,
+                root: stage1_req.root,
                 _marker: PhantomData::<TestParamsVar>,
             };
 
@@ -447,7 +443,7 @@ mod test {
         let circ = MerkleTreeCircuit::rand(&mut rng, &circ_params);
         let num_subcircuits = <MerkleTreeCircuit as CircuitWithPortals<Fr>>::num_subcircuits(&circ);
 
-        // Generate proving keys
+        // Coordinator generates all the proving keys
         let proving_keys: Vec<G16ProvingKey<E>> =
             gen_subcircuit_proving_keys::<TestParams, TestParamsVar, _, _>(
                 &leaf_params,
@@ -455,8 +451,17 @@ mod test {
                 circ.clone(),
             );
 
+        // Coordinator sets up the state
         let stage0_builder = Stage0PackageBuilder::new::<TestParams>(circ);
         let all_subcircuit_indices = (0..num_subcircuits).collect::<Vec<_>>();
+
+        //MerkleTreeCircuit,
+
+        // Workers set up state. Initially they're all the same
+        let worker_states: Vec<WorkerStateStage0<TestParams, TestParamsVar, E, _>> =
+            core::iter::repeat_with(|| WorkerStateStage0::new(|idx| proving_keys[idx].clone()))
+                .take(num_subcircuits)
+                .collect();
 
         // Workers receives stage0 packages containing the subtraces it will need for this run. We
         // imagine the worker saves their package to disk.
@@ -468,80 +473,45 @@ mod test {
         // Make stage0 responses wrt the real proving keys. This contains all the commitments
         let stage0_resps = stage0_reqs
             .iter()
-            .zip(proving_keys.iter())
-            .map(|(req, pk)| {
-                compute_stage0_response::<E, MerkleTreeCircuit, TestParams, TestParamsVar>(
-                    req.clone(),
-                    pk,
-                    &leaf_params,
-                    &two_to_one_params,
-                )
+            .zip(worker_states.iter())
+            .map(|(req, worker_state)| {
+                worker_state.process_request::<MerkleTreeCircuit, _>(&mut rng, req.clone())
             })
             .collect::<Vec<_>>();
 
         // Move on to stage 1
         let stage1_builder = stage0_builder.process_stage0_responses(&stage0_resps);
 
-        // Compute the values needed to prove stage1. This is for all the subcircuits.
-        let Stage1Request {
-            subcircuit_idxs,
-            cur_leaves,
-            next_leaf_memberships,
-            root,
-        } = stage1_builder.gen_request(&all_subcircuit_indices);
+        // Build the worker states for stage 1
+        let worker_states: Vec<WorkerStateStage1<TestParams, TestParamsVar, E>> = stage0_reqs
+            .into_iter()
+            .zip(stage0_resps.into_iter())
+            .zip(proving_keys.into_iter())
+            .map(|((stage0_req, stage0_resp), pk)| {
+                WorkerStateStage1::new(pk, stage0_req, stage0_resp)
+            })
+            .collect();
 
-        // Now for every subcircuit, instantiate a subcircuit prover and check that its constraints
-        // are satisfied
-        for (((((subcircuit_idx, cur_leaf), next_leaf_membership), pk), stage0_req), stage0_resp) in
-            subcircuit_idxs
-                .into_iter()
-                .zip(cur_leaves.into_iter())
-                .zip(next_leaf_memberships.into_iter())
-                .zip(proving_keys.into_iter())
-                .zip(stage0_reqs.into_iter())
-                .zip(stage0_resps.into_iter())
-        {
-            let (entry_chal, tr_chal) = cur_leaf.evals.challenges.unwrap();
+        // Compute the values needed to prove stage1 for all subcircuits
+        let stage1_reqs: Vec<Stage1Request<TestParams, Fr, MerkleTreeCircuit>> =
+            all_subcircuit_indices
+                .iter()
+                .map(|idx| stage1_builder.gen_request(*idx))
+                .collect();
 
-            // Make an empty version of the large circuit and fill in just the witnesses for the
-            // subcircuit we're proving now
-            let mut partial_circ = <MerkleTreeCircuit as CircuitWithPortals<Fr>>::new(&circ_params);
-            <MerkleTreeCircuit as CircuitWithPortals<Fr>>::set_serialized_witnesses(
-                &mut partial_circ,
-                subcircuit_idx,
-                &stage0_req.serialized_witnesses,
-            );
+        // Now compute all the proofs and check them
+        for (worker_state, stage1_req) in worker_states.into_iter().zip(stage1_reqs.into_iter()) {
+            // Save these value for verification later
+            let (entry_chal, tr_chal) = stage1_req.cur_leaf.evals.challenges.unwrap().clone();
+            let root: MerkleRoot<TestParams> = stage1_req.root.clone();
 
-            let real_circ = SubcircuitWithPortalsProver {
-                subcircuit_idx,
-                circ: Some(partial_circ),
-                leaf_params: leaf_params.clone(),
-                two_to_one_params: two_to_one_params.clone(),
-                time_ordered_subtrace: stage0_req.time_ordered_subtrace.clone(),
-                addr_ordered_subtrace: stage0_req.addr_ordered_subtrace.clone(),
-                time_ordered_subtrace_var: VecDeque::new(),
-                addr_ordered_subtrace_var: VecDeque::new(),
-                cur_leaf,
-                next_leaf_membership,
-                entry_chal,
-                tr_chal,
-                root,
-                _marker: PhantomData::<TestParamsVar>,
-            };
-
-            let mut cb = G16CommitmentBuilder::<_, E, QAP>::new(real_circ, &pk);
-            let mut subcircuit_rng = {
-                let com_seed = stage0_resp.com_seed.clone();
-                ChaCha12Rng::from_seed(com_seed)
-            };
-
-            let (com, rand) = cb.commit(&mut subcircuit_rng).unwrap();
-            assert_eq!(com, stage0_resp.com);
-
-            let proof = cb.prove(&[com], &[rand], &mut rng).unwrap();
+            // Compute the proof
+            let Stage1Response { proof, .. } =
+                worker_state.process_request::<MerkleTreeCircuit, _>(&mut rng, stage1_req);
 
             // Verify
-            let pvk = prepare_verifying_key(&pk.vk());
+
+            let pvk = prepare_verifying_key(&worker_state.pk.vk());
             let inputs = [
                 entry_chal.to_field_elements().unwrap(),
                 tr_chal.to_field_elements().unwrap(),

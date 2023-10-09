@@ -13,6 +13,7 @@ use std::{borrow::Borrow, collections::VecDeque, marker::PhantomData};
 
 use ark_cp_groth16::{
     committer::CommitmentBuilder as G16CommitmentBuilder, r1cs_to_qap::LibsnarkReduction as QAP,
+    Proof as G16Proof,
 };
 use ark_crypto_primitives::{
     crh::{
@@ -28,6 +29,7 @@ use ark_serialize::{
     CanonicalDeserialize, CanonicalSerialize, Compress, Read as ArkRead, SerializationError,
     Write as ArkWrite,
 };
+use rand::{CryptoRng, RngCore};
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha12Rng;
 
@@ -139,61 +141,111 @@ fn commit_to_g16_coms<E: Pairing, B: Borrow<G16Com<E>>>(
 /// commitment once it's asked to do stage 1
 pub type G16ComSeed = [u8; 32];
 
-// TODO: This will be outsourced to worker nodes
-pub(crate) fn compute_stage0_response<E, P, C, CG>(
-    stage0_request: Stage0WorkerPackage<E::ScalarField>,
-    pk: &G16ProvingKey<E>,
-    leaf_params: &LeafParam<C>,
-    two_to_one_params: &TwoToOneParam<C>,
-) -> Stage0Response<E>
+/// The state of a worker BEFORE receiving its stage0 request
+pub struct WorkerStateStage0<C, CG, E, G>
 where
-    E: Pairing,
-    P: CircuitWithPortals<E::ScalarField> + Clone,
     C: TreeConfig<Leaf = SerializedLeaf>,
     CG: TreeConfigGadget<C, E::ScalarField, Leaf = SerializedLeafVar<E::ScalarField>>,
+    E: Pairing,
+    G: Fn(usize) -> G16ProvingKey<E>,
 {
-    let mut rng = rand::thread_rng();
+    pk_fetcher: G,
+    leaf_params: LeafParam<C>,
+    two_to_one_params: TwoToOneParam<C>,
+    _marker: PhantomData<CG>,
+}
 
-    let Stage0WorkerPackage {
-        subcircuit_idx,
-        time_ordered_subtrace,
-        addr_ordered_subtrace,
-        ..
-    } = stage0_request;
+pub struct WorkerStateStage1<C, CG, E>
+where
+    C: TreeConfig<Leaf = SerializedLeaf>,
+    CG: TreeConfigGadget<C, E::ScalarField, Leaf = SerializedLeafVar<E::ScalarField>>,
+    E: Pairing,
+{
+    pub(crate) pk: G16ProvingKey<E>,
+    leaf_params: LeafParam<C>,
+    two_to_one_params: TwoToOneParam<C>,
+    stage0_req: Stage0Request<E::ScalarField>,
+    stage0_resp: Stage0Response<E>,
+    _marker: PhantomData<CG>,
+}
 
-    // Commit to their stage 0 inputs (ie the subtraces), and save the commitments and RNG seeds
+impl<C, CG, E, G> WorkerStateStage0<C, CG, E, G>
+where
+    C: TreeConfig<Leaf = SerializedLeaf>,
+    CG: TreeConfigGadget<C, E::ScalarField, Leaf = SerializedLeafVar<E::ScalarField>>,
+    E: Pairing,
+    G: Fn(usize) -> G16ProvingKey<E>,
+{
+    /// Makes a new state with the given proving key fetcher
+    pub fn new(pk_fetcher: G) -> Self {
+        let (leaf_params, two_to_one_params) = gen_merkle_params::<C>();
 
-    // Make an empty prover
-    // The number of subcircuits dictates the size of the Merkle tree. This is irrelevant
-    // here because we're only running stage 0 of the circuit, which involves no tree ops.
-    // Make it 2 so that we don't get underflow by accident
-    let num_subcircuits = 2;
-    // TODO: Make this circuit take refs. Avoid the cloning
-    let mut prover = SubcircuitWithPortalsProver::<_, P, _, CG>::new(
-        leaf_params.clone(),
-        two_to_one_params.clone(),
-        num_subcircuits,
-    );
+        WorkerStateStage0 {
+            pk_fetcher,
+            leaf_params,
+            two_to_one_params,
+            _marker: PhantomData,
+        }
+    }
 
-    // Fill in the correct subcircuit index and subtrace data
-    prover.subcircuit_idx = subcircuit_idx;
-    prover.time_ordered_subtrace = time_ordered_subtrace;
-    prover.addr_ordered_subtrace = addr_ordered_subtrace;
+    // TODO: This will be outsourced to worker nodes
+    pub fn process_request<P, R>(
+        &self,
+        mut rng: R,
+        req: Stage0Request<E::ScalarField>,
+    ) -> Stage0Response<E>
+    where
+        C: TreeConfig<Leaf = SerializedLeaf>,
+        CG: TreeConfigGadget<C, E::ScalarField, Leaf = SerializedLeafVar<E::ScalarField>>,
+        E: Pairing,
+        P: CircuitWithPortals<E::ScalarField> + Clone,
+        R: RngCore,
+    {
+        // Unpack the values
+        let Stage0Request {
+            subcircuit_idx,
+            time_ordered_subtrace,
+            addr_ordered_subtrace,
+        } = req;
 
-    // Create a seed and make an RNG from it
-    let com_seed = rng.gen::<G16ComSeed>();
-    let mut subcircuit_rng = ChaCha12Rng::from_seed(com_seed);
+        // Get the appropriate proving key
+        // TODO: Make this the committing key. It's way faster
+        let pk = (self.pk_fetcher)(subcircuit_idx);
 
-    // Commit to the stage 0 values (the subtraces)
-    let mut cb = G16CommitmentBuilder::<_, E, QAP>::new(prover, &pk);
-    let (com, _) = cb
-        .commit(&mut subcircuit_rng)
-        .expect("failed to commit to subtrace");
+        // Commit to their stage 0 inputs (ie the subtraces), and save the commitments and RNG seeds
 
-    Stage0Response {
-        subcircuit_idx,
-        com,
-        com_seed,
+        // Make an empty prover
+        // The number of subcircuits dictates the size of the Merkle tree. This is irrelevant
+        // here because we're only running stage 0 of the circuit, which involves no tree ops.
+        // Make it 2 so that we don't get underflow by accident
+        let num_subcircuits = 2;
+        // TODO: Make this circuit take refs. Avoid the cloning
+        let mut prover = SubcircuitWithPortalsProver::<_, P, _, CG>::new(
+            self.leaf_params.clone(),
+            self.two_to_one_params.clone(),
+            num_subcircuits,
+        );
+
+        // Fill in the correct subcircuit index and subtrace data
+        prover.subcircuit_idx = subcircuit_idx;
+        prover.time_ordered_subtrace = time_ordered_subtrace;
+        prover.addr_ordered_subtrace = addr_ordered_subtrace;
+
+        // Create a seed and make an RNG from it
+        let com_seed = rng.gen::<G16ComSeed>();
+        let mut subcircuit_rng = ChaCha12Rng::from_seed(com_seed);
+
+        // Commit to the stage 0 values (the subtraces)
+        let mut cb = G16CommitmentBuilder::<_, E, QAP>::new(prover, &pk);
+        let (com, _) = cb
+            .commit(&mut subcircuit_rng)
+            .expect("failed to commit to subtrace");
+
+        Stage0Response {
+            subcircuit_idx,
+            com,
+            com_seed,
+        }
     }
 }
 
@@ -351,27 +403,24 @@ where
 /// everything the worker will need in order to do its stage0 and stage1 proof computations. It
 /// also requests some stage0 commitments from the worker.
 #[derive(Clone)]
-pub struct Stage0WorkerPackage<F: PrimeField> {
+pub struct Stage0Request<F: PrimeField> {
     pub(crate) subcircuit_idx: usize,
     pub(crate) time_ordered_subtrace: VecDeque<RomTranscriptEntry<F>>,
     pub(crate) addr_ordered_subtrace: VecDeque<RomTranscriptEntry<F>>,
-    pub(crate) serialized_witnesses: Vec<u8>,
 }
 
 pub struct Stage0WorkerPackageRef<'a, F: PrimeField> {
     subcircuit_idx: usize,
     pub time_ordered_subtrace: &'a VecDeque<RomTranscriptEntry<F>>,
     pub addr_ordered_subtrace: &'a VecDeque<RomTranscriptEntry<F>>,
-    pub(crate) serialized_witnesses: Vec<u8>,
 }
 
 impl<'a, F: PrimeField> Stage0WorkerPackageRef<'a, F> {
-    pub fn to_owned(&self) -> Stage0WorkerPackage<F> {
-        Stage0WorkerPackage {
+    pub fn to_owned(&self) -> Stage0Request<F> {
+        Stage0Request {
             subcircuit_idx: self.subcircuit_idx,
             time_ordered_subtrace: self.time_ordered_subtrace.clone(),
             addr_ordered_subtrace: self.addr_ordered_subtrace.clone(),
-            serialized_witnesses: self.serialized_witnesses.to_vec(),
         }
     }
 }
@@ -414,7 +463,6 @@ where
                 .get(subcircuit_idx)
                 .as_ref()
                 .unwrap(),
-            serialized_witnesses: self.circ.get_serialized_witnesses(subcircuit_idx),
         }
     }
 
@@ -422,7 +470,7 @@ where
     pub fn process_stage0_responses<C, E>(
         self,
         responses: &[Stage0Response<E>],
-    ) -> Stage1RequestBuilder<C, E>
+    ) -> Stage1RequestBuilder<C, E, P>
     where
         C: TreeConfig<Leaf = SerializedLeaf>,
         E: Pairing<ScalarField = F>,
@@ -443,6 +491,7 @@ where
         let super_com = commit_to_g16_coms::<E, _>(&coms);
 
         Stage1RequestBuilder::new(
+            self.circ,
             self.time_ordered_subtraces,
             self.addr_ordered_subtraces,
             coms,
@@ -452,11 +501,13 @@ where
     }
 }
 
-pub struct Stage1RequestBuilder<C, E>
+pub struct Stage1RequestBuilder<C, E, P>
 where
     C: TreeConfig<Leaf = SerializedLeaf>,
     E: Pairing,
+    P: CircuitWithPortals<E::ScalarField>,
 {
+    circ: P,
     time_ordered_subtraces: Vec<VecDeque<RomTranscriptEntry<E::ScalarField>>>,
     addr_ordered_subtraces: Vec<VecDeque<RomTranscriptEntry<E::ScalarField>>>,
     coms: Vec<G16Com<E>>,
@@ -468,12 +519,14 @@ where
     leaves: Vec<ExecTreeLeaf<E::ScalarField>>,
 }
 
-impl<C, E> Stage1RequestBuilder<C, E>
+impl<C, E, P> Stage1RequestBuilder<C, E, P>
 where
     C: TreeConfig<Leaf = SerializedLeaf>,
     E: Pairing,
+    P: CircuitWithPortals<E::ScalarField>,
 {
     fn new(
+        circ: P,
         time_ordered_subtraces: Vec<VecDeque<RomTranscriptEntry<E::ScalarField>>>,
         addr_ordered_subtraces: Vec<VecDeque<RomTranscriptEntry<E::ScalarField>>>,
         coms: Vec<G16Com<E>>,
@@ -491,6 +544,7 @@ where
         );
 
         Stage1RequestBuilder {
+            circ,
             time_ordered_subtraces,
             addr_ordered_subtraces,
             coms,
@@ -503,33 +557,121 @@ where
         }
     }
 
-    pub fn gen_request(&self, subcircuit_idxs: &[usize]) -> Stage1Request<C, E::ScalarField> {
-        let mut cur_leaves = Vec::new();
-        let mut next_leaf_memberships = Vec::new();
-
-        for idx in subcircuit_idxs {
-            let (cur_leaf, next_leaf_membership) = stage1_witnesses(*idx, &self.tree, &self.leaves);
-
-            cur_leaves.push(cur_leaf);
-            next_leaf_memberships.push(next_leaf_membership);
-        }
+    pub fn gen_request(&self, subcircuit_idx: usize) -> Stage1Request<C, E::ScalarField, P> {
+        let (cur_leaf, next_leaf_membership) =
+            stage1_witnesses(subcircuit_idx, &self.tree, &self.leaves);
 
         Stage1Request {
-            subcircuit_idxs: subcircuit_idxs.to_vec(),
-            cur_leaves,
-            next_leaf_memberships,
+            subcircuit_idx,
+            cur_leaf,
+            next_leaf_membership,
             root: self.tree.root(),
+            serialized_witnesses: self.circ.get_serialized_witnesses(subcircuit_idx),
+            circ_params: self.circ.get_params(),
         }
     }
 }
 
-pub struct Stage1Request<C, F>
+pub struct Stage1Request<C, F, P>
 where
     C: TreeConfig,
     F: PrimeField,
+    P: CircuitWithPortals<F>,
 {
-    pub(crate) subcircuit_idxs: Vec<usize>,
-    pub(crate) cur_leaves: Vec<ExecTreeLeaf<F>>,
-    pub(crate) next_leaf_memberships: Vec<MerklePath<C>>,
+    pub(crate) subcircuit_idx: usize,
+    pub(crate) cur_leaf: ExecTreeLeaf<F>,
+    pub(crate) next_leaf_membership: MerklePath<C>,
     pub(crate) root: MerkleRoot<C>,
+    pub(crate) serialized_witnesses: Vec<u8>,
+    pub(crate) circ_params: P::Parameters,
+}
+
+pub struct Stage1Response<E: Pairing> {
+    pub subcircuit_idx: usize,
+    pub proof: G16Proof<E>,
+}
+
+impl<C, CG, E> WorkerStateStage1<C, CG, E>
+where
+    C: TreeConfig<Leaf = SerializedLeaf>,
+    CG: TreeConfigGadget<C, E::ScalarField, Leaf = SerializedLeafVar<E::ScalarField>>,
+    E: Pairing,
+{
+    /// Makes a new state with the given proving key and stage0 values
+    pub fn new(
+        pk: G16ProvingKey<E>,
+        stage0_req: Stage0Request<E::ScalarField>,
+        stage0_resp: Stage0Response<E>,
+    ) -> Self {
+        let (leaf_params, two_to_one_params) = gen_merkle_params::<C>();
+
+        WorkerStateStage1 {
+            pk,
+            leaf_params,
+            two_to_one_params,
+            stage0_req,
+            stage0_resp,
+            _marker: PhantomData,
+        }
+    }
+
+    pub fn process_request<P, R>(
+        &self,
+        mut rng: R,
+        stage1_req: Stage1Request<C, E::ScalarField, P>,
+    ) -> Stage1Response<E>
+    where
+        P: CircuitWithPortals<E::ScalarField>,
+        R: RngCore,
+    {
+        // Unpack everything we'll need
+        let Stage1Request {
+            subcircuit_idx,
+            cur_leaf,
+            next_leaf_membership,
+            root,
+            serialized_witnesses,
+            circ_params,
+        } = stage1_req;
+        let (entry_chal, tr_chal) = cur_leaf.evals.challenges.unwrap();
+
+        // Make an empty version of the large circuit and fill in just the witnesses for the
+        // subcircuit we're proving now
+        let mut partial_circ = P::new(&circ_params);
+
+        partial_circ.set_serialized_witnesses(subcircuit_idx, &serialized_witnesses);
+
+        let real_circ = SubcircuitWithPortalsProver {
+            subcircuit_idx,
+            circ: Some(partial_circ),
+            leaf_params: self.leaf_params.clone(),
+            two_to_one_params: self.two_to_one_params.clone(),
+            time_ordered_subtrace: self.stage0_req.time_ordered_subtrace.clone(),
+            addr_ordered_subtrace: self.stage0_req.addr_ordered_subtrace.clone(),
+            time_ordered_subtrace_var: VecDeque::new(),
+            addr_ordered_subtrace_var: VecDeque::new(),
+            cur_leaf,
+            next_leaf_membership,
+            entry_chal,
+            tr_chal,
+            root,
+            _marker: PhantomData::<CG>,
+        };
+
+        let mut cb = G16CommitmentBuilder::<_, E, QAP>::new(real_circ, &self.pk);
+        let mut subcircuit_rng = {
+            let com_seed = self.stage0_resp.com_seed.clone();
+            ChaCha12Rng::from_seed(com_seed)
+        };
+
+        let (com, rand) = cb.commit(&mut subcircuit_rng).unwrap();
+        assert_eq!(com, self.stage0_resp.com);
+
+        let proof = cb.prove(&[com], &[rand], &mut rng).unwrap();
+
+        Stage1Response {
+            subcircuit_idx,
+            proof,
+        }
+    }
 }
