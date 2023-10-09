@@ -270,6 +270,7 @@ mod test {
     use super::*;
 
     use crate::{
+        aggregation::SuperComCommittingKey,
         coordinator::{gen_subcircuit_proving_keys, Stage0PackageBuilder, Stage1Request},
         eval_tree::{SerializedLeaf, SerializedLeafVar},
         tree_hash_circuit::*,
@@ -350,7 +351,10 @@ mod test {
         let circ = MerkleTreeCircuit::rand(&mut rng, &circ_params);
         let num_subcircuits = <MerkleTreeCircuit as CircuitWithPortals<Fr>>::num_subcircuits(&circ);
 
-        let stage0_builder = Stage0PackageBuilder::new::<TestParams>(circ);
+        // Make the stage0 coordinator state. The value of the commitment key doesn't really matter
+        // since we don't test aggregation here.
+        let super_com_key = SuperComCommittingKey::<E>::gen(&mut rng, num_subcircuits);
+        let stage0_builder = Stage0PackageBuilder::new::<TestParams>(circ, super_com_key);
         let all_subcircuit_indices = (0..num_subcircuits).collect::<Vec<_>>();
 
         // Worker receives a stage0 package containing all the subtraces it will need for this run.
@@ -443,8 +447,9 @@ mod test {
                 circ.clone(),
             );
 
-        // Coordinator sets up the state
-        let stage0_builder = Stage0PackageBuilder::new::<TestParams>(circ);
+        // Make the stage0 coordinator state
+        let super_com_key = SuperComCommittingKey::<E>::gen(&mut rng, num_subcircuits);
+        let stage0_builder = Stage0PackageBuilder::new::<TestParams>(circ, super_com_key);
         let all_subcircuit_indices = (0..num_subcircuits).collect::<Vec<_>>();
 
         // Workers receives stage0 packages containing the subtraces it will need for this run. We

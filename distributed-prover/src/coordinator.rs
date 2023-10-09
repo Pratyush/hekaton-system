@@ -1,5 +1,5 @@
 use crate::{
-    aggregation::{commit_to_g16_coms, IppCom},
+    aggregation::{commit_to_g16_coms, IppCom, SuperComCommittingKey},
     eval_tree::{
         ExecTreeLeaf, LeafParam, MerkleRoot, SerializedLeaf, SerializedLeafVar, TreeConfig,
         TreeConfigGadget, TwoToOneParam,
@@ -22,6 +22,7 @@ use ark_crypto_primitives::{
 use ark_ec::pairing::Pairing;
 use ark_ff::PrimeField;
 use ark_relations::r1cs::{ConstraintSystem, ConstraintSystemRef};
+use ark_serialize::CanonicalSerialize;
 
 fn get_subtraces<C, F, P>(mut circ: P) -> Vec<VecDeque<RomTranscriptEntry<F>>>
 where
@@ -99,24 +100,31 @@ where
 
 /// Hashes the trace commitment and returns `(entry_chal, tr_chal)`
 /// TODO: Add a lot of context binding here. Don't want a weak fiat shamir
-fn get_chals<F: PrimeField>(com: &IppCom) -> (F, F) {
+fn get_chals<E: Pairing>(com: &IppCom<E>) -> (E::ScalarField, E::ScalarField) {
+    // Serialize the commitment to bytes
+    let com_bytes = {
+        let mut buf = Vec::new();
+        com.serialize_uncompressed(&mut buf).unwrap();
+        buf
+    };
+
     // Generate two challenges by hashing com with two different context strings
     let entry_chal = {
         let mut hasher = Sha256::default();
         hasher.update(b"entry_chal");
-        hasher.update(com);
+        hasher.update(&com_bytes);
         hasher.finalize()
     };
     let tr_chal = {
         let mut hasher = Sha256::default();
         hasher.update(b"tr_chal");
-        hasher.update(com);
+        hasher.update(&com_bytes);
         hasher.finalize()
     };
 
     (
-        F::from_le_bytes_mod_order(&entry_chal),
-        F::from_le_bytes_mod_order(&tr_chal),
+        E::ScalarField::from_le_bytes_mod_order(&entry_chal),
+        E::ScalarField::from_le_bytes_mod_order(&tr_chal),
     )
 }
 
@@ -151,7 +159,7 @@ fn sort_subtraces_by_addr<F: PrimeField>(
 fn generate_exec_tree<E, C>(
     leaf_params: &LeafParam<C>,
     two_to_one_params: &TwoToOneParam<C>,
-    super_com: IppCom,
+    super_com: &IppCom<E>,
     time_ordered_subtraces: &[VecDeque<RomTranscriptEntry<E::ScalarField>>],
     addr_ordered_subtraces: &[VecDeque<RomTranscriptEntry<E::ScalarField>>],
 ) -> (MerkleTree<C>, Vec<ExecTreeLeaf<E::ScalarField>>)
@@ -229,14 +237,16 @@ where
 /// A struct that has all the info necessary to construct a request from server to worker to
 /// perform stage 0 of their subcircuit (i.e., the committing stage). This also includes the
 /// circuit with all witness values filled in.
-pub struct Stage0PackageBuilder<F, P>
+pub struct Stage0PackageBuilder<E, P>
 where
-    F: PrimeField,
-    P: CircuitWithPortals<F>,
+    E: Pairing,
+    P: CircuitWithPortals<E::ScalarField>,
 {
     circ: P,
-    time_ordered_subtraces: Vec<VecDeque<RomTranscriptEntry<F>>>,
-    addr_ordered_subtraces: Vec<VecDeque<RomTranscriptEntry<F>>>,
+    time_ordered_subtraces: Vec<VecDeque<RomTranscriptEntry<E::ScalarField>>>,
+    addr_ordered_subtraces: Vec<VecDeque<RomTranscriptEntry<E::ScalarField>>>,
+    // TODO: speedup: note that super_com_key isn't needed until we actually process the coms
+    super_com_key: SuperComCommittingKey<E>,
 }
 
 /// This is sent to every worker at the beginning of every distributed proof. It contains
@@ -265,24 +275,25 @@ impl<'a, F: PrimeField> Stage0WorkerPackageRef<'a, F> {
     }
 }
 
-impl<F, P> Stage0PackageBuilder<F, P>
+impl<E, P> Stage0PackageBuilder<E, P>
 where
-    F: PrimeField,
-    P: CircuitWithPortals<F> + Clone,
+    E: Pairing,
+    P: CircuitWithPortals<E::ScalarField> + Clone,
 {
-    pub fn new<C: TreeConfig>(circ: P) -> Self {
-        let time_ordered_subtraces = get_subtraces::<C, F, _>(circ.clone());
+    pub fn new<C: TreeConfig>(circ: P, super_com_key: SuperComCommittingKey<E>) -> Self {
+        let time_ordered_subtraces = get_subtraces::<C, E::ScalarField, _>(circ.clone());
         let addr_ordered_subtraces = sort_subtraces_by_addr(&time_ordered_subtraces);
 
         Stage0PackageBuilder {
             circ,
+            super_com_key,
             time_ordered_subtraces,
             addr_ordered_subtraces,
         }
     }
 
     /// Creates a stage0 package and request commitment for the given set of subcircuits
-    pub fn gen_package(&self, subcircuit_idx: usize) -> Stage0WorkerPackageRef<F> {
+    pub fn gen_package(&self, subcircuit_idx: usize) -> Stage0WorkerPackageRef<E::ScalarField> {
         Stage0WorkerPackageRef {
             subcircuit_idx,
             time_ordered_subtrace: self
@@ -299,13 +310,12 @@ where
     }
 
     /// Processes the stage 0 repsonses and move to stage 1
-    pub fn process_stage0_responses<C, E>(
+    pub fn process_stage0_responses<C>(
         self,
         responses: &[Stage0Response<E>],
     ) -> Stage1RequestBuilder<C, E, P>
     where
         C: TreeConfig<Leaf = SerializedLeaf>,
-        E: Pairing<ScalarField = F>,
     {
         let (coms, com_seeds) = {
             // Sort responses by subcircuit idx
@@ -314,13 +324,13 @@ where
 
             // Extract the coms and the seeds separately
             (
-                buf.iter().map(|res| res.com).collect(),
+                buf.iter().map(|res| res.com).collect::<Vec<_>>(),
                 buf.iter().map(|res| res.com_seed).collect(),
             )
         };
 
         // Commit to the commitments
-        let super_com = commit_to_g16_coms::<E, _>(&coms);
+        let super_com = commit_to_g16_coms(&self.super_com_key, &coms);
 
         Stage1RequestBuilder::new(
             self.circ,
@@ -344,7 +354,7 @@ where
     addr_ordered_subtraces: Vec<VecDeque<RomTranscriptEntry<E::ScalarField>>>,
     coms: Vec<G16Com<E>>,
     seeds: Vec<G16ComSeed>,
-    super_com: IppCom,
+    super_com: IppCom<E>,
     leaf_params: LeafParam<C>,
     two_to_one_params: TwoToOneParam<C>,
     tree: MerkleTree<C>,
@@ -363,14 +373,14 @@ where
         addr_ordered_subtraces: Vec<VecDeque<RomTranscriptEntry<E::ScalarField>>>,
         coms: Vec<G16Com<E>>,
         seeds: Vec<G16ComSeed>,
-        super_com: IppCom,
+        super_com: IppCom<E>,
     ) -> Self {
         let (leaf_params, two_to_one_params) = gen_merkle_params::<C>();
 
         let (tree, leaves) = generate_exec_tree::<E, C>(
             &leaf_params,
             &two_to_one_params,
-            super_com,
+            &super_com,
             &time_ordered_subtraces,
             &addr_ordered_subtraces,
         );
