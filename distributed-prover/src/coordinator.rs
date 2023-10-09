@@ -6,6 +6,7 @@ use crate::{
     },
     portal_manager::SetupPortalManager,
     subcircuit_circuit::SubcircuitWithPortalsProver,
+    util::{gen_merkle_params, G16Com, G16ComSeed, G16ProvingKey},
     varname_hasher,
     worker::Stage0Response,
     CircuitWithPortals, RomTranscriptEntry, RunningEvals,
@@ -15,32 +16,12 @@ use std::collections::VecDeque;
 
 use ark_cp_groth16::r1cs_to_qap::LibsnarkReduction as QAP;
 use ark_crypto_primitives::{
-    crh::{
-        sha256::{digest::Digest, Sha256},
-        CRHScheme, TwoToOneCRHScheme,
-    },
+    crh::sha256::{digest::Digest, Sha256},
     merkle_tree::{MerkleTree, Path as MerklePath},
 };
 use ark_ec::pairing::Pairing;
 use ark_ff::PrimeField;
 use ark_relations::r1cs::{ConstraintSystem, ConstraintSystemRef};
-use rand::SeedableRng;
-use rand_chacha::ChaCha12Rng;
-
-const MERKLE_HASH_PARAMS_SEED: &'static [u8; 32] = b"horizontal-snark-hash-param-seed";
-
-pub use ark_cp_groth16::data_structures::{Comm as G16Com, ProvingKey as G16ProvingKey};
-
-pub(crate) fn gen_merkle_params<C>() -> (LeafParam<C>, TwoToOneParam<C>)
-where
-    C: TreeConfig,
-{
-    let mut rng = ChaCha12Rng::from_seed(*MERKLE_HASH_PARAMS_SEED);
-    (
-        <C::LeafHash as CRHScheme>::setup(&mut rng).unwrap(),
-        <C::TwoToOneHash as TwoToOneCRHScheme>::setup(&mut rng).unwrap(),
-    )
-}
 
 fn get_subtraces<C, F, P>(mut circ: P) -> Vec<VecDeque<RomTranscriptEntry<F>>>
 where
@@ -115,10 +96,6 @@ where
         })
         .collect()
 }
-
-/// A seed used for the RNG in stage 0 commitments. Each worker saves this and redoes the
-/// commitment once it's asked to do stage 1
-pub type G16ComSeed = [u8; 32];
 
 /// Hashes the trace commitment and returns `(entry_chal, tr_chal)`
 /// TODO: Add a lot of context binding here. Don't want a weak fiat shamir

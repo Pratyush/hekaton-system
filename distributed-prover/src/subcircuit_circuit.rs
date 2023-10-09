@@ -270,12 +270,10 @@ mod test {
     use super::*;
 
     use crate::{
-        coordinator::{
-            gen_merkle_params, gen_subcircuit_proving_keys, G16Com, G16ComSeed, G16ProvingKey,
-            Stage0PackageBuilder, Stage1Request,
-        },
+        coordinator::{gen_subcircuit_proving_keys, Stage0PackageBuilder, Stage1Request},
         eval_tree::{SerializedLeaf, SerializedLeafVar},
         tree_hash_circuit::*,
+        util::{gen_merkle_params, G16Com, G16ComSeed, G16ProvingKey},
         worker::{process_stage0_request, process_stage1_request, Stage0Response, Stage1Response},
     };
 

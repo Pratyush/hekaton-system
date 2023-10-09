@@ -1,9 +1,8 @@
 use crate::{
-    coordinator::{
-        gen_merkle_params, G16Com, G16ComSeed, G16ProvingKey, Stage0Request, Stage1Request,
-    },
+    coordinator::{Stage0Request, Stage1Request},
     eval_tree::{SerializedLeaf, SerializedLeafVar, TreeConfig, TreeConfigGadget},
     subcircuit_circuit::SubcircuitWithPortalsProver,
+    util::{gen_merkle_params, G16Com, G16ComSeed, G16ProvingKey},
     CircuitWithPortals,
 };
 

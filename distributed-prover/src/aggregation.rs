@@ -1,4 +1,4 @@
-use crate::coordinator::G16Com;
+use crate::util::G16Com;
 
 use core::borrow::Borrow;
 
