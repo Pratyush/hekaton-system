@@ -272,19 +272,15 @@ mod test {
     use crate::{
         eval_tree::{SerializedLeaf, SerializedLeafVar},
         prover::{
-            gen_merkle_params, gen_subcircuit_proving_keys, process_stage0_request,
-            process_stage1_request, G16Com, G16ComSeed, G16ProvingKey, Stage0PackageBuilder,
-            Stage0Request, Stage0Response, Stage0WorkerPackageRef, Stage1Request, Stage1Response,
+            gen_merkle_params, gen_subcircuit_proving_keys, G16Com, G16ComSeed, G16ProvingKey,
+            Stage0PackageBuilder, Stage1Request,
         },
         tree_hash_circuit::*,
+        worker::{process_stage0_request, process_stage1_request, Stage0Response, Stage1Response},
     };
 
     use ark_bls12_381::{Bls12_381 as E, Fr};
-    use ark_cp_groth16::{
-        committer::CommitmentBuilder as G16CommitmentBuilder,
-        r1cs_to_qap::LibsnarkReduction as QAP,
-        verifier::{prepare_verifying_key, verify_proof},
-    };
+    use ark_cp_groth16::verifier::{prepare_verifying_key, verify_proof};
     use ark_crypto_primitives::{
         crh::{
             bowe_hopwood,
@@ -299,8 +295,6 @@ mod test {
     use ark_ed_on_bls12_381::{constraints::FqVar, JubjubConfig};
     use ark_ff::{ToConstraintField, UniformRand};
     use ark_std::test_rng;
-    use rand::SeedableRng;
-    use rand_chacha::ChaCha12Rng;
 
     #[derive(Clone, PartialEq, Eq, Hash)]
     struct LeafWindow;

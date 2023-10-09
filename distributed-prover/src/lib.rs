@@ -22,6 +22,7 @@ mod prover;
 mod subcircuit_circuit;
 mod tree_hash_circuit;
 mod util;
+mod worker;
 
 use portal_manager::PortalManager;
 
