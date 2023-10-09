@@ -270,7 +270,7 @@ mod test {
     use super::*;
 
     use crate::{
-        aggregation::SuperComCommittingKey,
+        aggregation::{AggProvingKey, SuperComCommittingKey},
         coordinator::{gen_subcircuit_proving_keys, CoordinatorStage0State, Stage1Request},
         eval_tree::{SerializedLeaf, SerializedLeafVar},
         tree_hash_circuit::*,
@@ -354,7 +354,7 @@ mod test {
         // Make the stage0 coordinator state. The value of the commitment key doesn't really matter
         // since we don't test aggregation here.
         let super_com_key = SuperComCommittingKey::<E>::gen(&mut rng, num_subcircuits);
-        let stage0_builder = CoordinatorStage0State::new::<TestParams>(circ, super_com_key);
+        let stage0_state = CoordinatorStage0State::new::<TestParams>(circ, super_com_key);
         let all_subcircuit_indices = (0..num_subcircuits).collect::<Vec<_>>();
 
         // Worker receives a stage0 package containing all the subtraces it will need for this run.
@@ -362,7 +362,7 @@ mod test {
         // this for later use in stage 1
         let stage0_reqs = all_subcircuit_indices
             .iter()
-            .map(|idx| stage0_builder.gen_package(*idx).to_owned())
+            .map(|idx| stage0_state.gen_package(*idx).to_owned())
             .collect::<Vec<_>>();
 
         // Make fake stage0 responses that cover all the subcircuits and has random commitments
@@ -375,13 +375,13 @@ mod test {
             })
             .collect::<Vec<_>>();
 
-        // Move on to stage 1
-        let stage1_builder = stage0_builder.process_stage0_responses(&fake_stage0_resps);
+        // Move on to stage 1. Make the coordinator state
+        let stage1_state = stage0_state.process_stage0_responses(&fake_stage0_resps);
 
         // Compute the values needed to prove stage1 for all subcircuits
         let stage1_reqs = all_subcircuit_indices
             .iter()
-            .map(|idx| stage1_builder.gen_request(*idx))
+            .map(|idx| stage1_state.gen_request(*idx))
             .collect::<Vec<_>>();
 
         // Now for every subcircuit, instantiate a subcircuit prover and check that its constraints
@@ -435,7 +435,7 @@ mod test {
         let (leaf_params, two_to_one_params) = gen_merkle_params::<TestParams>();
 
         // Make a random Merkle tree
-        let circ_params = MerkleTreeCircuitParams { num_leaves: 4 };
+        let circ_params = MerkleTreeCircuitParams { num_leaves: 2 };
         let circ = MerkleTreeCircuit::rand(&mut rng, &circ_params);
         let num_subcircuits = <MerkleTreeCircuit as CircuitWithPortals<Fr>>::num_subcircuits(&circ);
 
@@ -449,14 +449,14 @@ mod test {
 
         // Make the stage0 coordinator state
         let super_com_key = SuperComCommittingKey::<E>::gen(&mut rng, num_subcircuits);
-        let stage0_builder = CoordinatorStage0State::new::<TestParams>(circ, super_com_key);
+        let stage0_state = CoordinatorStage0State::new::<TestParams>(circ, super_com_key.clone());
         let all_subcircuit_indices = (0..num_subcircuits).collect::<Vec<_>>();
 
         // Workers receives stage0 packages containing the subtraces it will need for this run. We
         // imagine the worker saves their package to disk.
         let stage0_reqs = all_subcircuit_indices
             .iter()
-            .map(|idx| stage0_builder.gen_package(*idx).to_owned())
+            .map(|idx| stage0_state.gen_package(*idx).to_owned())
             .collect::<Vec<_>>();
 
         // Make stage0 responses wrt the real proving keys. This contains all the commitments
@@ -472,45 +472,61 @@ mod test {
             })
             .collect::<Vec<_>>();
 
-        // Move on to stage 1
-        let stage1_builder = stage0_builder.process_stage0_responses(&stage0_resps);
+        // Move on to stage 1. Make the coordinator state
+        let stage1_state = stage0_state.process_stage0_responses(&stage0_resps);
 
         // Compute the values needed to prove stage1 for all subcircuits
         let stage1_reqs: Vec<Stage1Request<TestParams, _, _>> = all_subcircuit_indices
             .iter()
-            .map(|idx| stage1_builder.gen_request(*idx).to_owned())
+            .map(|idx| stage1_state.gen_request(*idx).to_owned())
             .collect();
 
-        // Now compute all the proofs and check them
-        for (((stage0_req, stage0_resp), stage1_req), pk) in stage0_reqs
-            .into_iter()
-            .zip(stage0_resps.into_iter())
-            .zip(stage1_reqs.into_iter())
-            .zip(proving_keys.into_iter())
-        {
-            // Save these value for verification later
-            let (entry_chal, tr_chal) = stage1_req.cur_leaf.evals.challenges.unwrap().clone();
-            let root = stage1_req.root.clone();
-
-            // Compute the proof
-            let Stage1Response { proof, .. } = process_stage1_request::<_, TestParamsVar, _, _, _>(
-                &mut rng,
-                &pk,
-                stage0_req,
-                stage0_resp,
-                stage1_req,
-            );
-
-            // Verify
-
-            let pvk = prepare_verifying_key(&pk.vk());
-            let inputs = [
+        // The public inputs are the same 3 field elements for every circuit: entry_chal, tr_chal,
+        // and the Merkle root
+        let public_inputs = {
+            let (entry_chal, tr_chal) = stage1_reqs[0].cur_leaf.evals.challenges.unwrap().clone();
+            let root = stage1_reqs[0].root.clone();
+            [
                 entry_chal.to_field_elements().unwrap(),
                 tr_chal.to_field_elements().unwrap(),
                 root.to_field_elements().unwrap(),
             ]
-            .concat();
-            assert!(verify_proof(&pvk, &proof, &inputs).unwrap());
-        }
+            .concat()
+        };
+
+        // Now compute all the proofs, check them, and collect them for aggregation
+        let proofs = stage0_reqs
+            .into_iter()
+            .zip(stage0_resps.into_iter())
+            .zip(stage1_reqs.into_iter())
+            .zip(proving_keys.iter())
+            .map(|(((stage0_req, stage0_resp), stage1_req), pk)| {
+                // Compute the proof
+                let Stage1Response { proof, .. } =
+                    process_stage1_request::<_, TestParamsVar, _, _, _>(
+                        &mut rng,
+                        &pk,
+                        stage0_req,
+                        stage0_resp,
+                        stage1_req,
+                    );
+
+                // Verify
+
+                let pvk = prepare_verifying_key(&pk.vk());
+                assert!(verify_proof(&pvk, &proof, &public_inputs).unwrap());
+
+                proof
+            })
+            .collect::<Vec<_>>();
+
+        let agg_ck = AggProvingKey::new(super_com_key, &proving_keys);
+        let super_com = &stage1_state.super_com;
+        agg_ck.agg_subcircuit_proofs(
+            &mut crate::util::ProtoTranscript::new(b"test-e2e"),
+            super_com,
+            &proofs,
+            &public_inputs,
+        );
     }
 }

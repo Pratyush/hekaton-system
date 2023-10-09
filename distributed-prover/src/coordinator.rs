@@ -1,5 +1,5 @@
 use crate::{
-    aggregation::{commit_to_g16_coms, IppCom, SuperComCommittingKey},
+    aggregation::{IppCom, SuperComCommittingKey},
     eval_tree::{
         ExecTreeLeaf, LeafParam, MerkleRoot, SerializedLeaf, SerializedLeafVar, TreeConfig,
         TreeConfigGadget, TwoToOneParam,
@@ -370,8 +370,9 @@ where
             )
         };
 
-        // Commit to the commitments
-        let super_com = commit_to_g16_coms(&self.super_com_key, &coms);
+        // Commit to the commitments. These are in G1, so it's a "left" commitment. Don't worry
+        // about what that means
+        let super_com = self.super_com_key.commit_left(&coms);
 
         CoordinatorStage1State::new(
             self.time_ordered_subtraces,
@@ -405,7 +406,7 @@ where
     /// The associated seeds for the randomness to the above commitments
     seeds: Vec<G16ComSeed>,
     /// The inner-pairing commitment to the above commitments
-    super_com: IppCom<E>,
+    pub super_com: IppCom<E>,
     // We can't store the exec tree directly because it's not CanonicalSerialize :shrug:
     /// The list of execution leaves. Index i contains the ith leaf in the exec tree.
     exec_tree_leaves: Vec<ExecTreeLeaf<E::ScalarField>>,
