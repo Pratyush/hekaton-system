@@ -11,6 +11,7 @@ use ark_relations::{
     ns,
     r1cs::{ConstraintSystemRef, Namespace, SynthesisError},
 };
+use ark_serialize::CanonicalSerialize;
 use xxhash_rust::xxh3::xxh3_128;
 
 mod eval_tree;
@@ -206,7 +207,7 @@ impl<F: PrimeField> AllocVar<RunningEvals<F>, F> for RunningEvalsVar<F> {
 }
 
 /// An entry in the transcript of portal wire reads
-#[derive(Clone, Default, Debug, PartialEq, Eq)]
+#[derive(Clone, Default, Debug, PartialEq, Eq, CanonicalSerialize)]
 pub struct RomTranscriptEntry<F: PrimeField> {
     name: String,
     val: F,

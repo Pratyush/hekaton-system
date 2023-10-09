@@ -24,7 +24,10 @@ use ark_crypto_primitives::{
 use ark_ec::pairing::Pairing;
 use ark_ff::PrimeField;
 use ark_relations::r1cs::{ConstraintSystem, ConstraintSystemRef};
-use ark_serialize::CanonicalSerialize;
+use ark_serialize::{
+    CanonicalDeserialize, CanonicalSerialize, Compress, Read as ArkRead, SerializationError,
+    Write as ArkWrite,
+};
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha12Rng;
 
@@ -139,7 +142,7 @@ pub type G16ComSeed = [u8; 32];
 // TODO: This will be outsourced to worker nodes
 pub(crate) fn compute_stage0_response<E, P, C, CG>(
     stage0_request: Stage0WorkerPackage<E::ScalarField>,
-    pk_fetcher: impl Fn(usize) -> G16ProvingKey<E>,
+    pk: &G16ProvingKey<E>,
     leaf_params: &LeafParam<C>,
     two_to_one_params: &TwoToOneParam<C>,
 ) -> Stage0Response<E>
@@ -152,61 +155,46 @@ where
     let mut rng = rand::thread_rng();
 
     let Stage0WorkerPackage {
-        subcircuit_idxs,
-        time_ordered_subtraces,
-        addr_ordered_subtraces,
+        subcircuit_idx,
+        time_ordered_subtrace,
+        addr_ordered_subtrace,
         ..
     } = stage0_request;
 
-    // Build the response by committing to each individual subcircuit
-    let mut resp = Stage0Response {
-        subcircuit_idxs: subcircuit_idxs.clone(),
-        coms: Vec::new(),
-        seeds: Vec::new(),
-    };
+    // Commit to their stage 0 inputs (ie the subtraces), and save the commitments and RNG seeds
 
-    for ((subcircuit_idx, time_st), addr_st) in subcircuit_idxs
-        .into_iter()
-        .zip(time_ordered_subtraces.into_iter())
-        .zip(addr_ordered_subtraces.into_iter())
-    {
-        let pk = pk_fetcher(subcircuit_idx);
+    // Make an empty prover
+    // The number of subcircuits dictates the size of the Merkle tree. This is irrelevant
+    // here because we're only running stage 0 of the circuit, which involves no tree ops.
+    // Make it 2 so that we don't get underflow by accident
+    let num_subcircuits = 2;
+    // TODO: Make this circuit take refs. Avoid the cloning
+    let mut prover = SubcircuitWithPortalsProver::<_, P, _, CG>::new(
+        leaf_params.clone(),
+        two_to_one_params.clone(),
+        num_subcircuits,
+    );
 
-        // Commit to their stage 0 inputs (ie the subtraces), and save the commitments and RNG seeds
+    // Fill in the correct subcircuit index and subtrace data
+    prover.subcircuit_idx = subcircuit_idx;
+    prover.time_ordered_subtrace = time_ordered_subtrace;
+    prover.addr_ordered_subtrace = addr_ordered_subtrace;
 
-        // Make an empty prover
-        // The number of subcircuits dictates the size of the Merkle tree. This is irrelevant
-        // here because we're only running stage 0 of the circuit, which involves no tree ops.
-        // Make it 2 so that we don't get underflow by accident
-        let num_subcircuits = 2;
-        // TODO: Make this circuit take refs. Avoid the cloning
-        let mut prover = SubcircuitWithPortalsProver::<_, P, _, CG>::new(
-            leaf_params.clone(),
-            two_to_one_params.clone(),
-            num_subcircuits,
-        );
+    // Create a seed and make an RNG from it
+    let com_seed = rng.gen::<G16ComSeed>();
+    let mut subcircuit_rng = ChaCha12Rng::from_seed(com_seed);
 
-        // Fill in the correct subcircuit index and subtrace data
-        prover.subcircuit_idx = subcircuit_idx;
-        prover.time_ordered_subtrace = time_st;
-        prover.addr_ordered_subtrace = addr_st;
+    // Commit to the stage 0 values (the subtraces)
+    let mut cb = G16CommitmentBuilder::<_, E, QAP>::new(prover, &pk);
+    let (com, _) = cb
+        .commit(&mut subcircuit_rng)
+        .expect("failed to commit to subtrace");
 
-        // Create a seed and make an RNG from it
-        let com_seed = rng.gen::<G16ComSeed>();
-        let mut subcircuit_rng = ChaCha12Rng::from_seed(com_seed);
-
-        // Commit to the stage 0 values (the subtraces)
-        let mut cb = G16CommitmentBuilder::<_, E, QAP>::new(prover, &pk);
-        let (com, _) = cb
-            .commit(&mut subcircuit_rng)
-            .expect("failed to commit to subtrace");
-
-        // Record the values
-        resp.coms.push(com);
-        resp.seeds.push(com_seed);
+    Stage0Response {
+        subcircuit_idx,
+        com,
+        com_seed,
     }
-
-    resp
 }
 
 /// Hashes the trace commitment and returns `(entry_chal, tr_chal)`
@@ -364,32 +352,36 @@ where
 /// also requests some stage0 commitments from the worker.
 #[derive(Clone)]
 pub struct Stage0WorkerPackage<F: PrimeField> {
-    // The subcircuits that the coordinator is asking for commitments on. The i-th element of each
-    // subsequent vector in this struct corresponds to the subcircuit given by subcircuits[i]
-    pub(crate) subcircuit_idxs: Vec<usize>,
-    pub(crate) time_ordered_subtraces: Vec<VecDeque<RomTranscriptEntry<F>>>,
-    pub(crate) addr_ordered_subtraces: Vec<VecDeque<RomTranscriptEntry<F>>>,
-    pub(crate) serialized_witnesses: Vec<Vec<u8>>,
+    pub(crate) subcircuit_idx: usize,
+    pub(crate) time_ordered_subtrace: VecDeque<RomTranscriptEntry<F>>,
+    pub(crate) addr_ordered_subtrace: VecDeque<RomTranscriptEntry<F>>,
+    pub(crate) serialized_witnesses: Vec<u8>,
 }
 
-pub struct Stage0WorkerPackageRef<'a, F, IR, IU>
-where
-    F: PrimeField,
-    IR: Iterator<Item = &'a RomTranscriptEntry<F>>,
-    IU: Iterator<Item = usize>,
-{
-    subcircuit_idxs: IU,
-    time_ordered_subtraces: &'a [IR],
-    addr_ordered_subtraces: &'a [IR],
-    pub(crate) serialized_witnesses: &'a [Vec<u8>],
+pub struct Stage0WorkerPackageRef<'a, F: PrimeField> {
+    subcircuit_idx: usize,
+    pub time_ordered_subtrace: &'a VecDeque<RomTranscriptEntry<F>>,
+    pub addr_ordered_subtrace: &'a VecDeque<RomTranscriptEntry<F>>,
+    pub(crate) serialized_witnesses: Vec<u8>,
+}
+
+impl<'a, F: PrimeField> Stage0WorkerPackageRef<'a, F> {
+    pub fn to_owned(&self) -> Stage0WorkerPackage<F> {
+        Stage0WorkerPackage {
+            subcircuit_idx: self.subcircuit_idx,
+            time_ordered_subtrace: self.time_ordered_subtrace.clone(),
+            addr_ordered_subtrace: self.addr_ordered_subtrace.clone(),
+            serialized_witnesses: self.serialized_witnesses.to_vec(),
+        }
+    }
 }
 
 /// The repsonse is the Groth16 commitments and seeds for all the requested subcircuits
 #[derive(Clone)]
 pub struct Stage0Response<E: Pairing> {
-    pub(crate) subcircuit_idxs: Vec<usize>,
-    pub(crate) coms: Vec<G16Com<E>>,
-    pub(crate) seeds: Vec<G16ComSeed>,
+    pub(crate) subcircuit_idx: usize,
+    pub(crate) com: G16Com<E>,
+    pub(crate) com_seed: G16ComSeed,
 }
 
 impl<F, P> Stage0PackageBuilder<F, P>
@@ -409,25 +401,20 @@ where
     }
 
     /// Creates a stage0 package and request commitment for the given set of subcircuits
-    pub fn gen_package(&self, subcircuit_idxs: &[usize]) -> Stage0WorkerPackage<F> {
-        let time_ordered_subtraces = subcircuit_idxs
-            .into_iter()
-            .map(|i| self.time_ordered_subtraces.get(*i).unwrap().clone())
-            .collect();
-        let addr_ordered_subtraces = subcircuit_idxs
-            .into_iter()
-            .map(|i| self.addr_ordered_subtraces.get(*i).unwrap().clone())
-            .collect();
-        let serialized_witnesses = subcircuit_idxs
-            .into_iter()
-            .map(|i| self.circ.get_serialized_witnesses(*i))
-            .collect();
-
-        Stage0WorkerPackage {
-            subcircuit_idxs: subcircuit_idxs.to_vec(),
-            time_ordered_subtraces,
-            addr_ordered_subtraces,
-            serialized_witnesses,
+    pub fn gen_package(&self, subcircuit_idx: usize) -> Stage0WorkerPackageRef<F> {
+        Stage0WorkerPackageRef {
+            subcircuit_idx,
+            time_ordered_subtrace: self
+                .time_ordered_subtraces
+                .get(subcircuit_idx)
+                .as_ref()
+                .unwrap(),
+            addr_ordered_subtrace: self
+                .addr_ordered_subtraces
+                .get(subcircuit_idx)
+                .as_ref()
+                .unwrap(),
+            serialized_witnesses: self.circ.get_serialized_witnesses(subcircuit_idx),
         }
     }
 
@@ -440,33 +427,26 @@ where
         C: TreeConfig<Leaf = SerializedLeaf>,
         E: Pairing<ScalarField = F>,
     {
-        let (coms, seeds) = {
-            // Flatten the responses and sort by subcircuit idx
-            let mut buf: Vec<_> = responses
-                .iter()
-                .flat_map(|res| {
-                    res.subcircuit_idxs
-                        .iter()
-                        .zip(res.coms.iter())
-                        .zip(res.seeds.iter())
-                })
-                .collect();
-            buf.sort_by_key(|((idx, _), _)| *idx);
+        let (coms, com_seeds) = {
+            // Sort responses by subcircuit idx
+            let mut buf = responses.to_vec();
+            buf.sort_by_key(|res| res.subcircuit_idx);
 
             // Extract the coms and the seeds separately
             (
-                buf.iter().map(|((_, com), _)| **com).collect(),
-                buf.iter().map(|((_, _), seed)| **seed).collect(),
+                buf.iter().map(|res| res.com).collect(),
+                buf.iter().map(|res| res.com_seed).collect(),
             )
         };
 
+        // Commit to the commitments
         let super_com = commit_to_g16_coms::<E, _>(&coms);
 
         Stage1RequestBuilder::new(
             self.time_ordered_subtraces,
             self.addr_ordered_subtraces,
             coms,
-            seeds,
+            com_seeds,
             super_com,
         )
     }
