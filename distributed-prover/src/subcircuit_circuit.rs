@@ -23,6 +23,7 @@ use ark_r1cs_std::{
     fields::{fp::FpVar, FieldVar},
 };
 use ark_relations::{ns, r1cs::SynthesisError};
+use ark_std::{end_timer, start_timer};
 
 // A ZK circuit that takes a CircuitWithPortals and proves just 1 subcircuit
 pub(crate) struct SubcircuitWithPortalsProver<F, P, C, CG>
@@ -520,14 +521,19 @@ mod test {
             })
             .collect::<Vec<_>>();
 
+        // Do aggregation. Make up whatever keys are necessary
         let kzg_ck = crate::kzg::KzgComKey::gen(&mut rng, num_subcircuits);
         let agg_ck = AggProvingKey::new(super_com_key, kzg_ck, &proving_keys);
         let super_com = &stage1_state.super_com;
+
+        // Compute the aggregate proof
         agg_ck.agg_subcircuit_proofs(
             &mut crate::util::ProtoTranscript::new(b"test-e2e"),
             super_com,
             &proofs,
             &public_inputs,
         );
+
+        // TODO: Check verification
     }
 }

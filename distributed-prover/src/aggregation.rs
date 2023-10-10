@@ -19,6 +19,7 @@ use ark_ec::{
 use ark_ff::{Field, PrimeField, UniformRand};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::One;
+use ark_std::{end_timer, start_timer};
 use rand::RngCore;
 use rayon::prelude::*;
 
@@ -308,6 +309,8 @@ impl<E: Pairing> AggProvingKey<E> {
         proofs: &[G16Proof<E>],
         pub_inputs: &[E::ScalarField],
     ) -> AggProof<E> {
+        let start = start_timer!(|| format!("Aggregating {} proofs", proofs.len()));
+
         assert_eq!(
             pub_inputs.len(),
             3,
@@ -351,7 +354,7 @@ impl<E: Pairing> AggProvingKey<E> {
 
         // Sanity check. Does the first proof validate?
         for i in 0..num_proofs {
-            assert_eq!(
+            debug_assert_eq!(
                 E::pairing(&a_vals[i], &b_vals[i]),
                 E::pairing(&self.alpha[i], &self.beta[i])
                     + E::pairing(&prepared_input[i], &self.h[i])
@@ -422,7 +425,7 @@ impl<E: Pairing> AggProvingKey<E> {
         let z_sh = cross_terms[1][1];
         let z_ddelta0 = cross_terms[2][2];
         let z_cdelta1 = cross_terms[3][3];
-        assert_eq!(
+        debug_assert_eq!(
             z_ab,
             pairing::<E>(&alpha_r, &self.beta) + z_sh + z_ddelta0 + z_cdelta1
         );
@@ -516,8 +519,10 @@ impl<E: Pairing> AggProvingKey<E> {
         // Check that verify_tipp gets all the same challenges
         let (_, _, verif_challenges, verif_challenges_inv) =
             verify_tipp(&mut pt_fork, &tipp_proof, r, com_ab, z_lr);
-        assert_eq!(challenges, verif_challenges);
-        assert_eq!(challenges_inv, verif_challenges_inv);
+        debug_assert_eq!(challenges, verif_challenges);
+        debug_assert_eq!(challenges_inv, verif_challenges_inv);
+
+        end_timer!(start);
 
         AggProof {
             tipp_proof,
@@ -723,7 +728,6 @@ fn verify_tipp<E: Pairing>(
     Vec<E::ScalarField>,
     Vec<E::ScalarField>,
 ) {
-    println!("gipa verify TIPP");
     // COM(A,B) = PROD e(A,B) given by prover
     let comms_lr_ab = &proof.comms_lr_ab;
     // Z vectors coming from the GIPA proofs
