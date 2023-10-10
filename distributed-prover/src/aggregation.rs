@@ -565,6 +565,9 @@ impl<E: Pairing> AggProvingKey<E> {
         // Take the product of the left and right sides
         let z_lr = pairing::<E>(&left, &right);
 
+        let (tipp_proof, challenges, challenges_inv) =
+            prove_tipp(self.ck.clone(), r_s, left, right, z_lr, pt);
+
         todo!()
     }
 }
@@ -587,4 +590,221 @@ impl<E: Pairing> IppComKey<E> {
 
         SuperComCommittingKey { v1, v2, w1, w2 }
     }
+}
+
+/// gipa_tipp_mipp peforms the recursion of the GIPA protocol for TIPP and MIPP.
+/// It returns a proof containing all intermdiate committed values, as well as
+/// the challenges generated necessary to do the polynomial commitment proof
+/// later in TIPP.
+fn prove_tipp<E: Pairing>(
+    ck: IppComKey<E>,
+    mut r: Vec<E::ScalarField>,
+    mut a: Vec<E::G1Affine>,
+    mut b: Vec<E::G2Affine>,
+    agg_ab: PairingOutput<E>,
+    transcript: &mut ProtoTranscript,
+) -> (TippProof<E>, Vec<E::ScalarField>, Vec<E::ScalarField>) {
+    // storing the values for including in the proof
+    let mut vkey = (ck.v1, ck.v2);
+    let mut wkey = (ck.w1, ck.w2);
+    let mut comms_ab = Vec::new();
+    let mut z_ab = Vec::new();
+
+    let mut challenges: Vec<E::ScalarField> = Vec::new();
+    let mut challenges_inv: Vec<E::ScalarField> = Vec::new();
+
+    transcript.append_serializable(b"Aggregated AB", &agg_ab);
+    let mut delta_inv: E::ScalarField =
+        transcript.challenge_scalar::<E::ScalarField>(b"first-challenge");
+    let mut delta = delta_inv.inverse().unwrap();
+
+    let mut i = 0;
+
+    while a.len() > 1 {
+        // recursive step
+        // Recurse with problem of half size
+        let split = a.len() / 2;
+
+        // TIPP ///
+        let (a_left, a_right) = a.split_at_mut(split);
+        let (b_left, b_right) = b.split_at_mut(split);
+        // r[:n']   r[:n']
+        let (r_left, r_right) = r.split_at_mut(split);
+
+        let [vk_left, vk_right] = split_key(vkey);
+        let [wk_left, wk_right] = split_key(wkey);
+
+        // since we do this in parallel we take reference first so it can be
+        // moved within the macro's rayon scope.
+        let (rvk_left, rvk_right) = (&vk_left, &vk_right);
+        let (rwk_left, rwk_right) = (&wk_left, &wk_right);
+        let (ra_left, ra_right) = (&a_left, &a_right);
+        let (rb_left, rb_right) = (&b_left, &b_right);
+
+        // TODO: remove these clones
+        let ck_lr = IppComKey {
+            v1: rvk_left.0.clone(),
+            v2: rvk_left.1.clone(),
+            w1: rwk_right.0.clone(),
+            w2: rwk_right.1.clone(),
+        };
+        let ck_rl = IppComKey {
+            v1: rvk_right.0.clone(),
+            v2: rvk_right.1.clone(),
+            w1: rwk_left.0.clone(),
+            w2: rwk_left.1.clone(),
+        };
+
+        // See section 3.3 for paper version with equivalent names
+        par! {
+            /********************************************************/
+            // Compute left and right inner products:
+            //
+            // For TIPP (i.e. A and B):
+            // \prod e(A_right,B_left)
+            let l_ab = pairing::<E>(&ra_right, &rb_left),
+            let r_ab = pairing::<E>(&ra_left, &rb_right),
+
+            // Compute left cross commitments
+            //
+            // For TIPP:
+            let cm_l_ab = ck_lr.commit_ambi(&ra_right, &rb_left),
+
+            // Compute right cross commitments
+            //
+            // For TIPP:
+            // T_ab_r = e(A_left,B_right)
+            let cm_r_ab = ck_rl.commit_ambi(&ra_left, &rb_right)
+        };
+
+        // Fiat-Shamir challenge
+        // combine both TIPP and MIPP transcript
+        if i == 0 {
+            // already generated c_inv and c outside of the loop
+        } else {
+            transcript.append_serializable(b"delta_inv", &delta_inv);
+            transcript.append_serializable(b"L_AB", &l_ab);
+            transcript.append_serializable(b"R_AB", &r_ab);
+            transcript.append_serializable(b"cm_L_AB", &cm_l_ab);
+            transcript.append_serializable(b"cm_R_AB", &cm_r_ab);
+            delta_inv = transcript.challenge_scalar::<E::ScalarField>(b"delta_inv_i");
+
+            // Optimization for multiexponentiation to rescale G2 elements with
+            // 128-bit challenge Swap 'c' and 'c_inv' since can't control bit size
+            // of c_inv
+            delta = delta_inv.inverse().unwrap();
+        }
+
+        // Set up values for next step of recursion
+        // A[:n'] + delta * A[n':]
+        fold_vec(&mut a, delta);
+        // B[:n'] + delta_inv * B[n':]
+        fold_vec(&mut b, delta_inv);
+
+        // Collapse randomness
+        r_left
+            .par_iter_mut()
+            .zip(r_right.par_iter_mut())
+            .for_each(|(left, right)| {
+                // r[:n'] + delta_inv * r[n':]
+                *right *= &delta_inv;
+                *left += right;
+            });
+        let len = r_left.len();
+        r.resize(len, E::ScalarField::ZERO); // shrink to new size
+
+        // Compress commitment keys:
+        // v_left + v_right^x^-1
+        vkey = fold_ck(&vk_left, &vk_right, delta_inv);
+
+        // w_left + w_right^x
+        wkey = fold_ck(&wk_left, &wk_right, delta);
+
+        comms_ab.push((cm_l_ab, cm_r_ab));
+        z_ab.push((l_ab, r_ab));
+        challenges.push(delta);
+        challenges_inv.push(delta_inv);
+
+        i += 1;
+    }
+
+    assert!(a.len() == 1 && b.len() == 1);
+    assert!(vkey.0.len() == 1 && vkey.1.len() == 1);
+    assert!(wkey.0.len() == 1 && wkey.1.len() == 1);
+
+    let (final_a, final_b) = (a[0], b[0]);
+    let final_vkey = (vkey.0[0], vkey.1[0]);
+    let final_wkey = (wkey.0[0], wkey.1[0]);
+
+    (
+        TippProof {
+            num_proofs: a.len().try_into().unwrap(), // TODO: ensure u32
+            comms_lr_ab: comms_ab,
+            lr_ab: z_ab,
+            final_a,
+            final_b,
+            final_vkey,
+            final_wkey,
+        },
+        challenges,
+        challenges_inv,
+    )
+}
+
+#[derive(Debug, Clone)]
+pub struct TippProof<E: Pairing> {
+    pub num_proofs: u32,
+    pub comms_lr_ab: Vec<(IppCom<E>, IppCom<E>)>,
+    pub lr_ab: Vec<(PairingOutput<E>, PairingOutput<E>)>,
+    pub final_a: E::G1Affine,
+    pub final_b: E::G2Affine,
+    /// final commitment keys $v$ and $w$ - there is only one element at the
+    /// end for v1 and v2 hence it's a tuple.
+    pub final_vkey: (E::G2Affine, E::G2Affine),
+    pub final_wkey: (E::G1Affine, E::G1Affine),
+}
+
+/// Splits a key in half and returns the left and right commitment key parts
+pub fn split_key<G: AffineRepr>(key: (Vec<G>, Vec<G>)) -> [(Vec<G>, Vec<G>); 2] {
+    let (mut a, mut b) = key;
+    let split = a.len() / 2;
+
+    let a_right = a.split_off(split);
+    let b_right = b.split_off(split);
+    [(a, b), (a_right, b_right)]
+}
+
+/// Folds a vector in half with a scalar mul. If `vec = [v || w]` then this outputs `u` such that
+/// `uᵢ = vᵢ + scalar * wᵢ`
+pub(crate) fn fold_vec<C: AffineRepr>(vec: &mut Vec<C>, scalar: C::ScalarField) {
+    let split = vec.len() / 2;
+
+    let (left, right) = vec.split_at(split);
+    let left_group = left
+        .into_par_iter()
+        .zip(right)
+        .map(|(&l, &r)| l + r * scalar)
+        .collect::<Vec<_>>();
+    assert_eq!(left_group.len(), left.len());
+    *vec = C::Group::normalize_batch(&left_group);
+}
+
+pub fn fold_ck<G: AffineRepr>(
+    left: &(Vec<G>, Vec<G>),
+    right: &(Vec<G>, Vec<G>),
+    scale: G::ScalarField,
+) -> (Vec<G>, Vec<G>) {
+    assert_eq!(left.0.len(), right.0.len());
+
+    let (a, b): (Vec<G::Group>, Vec<G::Group>) = left
+        .0
+        .par_iter()
+        .zip(left.1.par_iter())
+        .zip(right.0.par_iter().zip(right.1.par_iter()))
+        .map(|((l_a, l_b), (r_a, r_b))| (*r_a * scale + l_a, *r_b * scale + l_b))
+        .unzip();
+    let a = G::Group::normalize_batch(&a);
+    let b = G::Group::normalize_batch(&b);
+
+    (a, b)
 }
