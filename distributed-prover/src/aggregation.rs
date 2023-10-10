@@ -186,9 +186,17 @@ pub struct IppComKey<E: Pairing> {
     w2: Vec<E::G1Affine>,
 }
 
+#[derive(Clone, Debug, Default, CanonicalSerialize)]
+pub struct IppComKeyRef<'a, E: Pairing> {
+    v1: &'a [E::G2Affine],
+    v2: &'a [E::G2Affine],
+    w1: &'a [E::G1Affine],
+    w2: &'a [E::G1Affine],
+}
+
 pub type SuperComCommittingKey<E> = IppComKey<E>;
 
-impl<E: Pairing> IppComKey<E> {
+impl<'a, E: Pairing> IppComKeyRef<'a, E> {
     /// Computes a commitment to `left_inputs`. This is the `CM_1` procedure.
     pub(crate) fn commit_left(&self, left_inputs: &[E::G1Affine]) -> IppCom<E> {
         par! {
@@ -226,6 +234,36 @@ impl<E: Pairing> IppComKey<E> {
             t: t1 + t2,
             u: u1 + u2,
         }
+    }
+}
+
+impl<E: Pairing> IppComKey<E> {
+    fn as_ref(&self) -> IppComKeyRef<E> {
+        IppComKeyRef {
+            v1: self.v1.as_slice(),
+            v2: self.v2.as_slice(),
+            w1: self.w1.as_slice(),
+            w2: self.w2.as_slice(),
+        }
+    }
+
+    /// Computes a commitment to `left_inputs`. This is the `CM_1` procedure.
+    pub(crate) fn commit_left(&self, left_inputs: &[E::G1Affine]) -> IppCom<E> {
+        self.as_ref().commit_left(left_inputs)
+    }
+
+    /// Computes a commitment to `right_inputs`. This is the `CM_2` procedure.
+    pub(crate) fn commit_right(&self, right_inputs: &[E::G2Affine]) -> IppCom<E> {
+        self.as_ref().commit_right(right_inputs)
+    }
+
+    /// Computes a commitment to `left_inputs` and `right_inputs`. This is the `CM_D` procedure
+    pub fn commit_ambi(
+        &self,
+        left_inputs: &[E::G1Affine],
+        right_inputs: &[E::G2Affine],
+    ) -> IppCom<E> {
+        self.as_ref().commit_ambi(left_inputs, right_inputs)
     }
 
     /// Makes a committing key with new `v1` and `v2` such that `vi' = vi^si`
@@ -497,12 +535,11 @@ impl<E: Pairing> AggProvingKey<E> {
             })
             .collect::<Vec<_>>();
 
-        // Check the prover relation still holds
+        // Check that the pairing product equation holds with the r coeffs
         let z_ab = cross_terms[0][0];
         let z_sh = cross_terms[1][1];
         let z_ddelta0 = cross_terms[2][2];
         let z_cdelta1 = cross_terms[3][3];
-        // Check that the pairing product equation holds with the r coeffs
         assert_eq!(
             z_ab,
             pairing::<E>(&alpha_r, &self.beta) + z_sh + z_ddelta0 + z_cdelta1
@@ -642,17 +679,17 @@ fn prove_tipp<E: Pairing>(
         let (rb_left, rb_right) = (&b_left, &b_right);
 
         // TODO: remove these clones
-        let ck_lr = IppComKey {
-            v1: rvk_left.0.clone(),
-            v2: rvk_left.1.clone(),
-            w1: rwk_right.0.clone(),
-            w2: rwk_right.1.clone(),
+        let ck_lr = IppComKeyRef {
+            v1: &rvk_left.0,
+            v2: &rvk_left.1,
+            w1: &rwk_right.0,
+            w2: &rwk_right.1,
         };
-        let ck_rl = IppComKey {
-            v1: rvk_right.0.clone(),
-            v2: rvk_right.1.clone(),
-            w1: rwk_left.0.clone(),
-            w2: rwk_left.1.clone(),
+        let ck_rl = IppComKeyRef {
+            v1: &rvk_right.0,
+            v2: &rvk_right.1,
+            w1: &rwk_left.0,
+            w2: &rwk_left.1,
         };
 
         // See section 3.3 for paper version with equivalent names
