@@ -419,19 +419,15 @@ impl<E: Pairing> AggProvingKey<E> {
         let prepared_input = E::G1::normalize_batch(&prepared_input);
 
         // Sanity check. Does the first proof validate?
-        assert_eq!(
-            E::pairing(&a_vals[0], &b_vals[0]),
-            E::pairing(&self.alpha[0], &self.beta[0])
-                + E::pairing(&prepared_input[0], &self.h[0])
-                + E::pairing(&d_vals[0], &self.delta0[0])
-                + E::pairing(&c_vals[0], &self.delta1[0])
-        );
-        /*
-
-        // Now make a prepared input commitment in the same way
-        let com_prepared_input = &(&(&self.com_s0 + &((&self.com_s1) * pub_inputs[0]))
-            + &((&self.com_s2) * pub_inputs[1]))
-            + &((&self.com_s3) * pub_inputs[2]);
+        for i in 0..num_proofs {
+            assert_eq!(
+                E::pairing(&a_vals[i], &b_vals[i]),
+                E::pairing(&self.alpha[i], &self.beta[i])
+                    + E::pairing(&prepared_input[i], &self.h[i])
+                    + E::pairing(&d_vals[i], &self.delta0[i])
+                    + E::pairing(&c_vals[i], &self.delta1[i])
+            );
+        }
 
         // Derive a random scalar to perform a linear combination of proofs
         pt.append_serializable(b"AB-commitment", &com_ab);
@@ -447,9 +443,40 @@ impl<E: Pairing> AggProvingKey<E> {
             .map(|ri| ri.inverse().unwrap())
             .collect::<Vec<_>>();
 
-        // A^{r}
+        // Compute X^r for X = A, alpha, prepared_input
         let a_r = scalar_pairing(&a_vals, &r_s);
-        let ref_a_r = &a_r;
+        let c_r = scalar_pairing(&c_vals, &r_s);
+        let d_r = scalar_pairing(&d_vals, &r_s);
+        let alpha_r = scalar_pairing(&self.alpha, &r_s);
+        let prepared_input_r = scalar_pairing(&prepared_input, &r_s);
+        // Check each individual equation holds with the r coeffs
+        for i in 0..num_proofs {
+            assert_eq!(
+                E::pairing(&a_r[i], &b_vals[i]),
+                E::pairing(&alpha_r[i], &self.beta[i])
+                    + E::pairing(&prepared_input_r[i], &self.h[i])
+                    + E::pairing(&d_r[i], &self.delta0[i])
+                    + E::pairing(&c_r[i], &self.delta1[i])
+            );
+        }
+        // Now check that the pairing product equation holds with the r coeffs
+        assert_eq!(
+            pairing::<E>(&a_r, &b_vals),
+            pairing::<E>(&alpha_r, &self.beta)
+                + pairing::<E>(&prepared_input_r, &self.h)
+                + pairing::<E>(&d_r, &self.delta0)
+                + pairing::<E>(&c_r, &self.delta1)
+        );
+
+        // Check the same pairing equation above
+
+        /*
+
+        // Now make a prepared input commitment in the same way
+        let com_prepared_input = &(&(&self.com_s0 + &((&self.com_s1) * pub_inputs[0]))
+            + &((&self.com_s2) * pub_inputs[1]))
+            + &((&self.com_s3) * pub_inputs[2]);
+
 
         // S^{r}
         let s_r = scalar_pairing(&prepared_input, &r_s);
