@@ -342,7 +342,7 @@ impl<E: Pairing> AggProvingKey<E> {
             .collect::<Vec<_>>();
         let delta1 = pks
             .par_iter()
-            .map(|pk| pk.vk.deltas_h[0])
+            .map(|pk| pk.vk.deltas_h[1])
             .collect::<Vec<_>>();
         let com_delta0 = ck.commit_right(&delta0);
         let com_delta1 = ck.commit_right(&delta1);
