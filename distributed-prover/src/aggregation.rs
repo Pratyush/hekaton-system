@@ -1,4 +1,11 @@
-use crate::util::{G16Com, G16Proof, G16ProvingKey, ProtoTranscript, TranscriptProtocol};
+use crate::{
+    kzg::{KzgComKey, KzgEvalProof},
+    pairing_ops::{
+        pairing, scalar_pairing, structured_generators_scalar_power, structured_scalar_power,
+    },
+    par,
+    util::{G16Com, G16Proof, G16ProvingKey, ProtoTranscript, TranscriptProtocol},
+};
 
 use core::borrow::Borrow;
 
@@ -13,137 +20,6 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::One;
 use rand::RngCore;
 use rayon::prelude::*;
-
-macro_rules! try_par {
-    ($(let $name:ident = $f:expr),+) => {
-        $(
-            let mut $name = None;
-        )+
-            rayon::scope(|s| {
-                $(
-                    let $name = &mut $name;
-                    s.spawn(move |_| {
-                        *$name = Some($f);
-                    });)+
-            });
-        $(
-            let $name = $name.unwrap()?;
-        )+
-    };
-}
-
-macro_rules! par {
-    ($(let $name:ident = $f:expr),+) => {
-        $(
-            let mut $name = None;
-        )+
-            rayon::scope(|s| {
-                $(
-                    let $name = &mut $name;
-                    s.spawn(move |_| {
-                        *$name = Some($f);
-                    });)+
-            });
-        $(
-            let $name = $name.unwrap();
-        )+
-    };
-
-    ($(let ($name1:ident, $name2:ident) = $f:block),+) => {
-        $(
-            let mut $name1 = None;
-            let mut $name2 = None;
-        )+
-            rayon::scope(|s| {
-                $(
-                    let $name1 = &mut $name1;
-                    let $name2 = &mut $name2;
-                    s.spawn(move |_| {
-                        let (a, b) = $f;
-                        *$name1 = Some(a);
-                        *$name2 = Some(b);
-                    });)+
-            });
-        $(
-            let $name1 = $name1.unwrap();
-            let $name2 = $name2.unwrap();
-        )+
-    }
-}
-
-pub(crate) fn pairing_miller_affine<E: Pairing>(
-    left: &[E::G1Affine],
-    right: &[E::G2Affine],
-) -> MillerLoopOutput<E> {
-    assert_eq!(left.len(), right.len());
-
-    let left = left
-        .par_iter()
-        .map(|e| E::G1Prepared::from(*e))
-        .collect::<Vec<_>>();
-    let right = right
-        .par_iter()
-        .map(|e| E::G2Prepared::from(*e))
-        .collect::<Vec<_>>();
-
-    E::multi_miller_loop(left, right)
-}
-
-/// Returns the miller loop result of the inner pairing product
-pub(crate) fn pairing<E: Pairing>(left: &[E::G1Affine], right: &[E::G2Affine]) -> PairingOutput<E> {
-    let miller_result = pairing_miller_affine::<E>(left, right);
-    E::final_exponentiation(miller_result).expect("invalid pairing")
-}
-
-/// Multiplies a set of group elements by a same-sized set of scalars. outputs the vec of results
-fn scalar_pairing<G: AffineRepr>(gp: &[G], scalars: &[G::ScalarField]) -> Vec<G> {
-    let proj_results = gp
-        .par_iter()
-        .zip(scalars)
-        .map(|(si, ri)| *si * *ri)
-        .collect::<Vec<_>>();
-
-    G::Group::normalize_batch(&proj_results)
-}
-
-pub(crate) fn msm<G: AffineRepr>(left: &[G], right: &[G::ScalarField]) -> G::Group {
-    assert_eq!(
-        left.len(),
-        right.len(),
-        "cannot MSM over different sized inputs"
-    );
-    VariableBaseMSM::msm(left, right).unwrap()
-}
-
-/// Returns powers of a generator
-pub(crate) fn structured_generators_scalar_power<G: CurveGroup>(
-    num: usize,
-    g: &G,
-    s: &G::ScalarField,
-) -> Vec<G::Affine> {
-    assert!(num > 0);
-    let mut powers_of_scalar = Vec::with_capacity(num);
-    let mut pow_s = G::ScalarField::one();
-    for _ in 0..num {
-        powers_of_scalar.push(pow_s);
-        pow_s *= s;
-    }
-    let scalar_bits = G::ScalarField::MODULUS_BIT_SIZE as usize;
-    let window_size = FixedBase::get_mul_window_size(num);
-    let g_table = FixedBase::get_window_table::<G>(scalar_bits, window_size, g.clone());
-    let powers_of_g =
-        FixedBase::msm::<G>(scalar_bits, window_size, &g_table, &powers_of_scalar[..]);
-    powers_of_g.into_iter().map(|v| v.into_affine()).collect()
-}
-
-/// Returns a vector `(0, s, s^2, ..., s^{num-1})`
-pub(crate) fn structured_scalar_power<F: Field>(num: usize, s: F) -> Vec<F> {
-    let mut powers = vec![F::one()];
-    for i in 1..num {
-        powers.push(powers[i - 1] * s);
-    }
-    powers
-}
 
 /// The output of the `CM_D` commitment method
 #[derive(PartialEq, CanonicalSerialize, CanonicalDeserialize, Clone, Debug)]
@@ -311,7 +187,11 @@ pub struct IppComRightKey<E: Pairing> {
 
 pub struct AggProvingKey<E: Pairing> {
     /// This is the key used to produce ALL inner-pairing commitments
-    pub(crate) ck: IppComKey<E>,
+    pub(crate) ipp_ck: IppComKey<E>,
+
+    /// This is the key used to produce KZG proofs
+    // TODO: You can derive an IppComKey from a KzgComKey. Snarkpack has a specialize() method
+    pub(crate) kzg_ck: KzgComKey<E>,
 
     // The elements of si are the curve point representing the i-th public input in some set of
     // Groth16 CRSs. The first public input is always set to 1, so we have a total of 4 here
@@ -344,7 +224,7 @@ pub struct AggProvingKey<E: Pairing> {
 }
 
 impl<E: Pairing> AggProvingKey<E> {
-    pub fn new(ck: IppComKey<E>, pks: &[G16ProvingKey<E>]) -> Self {
+    pub fn new(ipp_ck: IppComKey<E>, kzg_ck: KzgComKey<E>, pks: &[G16ProvingKey<E>]) -> Self {
         // Extract the group elements in the CRS corresponding to the public inputs
         let s0 = pks
             .par_iter()
@@ -364,14 +244,14 @@ impl<E: Pairing> AggProvingKey<E> {
             .collect::<Vec<_>>();
 
         // Commit to those group elements
-        let com_s0 = ck.commit_left(&s0);
-        let com_s1 = ck.commit_left(&s1);
-        let com_s2 = ck.commit_left(&s2);
-        let com_s3 = ck.commit_left(&s3);
+        let com_s0 = ipp_ck.commit_left(&s0);
+        let com_s1 = ipp_ck.commit_left(&s1);
+        let com_s2 = ipp_ck.commit_left(&s2);
+        let com_s3 = ipp_ck.commit_left(&s3);
 
         // Extract the group elements in the CRS that get paired with the si values
         let h = pks.par_iter().map(|pk| pk.vk.gamma_h).collect::<Vec<_>>();
-        let com_h = ck.commit_right(&h);
+        let com_h = ipp_ck.commit_right(&h);
 
         // Extract the group elements in the CRS that get paired with the si values
         let delta0 = pks
@@ -382,14 +262,15 @@ impl<E: Pairing> AggProvingKey<E> {
             .par_iter()
             .map(|pk| pk.vk.deltas_h[1])
             .collect::<Vec<_>>();
-        let com_delta0 = ck.commit_right(&delta0);
-        let com_delta1 = ck.commit_right(&delta1);
+        let com_delta0 = ipp_ck.commit_right(&delta0);
+        let com_delta1 = ipp_ck.commit_right(&delta1);
 
         let alpha = pks.par_iter().map(|pk| pk.vk.alpha_g).collect::<Vec<_>>();
         let beta = pks.par_iter().map(|pk| pk.vk.beta_h).collect::<Vec<_>>();
 
         AggProvingKey {
-            ck,
+            ipp_ck,
+            kzg_ck,
             s0,
             s1,
             s2,
@@ -416,7 +297,7 @@ impl<E: Pairing> AggProvingKey<E> {
         super_com: &IppCom<E>,
         proofs: &[G16Proof<E>],
         pub_inputs: &[E::ScalarField],
-    ) {
+    ) -> AggProof<E> {
         assert_eq!(
             pub_inputs.len(),
             3,
@@ -435,8 +316,8 @@ impl<E: Pairing> AggProvingKey<E> {
         let ref_b_vals = &b_vals;
         let ref_c_vals = &c_vals;
         par! {
-            let com_ab = self.ck.commit_ambi(ref_a_vals, ref_b_vals),
-            let com_c = self.ck.commit_left(ref_c_vals)
+            let com_ab = self.ipp_ck.commit_ambi(ref_a_vals, ref_b_vals),
+            let com_c = self.ipp_ck.commit_left(ref_c_vals)
         };
         let com_d = super_com;
         let com_prepared_input = &(&(&self.com_s0 + &((&self.com_s1) * pub_inputs[0]))
@@ -512,7 +393,7 @@ impl<E: Pairing> AggProvingKey<E> {
 
         // Start the MT protocol
 
-        let rescaled_ck = self.ck.rescale_left(&r_inv);
+        let rescaled_ck = self.ipp_ck.rescale_left(&r_inv);
         assert_eq!(rescaled_ck.commit_ambi(&a_r, &ref_b_vals), com_ab);
 
         // Multiply every LHS with every RHS
@@ -593,11 +474,45 @@ impl<E: Pairing> AggProvingKey<E> {
         // Take the product of the left and right sides
         let z_lr = pairing::<E>(&left, &right);
 
-        let (tipp_proof, challenges, challenges_inv) =
-            prove_tipp(self.ck.clone(), r_s, left, right, z_lr, pt);
+        let (tipp_proof, mut challenges, mut challenges_inv) =
+            prove_tipp(self.ipp_ck.clone(), r_s, left, right, z_lr, pt);
 
-        todo!()
+        // Prove final commitment keys are wellformed
+        // we reverse the transcript so the polynomial in kzg opening is constructed
+        // correctly - the formula indicates x_{l-j}. Also for deriving KZG
+        // challenge point, input must be the last challenge.
+        challenges.reverse();
+        challenges_inv.reverse();
+        let r_inverse = r.inverse().unwrap();
+        dbg!(challenges.len());
+        dbg!(challenges_inv.len());
+
+        // KZG challenge point
+        pt.append_serializable(b"kzg-challenge", &challenges[0]);
+        pt.append_serializable(b"vkey0", &tipp_proof.final_vkey.0);
+        pt.append_serializable(b"vkey1", &tipp_proof.final_vkey.1);
+        pt.append_serializable(b"wkey0", &tipp_proof.final_wkey.0);
+        pt.append_serializable(b"wkey1", &tipp_proof.final_wkey.1);
+        let z = pt.challenge_scalar::<E::ScalarField>(b"z-challenge");
+        // Complete KZG proofs
+        par! {
+            let vkey_opening = self.kzg_ck.prove_commitment_v(&challenges_inv, z),
+            let wkey_opening = self.kzg_ck.prove_commitment_w(&challenges, r_inverse, z)
+        };
+
+        AggProof {
+            tipp_proof,
+            vkey_opening,
+            wkey_opening,
+        }
     }
+}
+
+#[derive(CanonicalSerialize, CanonicalDeserialize)]
+pub struct AggProof<E: Pairing> {
+    tipp_proof: TippProof<E>,
+    vkey_opening: KzgEvalProof<E::G2Affine>,
+    wkey_opening: KzgEvalProof<E::G1Affine>,
 }
 
 impl<E: Pairing> IppComKey<E> {
@@ -779,7 +694,7 @@ fn prove_tipp<E: Pairing>(
     )
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct TippProof<E: Pairing> {
     pub num_proofs: u32,
     pub comms_lr_ab: Vec<(IppCom<E>, IppCom<E>)>,

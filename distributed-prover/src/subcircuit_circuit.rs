@@ -520,7 +520,8 @@ mod test {
             })
             .collect::<Vec<_>>();
 
-        let agg_ck = AggProvingKey::new(super_com_key, &proving_keys);
+        let kzg_ck = crate::kzg::KzgComKey::gen(&mut rng, num_subcircuits);
+        let agg_ck = AggProvingKey::new(super_com_key, kzg_ck, &proving_keys);
         let super_com = &stage1_state.super_com;
         agg_ck.agg_subcircuit_proofs(
             &mut crate::util::ProtoTranscript::new(b"test-e2e"),

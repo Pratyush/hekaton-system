@@ -14,11 +14,13 @@ use ark_relations::{
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use xxhash_rust::xxh3::xxh3_128;
 
-mod eval_tree;
-mod portal_manager;
 //mod worker_node;
 mod aggregation;
 mod coordinator;
+mod eval_tree;
+mod kzg;
+mod pairing_ops;
+mod portal_manager;
 mod subcircuit_circuit;
 mod tree_hash_circuit;
 mod util;
@@ -27,6 +29,25 @@ mod worker;
 use portal_manager::PortalManager;
 
 pub(crate) const PADDING_VARNAME: &str = "__PADDING";
+
+#[macro_export]
+macro_rules! par {
+    ($(let $name:ident = $f:expr),+) => {
+        $(
+            let mut $name = None;
+        )+
+            rayon::scope(|s| {
+                $(
+                    let $name = &mut $name;
+                    s.spawn(move |_| {
+                        *$name = Some($f);
+                    });)+
+            });
+        $(
+            let $name = $name.unwrap();
+        )+
+    };
+}
 
 /// Hashes a portal wire name to a field element. Note: if name == PADDING_VARNAME, then this
 /// outputs 0. This is a special varaible name.
