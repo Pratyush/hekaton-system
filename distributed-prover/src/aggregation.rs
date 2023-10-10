@@ -514,15 +514,6 @@ impl<E: Pairing> AggProvingKey<E> {
 
         let rescaled_ck = self.ck.rescale_left(&r_inv);
         assert_eq!(rescaled_ck.commit_ambi(&a_r, &ref_b_vals), com_ab);
-        // Compute cross producs
-        /*
-        let z_ah = pairing::<E>(&ref_a_r, &self.h);
-        let z_adelta0 = pairing::<E>(&ref_a_r, &self.delta0);
-        let z_adelta1 = pairing::<E>(&ref_a_r, &self.delta1);
-        let z_sb = pairing::<E>(&prepared_input_r, &b_vals);
-        let z_sdelta0 = pairing::<E>(&prepared_input_r, &self.delta0);
-        let z_sdelta1 = pairing::<E>(&prepared_input_r, &self.delta1);
-        */
 
         // Multiply every LHS with every RHS
         let cross_terms = [ref_a_r, ref_prepared_input_r, &d_r, &c_r]
@@ -580,7 +571,7 @@ impl<E: Pairing> AggProvingKey<E> {
                 let delta0_to_the_t2 =
                     scalar_pairing(&self.delta0, vec![t_sq; num_proofs].as_slice()),
                 let delta1_to_the_t3 =
-                    scalar_pairing(&self.delta0, vec![t_cube; num_proofs].as_slice())
+                    scalar_pairing(&self.delta1, vec![t_cube; num_proofs].as_slice())
             };
             let sum = ref_b_vals
                 .into_par_iter()
