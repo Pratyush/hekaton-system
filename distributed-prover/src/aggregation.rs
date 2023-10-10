@@ -396,12 +396,14 @@ impl<E: Pairing> AggProvingKey<E> {
         let ref_a_vals = &a_vals;
         let ref_b_vals = &b_vals;
         let ref_c_vals = &c_vals;
-
         par! {
             let com_ab = self.ck.commit_ambi(ref_a_vals, ref_b_vals),
             let com_c = self.ck.commit_left(ref_c_vals)
         };
         let com_d = super_com;
+        let com_prepared_input = &(&(&self.com_s0 + &((&self.com_s1) * pub_inputs[0]))
+            + &((&self.com_s2) * pub_inputs[1]))
+            + &((&self.com_s3) * pub_inputs[2]);
 
         // Compute the combined public inputs. In the paper this is S₁^1 · S₂^pubinput₁ · ...
         let prepared_input = self
@@ -432,6 +434,7 @@ impl<E: Pairing> AggProvingKey<E> {
         // Derive a random scalar to perform a linear combination of proofs
         pt.append_serializable(b"AB-commitment", &com_ab);
         pt.append_serializable(b"C-commitment", &com_c);
+        pt.append_serializable(b"D-commitment", com_d);
         let r = pt.challenge_scalar::<E::ScalarField>(b"r-random-fiatshamir");
 
         // 1,r, r^2, r^3, r^4 ...
@@ -444,11 +447,14 @@ impl<E: Pairing> AggProvingKey<E> {
             .collect::<Vec<_>>();
 
         // Compute X^r for X = A, alpha, prepared_input
-        let a_r = scalar_pairing(&a_vals, &r_s);
-        let c_r = scalar_pairing(&c_vals, &r_s);
-        let d_r = scalar_pairing(&d_vals, &r_s);
-        let alpha_r = scalar_pairing(&self.alpha, &r_s);
-        let prepared_input_r = scalar_pairing(&prepared_input, &r_s);
+        let ref_r_s = &r_s;
+        par! {
+            let a_r = scalar_pairing(&a_vals, &ref_r_s),
+            let c_r = scalar_pairing(&c_vals, &ref_r_s),
+            let d_r = scalar_pairing(&d_vals, &ref_r_s),
+            let alpha_r = scalar_pairing(&self.alpha, &ref_r_s),
+            let prepared_input_r = scalar_pairing(&prepared_input, &ref_r_s)
+        }
         // Check each individual equation holds with the r coeffs
         for i in 0..num_proofs {
             assert_eq!(
@@ -459,55 +465,105 @@ impl<E: Pairing> AggProvingKey<E> {
                     + E::pairing(&c_r[i], &self.delta1[i])
             );
         }
-        // Now check that the pairing product equation holds with the r coeffs
-        assert_eq!(
-            pairing::<E>(&a_r, &b_vals),
-            pairing::<E>(&alpha_r, &self.beta)
-                + pairing::<E>(&prepared_input_r, &self.h)
-                + pairing::<E>(&d_r, &self.delta0)
-                + pairing::<E>(&c_r, &self.delta1)
-        );
 
-        // Check the same pairing equation above
+        // Start building the aggregate values for the proving step
+        let ref_a_r = &a_r;
+        let ref_c_r = &c_r;
+        let ref_d_r = &d_r;
+        let ref_prepared_input_r = &prepared_input_r;
 
-        /*
+        // Start the MT protocol
 
-        // Now make a prepared input commitment in the same way
-        let com_prepared_input = &(&(&self.com_s0 + &((&self.com_s1) * pub_inputs[0]))
-            + &((&self.com_s2) * pub_inputs[1]))
-            + &((&self.com_s3) * pub_inputs[2]);
-
-
-        // S^{r}
-        let s_r = scalar_pairing(&prepared_input, &r_s);
-        let ref_s_r = &s_r;
-
-        let ref_c_vals = &c_vals;
-        par! {
-            // compute A * B^r for the verifier
-            let agg_ab = pairing::<E>(&ref_a_r, &ref_b_vals),
-            // compute C^r for the verifier
-            let agg_c = msm::<E::G1Affine>(&ref_c_vals, &ref_r_s)
-        };
-
-        let ref_agg_c = &agg_c;
-        let aggregated_c = agg_c.into_affine();
         let rescaled_ck = self.ck.rescale_left(&r_inv);
-
-        assert_eq!(rescaled_ck.commit_ambi(&ref_a_r, &ref_b_vals), com_ab);
-        // Debugging: alphas^r
-        let alpha_r = scalar_pairing(&self.alpha, &r_s);
-        let c_r = scalar_pairing(&c_vals, &r_s);
-        let d_r = scalar_pairing(&c_vals, &r_s);
-
-        assert_eq!(
-            pairing::<E>(&ref_a_r, &ref_b_vals),
-            pairing::<E>(&alpha_r, &self.beta)
-                + pairing::<E>(&ref_s_r, &self.h)
-                + pairing::<E>(&d_r, &self.delta0)
-                + pairing::<E>(&c_r, &self.delta1)
-        );
+        assert_eq!(rescaled_ck.commit_ambi(&a_r, &ref_b_vals), com_ab);
+        // Compute cross producs
+        /*
+        let z_ah = pairing::<E>(&ref_a_r, &self.h);
+        let z_adelta0 = pairing::<E>(&ref_a_r, &self.delta0);
+        let z_adelta1 = pairing::<E>(&ref_a_r, &self.delta1);
+        let z_sb = pairing::<E>(&prepared_input_r, &b_vals);
+        let z_sdelta0 = pairing::<E>(&prepared_input_r, &self.delta0);
+        let z_sdelta1 = pairing::<E>(&prepared_input_r, &self.delta1);
         */
+
+        // Multiply every LHS with every RHS
+        let cross_terms = [ref_a_r, ref_prepared_input_r, &d_r, &c_r]
+            .into_par_iter()
+            .map(|lhs| {
+                [ref_b_vals, &self.h, &self.delta0, &self.delta1]
+                    .into_par_iter()
+                    .map(|rhs| pairing::<E>(lhs, rhs))
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+
+        // Check the prover relation still holds
+        let z_ab = cross_terms[0][0];
+        let z_sh = cross_terms[1][1];
+        let z_ddelta0 = cross_terms[2][2];
+        let z_cdelta1 = cross_terms[3][3];
+        // Check that the pairing product equation holds with the r coeffs
+        assert_eq!(
+            z_ab,
+            pairing::<E>(&alpha_r, &self.beta) + z_sh + z_ddelta0 + z_cdelta1
+        );
+
+        // Get challenges s,t
+        pt.append_serializable(b"cross-terms", &cross_terms);
+        let s = pt.challenge_scalar::<E::ScalarField>(b"s-random-fiatshamir");
+        let t = pt.challenge_scalar::<E::ScalarField>(b"t-random-fiatshamir");
+        // Compute squares and cubes
+        let s_sq = s * s;
+        let s_cube = s_sq * s;
+        let t_sq = t * t;
+        let t_cube = t_sq * t;
+
+        // Now compute a combination wrt powers of s and t
+        let left = {
+            // Compute L = A' · (S')^s · (D')^{s²} · (C')^{s³}
+            par! {
+                let s_to_the_s =
+                    scalar_pairing(ref_prepared_input_r, vec![s; num_proofs].as_slice()),
+                let d_to_the_s2 = scalar_pairing(ref_d_r, vec![s_sq; num_proofs].as_slice()),
+                let c_to_the_s3 = scalar_pairing(ref_c_r, vec![s_cube; num_proofs].as_slice())
+            };
+            let sum = ref_a_r
+                .into_par_iter()
+                .zip(s_to_the_s.into_par_iter())
+                .zip(d_to_the_s2.into_par_iter())
+                .zip(c_to_the_s3.into_par_iter())
+                .map(|(((a, s), d), c)| *a + s + d + c)
+                .collect::<Vec<_>>();
+            E::G1::normalize_batch(&sum)
+        };
+        let right = {
+            // Compute R = B · H^t · δ₀^{t²} · δ₁^{t³}
+            par! {
+                let h_to_the_t = scalar_pairing(&self.h, vec![t; num_proofs].as_slice()),
+                let delta0_to_the_t2 =
+                    scalar_pairing(&self.delta0, vec![t_sq; num_proofs].as_slice()),
+                let delta1_to_the_t3 =
+                    scalar_pairing(&self.delta0, vec![t_cube; num_proofs].as_slice())
+            };
+            let sum = ref_b_vals
+                .into_par_iter()
+                .zip(h_to_the_t.into_par_iter())
+                .zip(delta0_to_the_t2.into_par_iter())
+                .zip(delta1_to_the_t3.into_par_iter())
+                .map(|(((b, s), d), c)| *b + s + d + c)
+                .collect::<Vec<_>>();
+            E::G2::normalize_batch(&sum)
+        };
+        // Compute the corresponding commitments
+        let com_lr = {
+            let s_partial_sum =
+                &(&(&com_ab + &(&com_prepared_input * s)) + &(com_d * s_sq)) + &(&com_c * s_cube);
+            let t_partial_sum =
+                &(&(&self.com_h * t) + &(&self.com_delta0 * t_sq)) + &(&self.com_delta1 * t_cube);
+            &s_partial_sum + &t_partial_sum
+        };
+        // Take the product of the left and right sides
+        let z_lr = pairing::<E>(&left, &right);
 
         todo!()
     }
