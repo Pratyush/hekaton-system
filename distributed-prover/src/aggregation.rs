@@ -1,7 +1,8 @@
 use crate::{
     kzg::{KzgComKey, KzgEvalProof},
     pairing_ops::{
-        pairing, scalar_pairing, structured_generators_scalar_power, structured_scalar_power,
+        evaluate_ipa_polynomial, pairing, scalar_pairing, structured_generators_scalar_power,
+        structured_scalar_power,
     },
     par,
     util::{G16Com, G16Proof, G16ProvingKey, ProtoTranscript, TranscriptProtocol},
@@ -22,10 +23,19 @@ use rand::RngCore;
 use rayon::prelude::*;
 
 /// The output of the `CM_D` commitment method
-#[derive(PartialEq, CanonicalSerialize, CanonicalDeserialize, Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct IppCom<E: Pairing> {
     pub t: PairingOutput<E>,
     pub u: PairingOutput<E>,
+}
+
+impl<E: Pairing> Default for IppCom<E> {
+    fn default() -> Self {
+        IppCom {
+            t: PairingOutput::default(),
+            u: PairingOutput::default(),
+        }
+    }
 }
 
 // Recall this commitment is doubly homomorphic. Multiplying by `x` here is the same as the
@@ -474,6 +484,9 @@ impl<E: Pairing> AggProvingKey<E> {
         // Take the product of the left and right sides
         let z_lr = pairing::<E>(&left, &right);
 
+        // For debugging
+        let mut pt_fork = pt.clone();
+
         let (tipp_proof, mut challenges, mut challenges_inv) =
             prove_tipp(self.ipp_ck.clone(), r_s, left, right, z_lr, pt);
 
@@ -484,8 +497,6 @@ impl<E: Pairing> AggProvingKey<E> {
         challenges.reverse();
         challenges_inv.reverse();
         let r_inverse = r.inverse().unwrap();
-        dbg!(challenges.len());
-        dbg!(challenges_inv.len());
 
         // KZG challenge point
         pt.append_serializable(b"kzg-challenge", &challenges[0]);
@@ -495,10 +506,18 @@ impl<E: Pairing> AggProvingKey<E> {
         pt.append_serializable(b"wkey1", &tipp_proof.final_wkey.1);
         let z = pt.challenge_scalar::<E::ScalarField>(b"z-challenge");
         // Complete KZG proofs
+        let ref_challenges = &challenges;
+        let ref_challenges_inv = &challenges_inv;
         par! {
-            let vkey_opening = self.kzg_ck.prove_commitment_v(&challenges_inv, z),
-            let wkey_opening = self.kzg_ck.prove_commitment_w(&challenges, r_inverse, z)
+            let vkey_opening = self.kzg_ck.prove_commitment_v(&ref_challenges_inv, z),
+            let wkey_opening = self.kzg_ck.prove_commitment_w(&ref_challenges, r_inverse, z)
         };
+
+        // Check that verify_tipp gets all the same challenges
+        let (_, _, verif_challenges, verif_challenges_inv) =
+            verify_tipp(&mut pt_fork, &tipp_proof, r, com_ab, z_lr);
+        assert_eq!(challenges, verif_challenges);
+        assert_eq!(challenges_inv, verif_challenges_inv);
 
         AggProof {
             tipp_proof,
@@ -679,19 +698,127 @@ fn prove_tipp<E: Pairing>(
     let final_vkey = (vkey.0[0], vkey.1[0]);
     let final_wkey = (wkey.0[0], wkey.1[0]);
 
-    (
-        TippProof {
-            num_proofs: a.len().try_into().unwrap(), // TODO: ensure u32
-            comms_lr_ab: comms_ab,
-            lr_ab: z_ab,
-            final_a,
-            final_b,
-            final_vkey,
-            final_wkey,
-        },
-        challenges,
-        challenges_inv,
-    )
+    let tipp_proof = TippProof {
+        num_proofs: a.len().try_into().unwrap(), // TODO: ensure u32
+        comms_lr_ab: comms_ab,
+        lr_ab: z_ab,
+        final_a,
+        final_b,
+        final_vkey,
+        final_wkey,
+    };
+
+    (tipp_proof, challenges, challenges_inv)
+}
+
+fn verify_tipp<E: Pairing>(
+    pt: &mut ProtoTranscript,
+    proof: &TippProof<E>,
+    r: E::ScalarField,
+    com_ab: IppCom<E>,
+    agg_ab: PairingOutput<E>,
+) -> (
+    TippVerifierState<E>,
+    E::ScalarField,
+    Vec<E::ScalarField>,
+    Vec<E::ScalarField>,
+) {
+    println!("gipa verify TIPP");
+    // COM(A,B) = PROD e(A,B) given by prover
+    let comms_lr_ab = &proof.comms_lr_ab;
+    // Z vectors coming from the GIPA proofs
+    let lrs_ab = &proof.lr_ab;
+
+    let mut challenges = Vec::new();
+    let mut challenges_inv = Vec::new();
+
+    pt.append_serializable(b"Aggregated AB", &agg_ab);
+    let mut delta_inv = pt.challenge_scalar::<E::ScalarField>(b"first-challenge");
+    let mut delta = delta_inv.inverse().unwrap();
+
+    // We first generate all challenges as this is the only consecutive process
+    // that can not be parallelized then we scale the commitments in a
+    // parallelized way
+    for (i, (comm_lr_ab, lr_ab)) in comms_lr_ab.iter().zip(lrs_ab.iter()).enumerate() {
+        let (cm_l_ab, cm_r_ab) = comm_lr_ab;
+        let (l_ab, r_ab) = lr_ab;
+
+        // Fiat-Shamir challenge
+        if i == 0 {
+            // already generated c_inv and c outside of the loop
+        } else {
+            pt.append_serializable(b"delta_inv", &delta_inv);
+            pt.append_serializable(b"L_AB", l_ab);
+            pt.append_serializable(b"R_AB", r_ab);
+            pt.append_serializable(b"cm_L_AB", cm_l_ab);
+            pt.append_serializable(b"cm_R_AB", cm_r_ab);
+
+            delta_inv = pt.challenge_scalar::<E::ScalarField>(b"delta_inv_i");
+            delta = delta_inv.inverse().unwrap();
+        }
+        challenges.push(delta);
+        challenges_inv.push(delta_inv);
+    }
+
+    // output of the pair commitment T and U in TIPP -> COM((v,w),A,B)
+    //let comab2 = proof.com_ab.clone();
+    //let Output(t_ab, u_ab) = (comab2.0, comab2.1);
+    let mut state = TippVerifierState {
+        z_ab: agg_ab,
+        com_ab,
+    };
+
+    // we first multiply each entry of the Z U and L vectors by the respective
+    // challenges independently
+    // Since at the end we want to multiple all "t" values together, we do
+    // multiply all of them in parallel and then merge then back at the end.
+    // same for u and z.
+    #[allow(non_camel_case_types)]
+    enum Op<'a, E: Pairing> {
+        T_AB(&'a PairingOutput<E>, E::ScalarField),
+        U_AB(&'a PairingOutput<E>, E::ScalarField),
+        Z_AB(&'a PairingOutput<E>, E::ScalarField),
+    }
+
+    let ops = comms_lr_ab
+        .into_par_iter()
+        .zip(lrs_ab)
+        .zip(challenges.par_iter().zip(&challenges_inv))
+        .flat_map(|((comm_lr_ab, lr_ab), (&c, &c_inv))| {
+            let (cm_l_ab, cm_r_ab) = comm_lr_ab;
+            let (l_ab, r_ab) = lr_ab;
+
+            // we multiple left side by x and right side by x^-1
+            [
+                Op::T_AB(&cm_l_ab.t, c),
+                Op::T_AB(&cm_r_ab.t, c_inv),
+                Op::U_AB(&cm_l_ab.u, c),
+                Op::U_AB(&cm_r_ab.u, c_inv),
+                Op::Z_AB(l_ab, c),
+                Op::Z_AB(r_ab, c_inv),
+            ]
+        });
+    let res = ops
+        .fold_with(TippVerifierState::<E>::default(), |mut res, op: Op<E>| {
+            match op {
+                Op::T_AB(t, c) => res.com_ab.t += *t * c,
+                Op::U_AB(u, c) => res.com_ab.u += *u * c,
+                Op::Z_AB(z, c) => res.z_ab += *z * c,
+            }
+            res
+        })
+        .sum();
+
+    // we reverse the order because the polynomial evaluation routine expects
+    // the challenges in reverse order.Doing it here allows us to compute the final_r
+    // in log time. Challenges are used as well in the KZG verification checks.
+    challenges.reverse();
+    challenges_inv.reverse();
+
+    state.merge(&res);
+    let final_r = evaluate_ipa_polynomial(&challenges_inv, r, E::ScalarField::ONE);
+
+    (state, final_r, challenges, challenges_inv)
 }
 
 #[derive(Debug, Clone, CanonicalSerialize, CanonicalDeserialize)]
@@ -750,4 +877,39 @@ pub fn fold_ck<G: AffineRepr>(
     let b = G::Group::normalize_batch(&b);
 
     (a, b)
+}
+
+/// Keeps track of the variables that have been sent by the prover and must
+/// be multiplied together by the verifier. Both MIPP and TIPP are merged
+/// together.
+#[derive(Clone)]
+struct TippVerifierState<E: Pairing> {
+    pub com_ab: IppCom<E>,
+    pub z_ab: PairingOutput<E>,
+}
+
+impl<E: Pairing> TippVerifierState<E> {
+    fn merge(&mut self, other: &Self) {
+        self.com_ab.t += &other.com_ab.t;
+        self.com_ab.u += &other.com_ab.u;
+        self.z_ab += &other.z_ab;
+    }
+}
+
+impl<E: Pairing> Default for TippVerifierState<E> {
+    fn default() -> Self {
+        TippVerifierState {
+            com_ab: IppCom::default(),
+            z_ab: PairingOutput::default(),
+        }
+    }
+}
+
+impl<E: Pairing> core::iter::Sum<TippVerifierState<E>> for TippVerifierState<E> {
+    fn sum<I: Iterator<Item = TippVerifierState<E>>>(iter: I) -> Self {
+        iter.fold(TippVerifierState::default(), |mut acc, res| {
+            acc.merge(&res);
+            acc
+        })
+    }
 }
