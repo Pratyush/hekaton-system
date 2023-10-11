@@ -24,6 +24,7 @@ const COORD_STATE_FILENAME_PREFIX: &str = "coordinator_state";
 const STAGE0_REQ_FILENAME_PREFIX: &str = "stage0_req";
 const STAGE0_RESP_FILENAME_PREFIX: &str = "stage0_resp";
 const STAGE1_REQ_FILENAME_PREFIX: &str = "stage1_req";
+const STAGE1_RESP_FILENAME_PREFIX: &str = "stage1_resp";
 
 #[derive(Parser)]
 struct Args {
@@ -39,13 +40,32 @@ enum Command {
         #[clap(short, long, value_name = "DIR")]
         g16_pk_dir: PathBuf,
 
-        /// Directory where the stage0 requests are stored
+        /// Directory where worker requests are stored
         #[clap(short, long, value_name = "DIR")]
-        stage0_req_dir: PathBuf,
+        req_dir: PathBuf,
 
-        /// Directory where the stage0 responses should be saved
+        /// Directory where worker responses will be stored
         #[clap(short, long, value_name = "DIR")]
-        out_dir: PathBuf,
+        resp_dir: PathBuf,
+
+        /// Which subcircuit should be proven
+        #[clap(short, long, value_name = "NUM")]
+        subcircuit_index: usize,
+    },
+
+    /// Process the stage0 responses from workers and produce stage1 reqeusts
+    ProcessStage1Request {
+        /// Directory where the Groth16 proving keys are stored
+        #[clap(short, long, value_name = "DIR")]
+        g16_pk_dir: PathBuf,
+
+        /// Directory where worker requests are stored
+        #[clap(short, long, value_name = "DIR")]
+        req_dir: PathBuf,
+
+        /// Directory where worker responses are stored
+        #[clap(short, long, value_name = "DIR")]
+        resp_dir: PathBuf,
 
         /// Which subcircuit should be proven
         #[clap(short, long, value_name = "NUM")]
@@ -56,8 +76,8 @@ enum Command {
 fn process_stage0_request(
     subcircuit_idx: usize,
     g16_pk_dir: &PathBuf,
-    stage0_req_dir: &PathBuf,
-    out_dir: &PathBuf,
+    req_dir: &PathBuf,
+    resp_dir: &PathBuf,
 ) {
     let mut rng = rand::thread_rng();
     let tree_params = gen_merkle_params();
@@ -70,7 +90,7 @@ fn process_stage0_request(
     )
     .unwrap();
     let stage0_req = deserialize_from_path::<Stage0Request<Fr>>(
-        stage0_req_dir,
+        req_dir,
         STAGE0_REQ_FILENAME_PREFIX,
         Some(subcircuit_idx),
     )
@@ -91,8 +111,63 @@ fn process_stage0_request(
     // Save it
     serialize_to_path(
         &stage0_resp,
-        out_dir,
+        resp_dir,
         STAGE0_RESP_FILENAME_PREFIX,
+        Some(subcircuit_idx),
+    )
+    .unwrap();
+}
+
+fn process_stage1_request(
+    subcircuit_idx: usize,
+    g16_pk_dir: &PathBuf,
+    req_dir: &PathBuf,
+    resp_dir: &PathBuf,
+) {
+    let mut rng = rand::thread_rng();
+    let tree_params = gen_merkle_params();
+
+    // Deserialize the appropriate proving key, old request, old response, and new request
+    let g16_pk = deserialize_from_path::<G16ProvingKey<E>>(
+        g16_pk_dir,
+        G16_PK_FILENAME_PREFIX,
+        Some(subcircuit_idx),
+    )
+    .unwrap();
+    let stage0_req = deserialize_from_path::<Stage0Request<Fr>>(
+        req_dir,
+        STAGE0_REQ_FILENAME_PREFIX,
+        Some(subcircuit_idx),
+    )
+    .unwrap();
+    let stage0_resp = deserialize_from_path::<Stage0Response<E>>(
+        resp_dir,
+        STAGE0_RESP_FILENAME_PREFIX,
+        Some(subcircuit_idx),
+    )
+    .unwrap();
+    let stage1_req = deserialize_from_path::<Stage1Request<_, _, MerkleTreeCircuit>>(
+        req_dir,
+        STAGE1_REQ_FILENAME_PREFIX,
+        Some(subcircuit_idx),
+    )
+    .unwrap();
+
+    // Compute the response. This is a Groth16 proof over a potentially large circuit
+    let stage1_resp = distributed_prover::worker::process_stage1_request::<_, TreeConfigVar, _, _, _>(
+        &mut rng,
+        tree_params,
+        &g16_pk,
+        stage0_req,
+        stage0_resp,
+        stage1_req,
+    );
+
+    // Save it
+    serialize_to_path(
+        &stage1_resp,
+        resp_dir,
+        STAGE1_RESP_FILENAME_PREFIX,
         Some(subcircuit_idx),
     )
     .unwrap();
@@ -104,9 +179,16 @@ fn main() {
     match args.command {
         Command::ProcessStage0Request {
             g16_pk_dir,
-            stage0_req_dir,
-            out_dir,
+            req_dir,
+            resp_dir,
             subcircuit_index,
-        } => process_stage0_request(subcircuit_index, &g16_pk_dir, &stage0_req_dir, &out_dir),
+        } => process_stage0_request(subcircuit_index, &g16_pk_dir, &req_dir, &resp_dir),
+
+        Command::ProcessStage1Request {
+            g16_pk_dir,
+            req_dir,
+            resp_dir,
+            subcircuit_index,
+        } => process_stage1_request(subcircuit_index, &g16_pk_dir, &req_dir, &resp_dir),
     }
 }
