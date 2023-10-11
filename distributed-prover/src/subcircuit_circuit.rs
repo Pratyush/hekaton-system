@@ -443,18 +443,9 @@ mod test {
             .map(|idx| stage1_state.gen_request(*idx).to_owned())
             .collect();
 
-        // The public inputs are the same 3 field elements for every circuit: entry_chal, tr_chal,
-        // and the Merkle root
-        let public_inputs = {
-            let (entry_chal, tr_chal) = stage1_reqs[0].cur_leaf.evals.challenges.unwrap().clone();
-            let root = stage1_reqs[0].root.clone();
-            [
-                entry_chal.to_field_elements().unwrap(),
-                tr_chal.to_field_elements().unwrap(),
-                root.to_field_elements().unwrap(),
-            ]
-            .concat()
-        };
+        // Convert the coordinator state into a final aggregator state. We can throw away most of
+        // our circuit data now
+        let final_agg_state = stage1_state.into_agg_state();
 
         // Now compute all the proofs, check them, and collect them for aggregation
         let proofs = stage0_reqs
@@ -476,6 +467,7 @@ mod test {
 
                 // Verify
 
+                let public_inputs = &final_agg_state.public_inputs;
                 let pvk = prepare_verifying_key(&pk.vk());
                 assert!(verify_proof(&pvk, &proof, &public_inputs).unwrap());
 

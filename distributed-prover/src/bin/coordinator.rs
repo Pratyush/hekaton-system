@@ -1,6 +1,9 @@
 use distributed_prover::{
     aggregation::{AggProvingKey, SuperComCommittingKey},
-    coordinator::{CoordinatorStage0State, G16ProvingKeyGenerator, Stage1Request},
+    coordinator::{
+        CoordinatorStage0State, CoordinatorStage1State, FinalAggState, G16ProvingKeyGenerator,
+        Stage1Request,
+    },
     kzg::KzgComKey,
     poseidon_util::{
         gen_merkle_params, PoseidonTreeConfig as TreeConfig, PoseidonTreeConfigVar as TreeConfigVar,
@@ -21,10 +24,13 @@ use rayon::prelude::*;
 
 const G16_PK_FILENAME_PREFIX: &str = "g16_pk";
 const AGG_CK_FILENAME_PREFIX: &str = "agg_ck";
-const COORD_STATE_FILENAME_PREFIX: &str = "coordinator_state";
+const STAGE0_COORD_STATE_FILENAME_PREFIX: &str = "stage0_coordinator_state";
+const FINAL_AGG_STATE_FILENAME_PREFIX: &str = "final_aggregator_state";
 const STAGE0_REQ_FILENAME_PREFIX: &str = "stage0_req";
 const STAGE0_RESP_FILENAME_PREFIX: &str = "stage0_resp";
 const STAGE1_REQ_FILENAME_PREFIX: &str = "stage1_req";
+const STAGE1_RESP_FILENAME_PREFIX: &str = "stage1_resp";
+const FINAL_PROOF_PREFIX: &str = "agg_proof";
 
 #[derive(Parser)]
 struct Args {
@@ -65,15 +71,14 @@ enum Command {
     /// Begins stage0 for a random proof for a large circuit with the given parameters. This
     /// produces _worker request packages_ which are processed in parallel by worker nodes.
     StartStage0 {
-        /// Path to place worker request packages in. These are named `stage0_req_i.bin` where `i`
-        /// is the subcircuit index.
-        #[clap(short, long, value_name = "DIR")]
-        worker_req_dir: PathBuf,
-
         /// Path to place the coordinator's intermediate state once all the requests are generated.
         /// This is named `coord_state.bin`.
         #[clap(short, long, value_name = "DIR")]
         coord_state_dir: PathBuf,
+
+        /// Directory where the worker requests are stored
+        #[clap(short, long, value_name = "DIR")]
+        req_dir: PathBuf,
 
         /// Test circuit param: Number of subcircuits. MUST be a power of two and greater than 1.
         #[clap(short, long, value_name = "NUM")]
@@ -82,18 +87,31 @@ enum Command {
 
     /// Process the stage0 responses from workers and produce stage1 reqeusts
     StartStage1 {
-        /// Directory where the stage0 worker responses are stored
-        #[clap(short, long, value_name = "DIR")]
-        stage0_resp_dir: PathBuf,
-
         /// Directory where the coordinator's intermediate state is stored.
         #[clap(short, long, value_name = "DIR")]
         coord_state_dir: PathBuf,
 
-        /// Path to place worker request packages in. These are named `stage0_req_i.bin` where `i`
-        /// is the subcircuit index.
+        /// Directory where the worker requests are stored
         #[clap(short, long, value_name = "DIR")]
-        worker_req_dir: PathBuf,
+        req_dir: PathBuf,
+
+        /// Directory where the worker responses are stored
+        #[clap(short, long, value_name = "DIR")]
+        resp_dir: PathBuf,
+
+        /// How many responses there are
+        #[clap(short, long, value_name = "NUM")]
+        num_subcircuits: usize,
+    },
+
+    /// Process the stage1 responses from workers and produce a final aggregate
+    EndProof {
+        /// Directory where the coordinator's intermediate state is stored.
+        #[clap(short, long, value_name = "DIR")]
+        coord_state_dir: PathBuf,
+
+        #[clap(short, long, value_name = "DIR")]
+        resp_dir: PathBuf,
 
         /// How many responses there are
         #[clap(short, long, value_name = "NUM")]
@@ -178,7 +196,7 @@ fn begin_stage0(
     serialize_to_path(
         &stage0_state,
         coord_state_dir,
-        COORD_STATE_FILENAME_PREFIX,
+        STAGE0_COORD_STATE_FILENAME_PREFIX,
         None,
     )?;
 
@@ -187,16 +205,16 @@ fn begin_stage0(
 
 fn process_stage0_resps(
     num_subcircuits: usize,
-    stage0_resp_dir: &PathBuf,
     coord_state_dir: &PathBuf,
-    worker_req_dir: &PathBuf,
+    req_dir: &PathBuf,
+    resp_dir: &PathBuf,
 ) {
     let tree_params = gen_merkle_params();
 
     // Deserialize the coordinator's state and the aggregation key
     let coord_state = deserialize_from_path::<CoordinatorStage0State<E, MerkleTreeCircuit>>(
         coord_state_dir,
-        COORD_STATE_FILENAME_PREFIX,
+        STAGE0_COORD_STATE_FILENAME_PREFIX,
         None,
     )
     .unwrap();
@@ -215,7 +233,7 @@ fn process_stage0_resps(
         .into_par_iter()
         .map(|subcircuit_idx| {
             deserialize_from_path::<Stage0Response<E>>(
-                stage0_resp_dir,
+                resp_dir,
                 STAGE0_RESP_FILENAME_PREFIX,
                 Some(subcircuit_idx),
             )
@@ -233,12 +251,54 @@ fn process_stage0_resps(
         let stage1_req = new_coord_state.gen_request(subcircuit_idx);
         serialize_to_path(
             &stage1_req,
-            worker_req_dir,
+            req_dir,
             STAGE1_REQ_FILENAME_PREFIX,
             Some(subcircuit_idx),
         )
         .unwrap();
     }
+
+    // Convert the coordinator state to an aggregator state and save it
+    let final_agg_state = new_coord_state.into_agg_state();
+    serialize_to_path(
+        &final_agg_state,
+        coord_state_dir,
+        FINAL_AGG_STATE_FILENAME_PREFIX,
+        None,
+    )
+    .unwrap();
+}
+
+fn process_stage1_resps(num_subcircuits: usize, coord_state_dir: &PathBuf, resp_dir: &PathBuf) {
+    // Deserialize the coordinator's final state, the aggregation key
+    let final_agg_state = deserialize_from_path::<FinalAggState<E>>(
+        coord_state_dir,
+        FINAL_AGG_STATE_FILENAME_PREFIX,
+        None,
+    )
+    .unwrap();
+    let agg_ck =
+        deserialize_from_path::<AggProvingKey<E>>(coord_state_dir, AGG_CK_FILENAME_PREFIX, None)
+            .unwrap();
+
+    // Collect all the stage1 repsonses into a single vec. They're tiny (Groth16 proofs), so this
+    // is fine.
+    let stage1_resps = (0..num_subcircuits)
+        .into_par_iter()
+        .map(|subcircuit_idx| {
+            deserialize_from_path::<Stage1Response<E>>(
+                resp_dir,
+                STAGE1_RESP_FILENAME_PREFIX,
+                Some(subcircuit_idx),
+            )
+            .unwrap()
+        })
+        .collect::<Vec<_>>();
+
+    // Compute the aggregate
+    let agg_proof = final_agg_state.gen_agg_proof(&agg_ck, &stage1_resps);
+    // Save the proof
+    serialize_to_path(&agg_proof, coord_state_dir, FINAL_PROOF_PREFIX, None).unwrap();
 }
 
 fn main() {
@@ -279,7 +339,7 @@ fn main() {
         },
 
         Command::StartStage0 {
-            worker_req_dir,
+            req_dir,
             coord_state_dir,
             num_subcircuits,
         } => {
@@ -292,21 +352,24 @@ fn main() {
             let circ_params = MerkleTreeCircuitParams {
                 num_leaves: num_subcircuits / 2,
             };
-            begin_stage0(circ_params, &worker_req_dir, &coord_state_dir).unwrap();
+            begin_stage0(circ_params, &req_dir, &coord_state_dir).unwrap();
         },
 
         Command::StartStage1 {
-            stage0_resp_dir,
+            resp_dir,
             coord_state_dir,
-            worker_req_dir,
+            req_dir,
             num_subcircuits,
         } => {
-            process_stage0_resps(
-                num_subcircuits,
-                &stage0_resp_dir,
-                &coord_state_dir,
-                &worker_req_dir,
-            );
+            process_stage0_resps(num_subcircuits, &coord_state_dir, &req_dir, &resp_dir);
+        },
+
+        Command::EndProof {
+            coord_state_dir,
+            resp_dir,
+            num_subcircuits,
+        } => {
+            process_stage1_resps(num_subcircuits, &coord_state_dir, &resp_dir);
         },
     }
 }

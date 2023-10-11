@@ -1,14 +1,14 @@
 use crate::{
-    aggregation::{IppCom, SuperComCommittingKey},
+    aggregation::{AggProof, AggProvingKey, IppCom, SuperComCommittingKey},
     eval_tree::{
         ExecTreeLeaf, ExecTreeParams, MerkleRoot, SerializedLeaf, SerializedLeafVar, TreeConfig,
         TreeConfigGadget,
     },
     portal_manager::SetupPortalManager,
     subcircuit_circuit::SubcircuitWithPortalsProver,
-    util::{G16Com, G16ComSeed, G16ProvingKey},
+    util::{G16Com, G16ComSeed, G16Proof, G16ProvingKey},
     varname_hasher,
-    worker::Stage0Response,
+    worker::{Stage0Response, Stage1Response},
     CircuitWithPortals, RomTranscriptEntry, RunningEvals,
 };
 
@@ -385,7 +385,7 @@ where
         responses: &[Stage0Response<E>],
     ) -> CoordinatorStage1State<C, E, P>
     where
-        C: TreeConfig<Leaf = SerializedLeaf<E::ScalarField>>,
+        C: TreeConfig<Leaf = SerializedLeaf<E::ScalarField>, InnerDigest = E::ScalarField>,
     {
         let (coms, com_seeds) = {
             // Sort responses by subcircuit idx
@@ -419,7 +419,7 @@ where
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct CoordinatorStage1State<C, E, P>
 where
-    C: TreeConfig<Leaf = SerializedLeaf<E::ScalarField>>,
+    C: TreeConfig<Leaf = SerializedLeaf<E::ScalarField>, InnerDigest = E::ScalarField>,
     E: Pairing,
     P: CircuitWithPortals<E::ScalarField>,
 {
@@ -447,9 +447,43 @@ where
     exec_tree_leaf_auth_paths: Vec<MerklePath<C>>,
 }
 
+/// The state necessary to aggregate the stage1 responses
+#[derive(CanonicalSerialize, CanonicalDeserialize)]
+pub struct FinalAggState<E: Pairing> {
+    pub(crate) public_inputs: Vec<E::ScalarField>,
+    super_com: IppCom<E>,
+}
+
+impl<E: Pairing> FinalAggState<E> {
+    /// Compute the aggregate proof
+    pub fn gen_agg_proof(
+        &self,
+        agg_ck: &AggProvingKey<E>,
+        resps: &[Stage1Response<E>],
+    ) -> AggProof<E> {
+        // Collect the Groth16 proofs
+        let g16_proofs = {
+            // Sort responses by subcircuit idx
+            let mut buf = resps.to_vec();
+            buf.sort_by_key(|res| res.subcircuit_idx);
+
+            // Extract the proofs
+            buf.into_iter().map(|res| res.proof).collect::<Vec<_>>()
+        };
+
+        // Aggregate the proofs
+        agg_ck.agg_subcircuit_proofs(
+            &mut crate::util::ProtoTranscript::new(b"test-e2e"),
+            &self.super_com,
+            &g16_proofs,
+            &self.public_inputs,
+        )
+    }
+}
+
 impl<C, E, P> CoordinatorStage1State<C, E, P>
 where
-    C: TreeConfig<Leaf = SerializedLeaf<E::ScalarField>>,
+    C: TreeConfig<Leaf = SerializedLeaf<E::ScalarField>, InnerDigest = E::ScalarField>,
     E: Pairing,
     P: CircuitWithPortals<E::ScalarField>,
 {
@@ -526,6 +560,24 @@ where
                 .as_ref()
                 .unwrap(),
             circ_params: &self.circ_params,
+        }
+    }
+
+    /// Consumes this stage1 request generator and outputs all the state necessary to aggregate the
+    /// resulting responses
+    pub fn into_agg_state(self) -> FinalAggState<E> {
+        let (entry_chal, tr_chal) = self.exec_tree_leaves[0].evals.challenges.unwrap().clone();
+        let public_inputs: Vec<E::ScalarField> = [
+            entry_chal.to_field_elements().unwrap(),
+            tr_chal.to_field_elements().unwrap(),
+            self.exec_tree_root.to_field_elements().unwrap(),
+        ]
+        .concat();
+        assert_eq!(public_inputs.len(), 3);
+
+        FinalAggState {
+            public_inputs,
+            super_com: self.super_com,
         }
     }
 }
