@@ -17,8 +17,6 @@ use ark_relations::{
     r1cs::{ConstraintSystemRef, SynthesisError},
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-
-#[cfg(test)]
 use rand::Rng;
 
 pub(crate) type TestLeaf = [u8; 64];
@@ -87,7 +85,7 @@ fn subcircuit_idx_to_node_idx(subcircuit_idx: usize, num_leaves: usize) -> u32 {
 }
 
 #[derive(Clone)]
-pub(crate) struct MerkleTreeCircuit {
+pub struct MerkleTreeCircuit {
     pub(crate) leaves: Vec<TestLeaf>,
     pub(crate) root_hash: InnerHash,
 }
@@ -100,7 +98,6 @@ pub struct MerkleTreeCircuitParams {
     pub num_leaves: usize,
 }
 
-#[cfg(test)]
 impl MerkleTreeCircuit {
     /// Makes a Merkle tree with a random set of leaves. The size is given by `params`
     pub(crate) fn rand(mut rng: impl Rng, params: &MerkleTreeCircuitParams) -> Self {

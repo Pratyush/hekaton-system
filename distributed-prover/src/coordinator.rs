@@ -26,8 +26,13 @@ use ark_relations::r1cs::{ConstraintSystem, ConstraintSystemRef};
 use ark_serialize::{
     CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Write,
 };
+use rand::RngCore;
 
-fn get_subtraces<C, F, P>(circ: P) -> Vec<VecDeque<RomTranscriptEntry<F>>>
+/// Runs the full circuit (going through subcircuit 0..N in order) with a SetupPortalManager and
+/// records the time-ordered subtraces. This will also `assert!` that the constraints are satisfied
+/// if `check_satisfied` is set. This should always be set unless you're generating a proving key
+/// with a dummy circuit.
+fn get_subtraces<C, F, P>(circ: P, check_satisfied: bool) -> Vec<VecDeque<RomTranscriptEntry<F>>>
 where
     C: TreeConfig,
     F: PrimeField,
@@ -55,7 +60,9 @@ where
             .unwrap();
     }
 
-    assert!(cs.is_satisfied().unwrap());
+    if check_satisfied {
+        assert!(cs.is_satisfied().unwrap());
+    }
 
     pm.subtraces
 }
@@ -82,7 +89,9 @@ where
     CG: TreeConfigGadget<C, E::ScalarField, Leaf = SerializedLeafVar<E::ScalarField>>,
 {
     pub fn new(circ: P, tree_params: ExecTreeParams<C>) -> Self {
-        let time_ordered_subtraces = get_subtraces::<C, _, _>(circ.clone());
+        // Generate the traces. Do not bother to check whether the constraints are satisfied. This
+        // circuit's contents might be placeholder values.
+        let time_ordered_subtraces = get_subtraces::<C, _, _>(circ.clone(), false);
 
         G16ProvingKeyGenerator {
             tree_params,
@@ -92,8 +101,7 @@ where
         }
     }
 
-    pub fn gen_pk(&self, subcircuit_idx: usize) -> G16ProvingKey<E> {
-        let mut rng = rand::thread_rng();
+    pub fn gen_pk<R: RngCore>(&self, mut rng: R, subcircuit_idx: usize) -> G16ProvingKey<E> {
         let num_subcircuits = self.circ.num_subcircuits();
 
         // Create a Groth16 instance for each subcircuit
@@ -342,8 +350,8 @@ where
             .map(|idx| circ.get_serialized_witnesses(idx))
             .collect();
 
-        // Run the circuit and collect the execution trace
-        let time_ordered_subtraces = get_subtraces::<C, E::ScalarField, _>(circ);
+        // Run the circuit and collect the execution trace. Check that constraints are satisfied.
+        let time_ordered_subtraces = get_subtraces::<C, E::ScalarField, _>(circ, true);
         let addr_ordered_subtraces = sort_subtraces_by_addr(&time_ordered_subtraces);
 
         CoordinatorStage0State {

@@ -276,8 +276,10 @@ mod test {
     use crate::{
         aggregation::{AggProvingKey, SuperComCommittingKey},
         coordinator::{CoordinatorStage0State, G16ProvingKeyGenerator, Stage1Request},
-        poseidon_util::gen_merkle_params,
-        poseidon_util::{PoseidonTreeConfig as TestParams, PoseidonTreeConfigVar as TestParamsVar},
+        poseidon_util::{
+            gen_merkle_params, PoseidonTreeConfig as TestParams,
+            PoseidonTreeConfigVar as TestParamsVar,
+        },
         tree_hash_circuit::*,
         util::{G16Com, G16ComSeed},
         worker::{process_stage0_request, process_stage1_request, Stage0Response, Stage1Response},
@@ -396,7 +398,7 @@ mod test {
             );
             all_subcircuit_indices
                 .iter()
-                .map(|&i| generator.gen_pk(i))
+                .map(|&i| generator.gen_pk(&mut rng, i))
                 .collect::<Vec<_>>()
         };
 
