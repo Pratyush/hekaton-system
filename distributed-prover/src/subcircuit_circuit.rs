@@ -238,11 +238,6 @@ where
                 evals: pm.running_evals,
                 last_subtrace_entry,
             };
-            println!(
-                "so far full subcircuit at idx {} is {} constraints",
-                self.subcircuit_idx,
-                c.num_constraints()
-            );
             next_leaf_membership_var
                 .verify_membership(
                     &leaf_params_var,
@@ -251,11 +246,6 @@ where
                     &next_leaf.to_constraint_field()?,
                 )?
                 .enforce_equal(&Boolean::TRUE)?;
-            println!(
-                "full subcircuit at idx {} is {} constraints",
-                self.subcircuit_idx,
-                c.num_constraints()
-            );
 
             // If this is the last subcircuit, then verify that the time- and addr-ordered evals
             // are equal. This completes the permutation check.
@@ -265,6 +255,12 @@ where
                     .time_ordered_eval
                     .enforce_equal(&next_leaf.evals.addr_ordered_eval)?;
             }
+
+            println!(
+                "Full subcircuit {} costs {} constraints",
+                self.subcircuit_idx,
+                c.num_constraints()
+            );
 
             Ok(())
         })?;

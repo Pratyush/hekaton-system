@@ -21,7 +21,9 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 #[cfg(test)]
 use rand::Rng;
 
-pub(crate) type TestLeaf = [u8; 32];
+pub(crate) type TestLeaf = [u8; 64];
+const EMPTY_LEAF: TestLeaf = [0u8; 64];
+
 type InnerHash = [u8; 31];
 
 /// Truncates the SHA256 hash to 31 bytes, converts to bits (each byte to little-endian), and
@@ -102,7 +104,7 @@ pub struct MerkleTreeCircuitParams {
 impl MerkleTreeCircuit {
     /// Makes a Merkle tree with a random set of leaves. The size is given by `params`
     pub(crate) fn rand(mut rng: impl Rng, params: &MerkleTreeCircuitParams) -> Self {
-        let mut leaves = vec![TestLeaf::default(); params.num_leaves];
+        let mut leaves = vec![EMPTY_LEAF; params.num_leaves];
         leaves.iter_mut().for_each(|l| rng.fill(l));
         let root_hash = calculate_root(&leaves);
         MerkleTreeCircuit { leaves, root_hash }
@@ -128,7 +130,7 @@ impl<F: PrimeField> CircuitWithPortals<F> for MerkleTreeCircuit {
     fn new(params: &Self::Parameters) -> Self {
         let MerkleTreeCircuitParams { num_leaves } = params;
 
-        let leaves = vec![TestLeaf::default(); *num_leaves];
+        let leaves = vec![EMPTY_LEAF; *num_leaves];
         // Set the default root hash
         let root_hash = InnerHash::default();
 
@@ -272,7 +274,7 @@ impl<F: PrimeField> CircuitWithPortals<F> for MerkleTreeCircuit {
             "parent"
         };
         println!(
-            "Merkle tree circuit {node_idx} of type {ty} costs {} constraints",
+            "Test subcircuit {subcircuit_idx} of type {ty} costs {} constraints",
             ending_num_constraints - starting_num_constraints
         );
 
