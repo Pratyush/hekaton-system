@@ -43,9 +43,9 @@ enum Command {
     /// Generates the Groth16 proving keys for a test circuit consisting of `n` subcircuits. Places
     /// them in `OUT_DIR` with the name `g16_pk_i.bin`, where `i` is the subcircuit index.
     GenGroth16Keys {
-        /// Path to the outputted proving keys
+        /// Directory where the Groth16 proving keys will be stored
         #[clap(short, long, value_name = "DIR")]
-        out_dir: PathBuf,
+        g16_pk_dir: PathBuf,
 
         /// Test circuit param: Number of subcircuits. MUST be a power of two and greater than 1.
         #[clap(short, long, value_name = "NUM")]
@@ -119,7 +119,7 @@ enum Command {
     },
 }
 
-fn generate_g16_pks(circ_params: MerkleTreeCircuitParams, out_dir: &PathBuf) {
+fn generate_g16_pks(circ_params: MerkleTreeCircuitParams, g16_pk_dir: &PathBuf) {
     let mut rng = rand::thread_rng();
     let tree_params = gen_merkle_params();
 
@@ -137,7 +137,13 @@ fn generate_g16_pks(circ_params: MerkleTreeCircuitParams, out_dir: &PathBuf) {
         // Generate the subcircuit's G16 proving key
         let pk = generator.gen_pk(&mut rng, subcircuit_idx);
         // Save it
-        serialize_to_path(&pk, out_dir, G16_PK_FILENAME_PREFIX, Some(subcircuit_idx)).unwrap();
+        serialize_to_path(
+            &pk,
+            g16_pk_dir,
+            G16_PK_FILENAME_PREFIX,
+            Some(subcircuit_idx),
+        )
+        .unwrap();
     }
 }
 
@@ -306,7 +312,7 @@ fn main() {
 
     match args.command {
         Command::GenGroth16Keys {
-            out_dir,
+            g16_pk_dir,
             num_subcircuits,
         } => {
             assert!(
@@ -318,7 +324,7 @@ fn main() {
             let circ_params = MerkleTreeCircuitParams {
                 num_leaves: num_subcircuits / 2,
             };
-            generate_g16_pks(circ_params, &out_dir);
+            generate_g16_pks(circ_params, &g16_pk_dir);
         },
 
         Command::GenAggKey {

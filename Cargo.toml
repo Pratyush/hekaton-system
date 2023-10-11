@@ -37,4 +37,3 @@ debug = true
 [patch.crates-io.ark-serialize]
 git = "https://github.com/rozbb/algebra.git"
 branch = "canonicalserialize-vecdeque"
-features = ["derive"]
