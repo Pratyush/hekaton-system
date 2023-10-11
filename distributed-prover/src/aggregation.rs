@@ -196,9 +196,10 @@ pub struct IppComRightKey<E: Pairing> {
     w2: Vec<E::G1Affine>,
 }
 
+#[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct AggProvingKey<E: Pairing> {
     /// This is the key used to produce ALL inner-pairing commitments
-    pub(crate) ipp_ck: IppComKey<E>,
+    pub ipp_ck: IppComKey<E>,
 
     /// This is the key used to produce KZG proofs
     // TODO: You can derive an IppComKey from a KzgComKey. Snarkpack has a specialize() method
@@ -235,49 +236,53 @@ pub struct AggProvingKey<E: Pairing> {
 }
 
 impl<E: Pairing> AggProvingKey<E> {
-    pub fn new(ipp_ck: IppComKey<E>, kzg_ck: KzgComKey<E>, pks: &[G16ProvingKey<E>]) -> Self {
-        // Extract the group elements in the CRS corresponding to the public inputs
-        let s0 = pks
-            .par_iter()
-            .map(|pk| pk.vk.gamma_abc_g[0])
-            .collect::<Vec<_>>();
-        let s1 = pks
-            .par_iter()
-            .map(|pk| pk.vk.gamma_abc_g[1])
-            .collect::<Vec<_>>();
-        let s2 = pks
-            .par_iter()
-            .map(|pk| pk.vk.gamma_abc_g[2])
-            .collect::<Vec<_>>();
-        let s3 = pks
-            .par_iter()
-            .map(|pk| pk.vk.gamma_abc_g[3])
-            .collect::<Vec<_>>();
+    /// Creates an aggregation proving key using an IPP commitment key, a KZG commitment key, and a
+    /// lambda that will fetch the Groth16 proving key of the given circuit
+    pub fn new(
+        ipp_ck: IppComKey<E>,
+        kzg_ck: KzgComKey<E>,
+        pk_fetcher: impl Fn(usize) -> G16ProvingKey<E>,
+    ) -> Self {
+        let num_proofs = ipp_ck.v1.len();
+
+        // Group elements in the CRS corresponding to the public inputs
+        let mut s0 = Vec::with_capacity(num_proofs);
+        let mut s1 = Vec::with_capacity(num_proofs);
+        let mut s2 = Vec::with_capacity(num_proofs);
+        let mut s3 = Vec::with_capacity(num_proofs);
+        // Group elements in the CRS that get paired with the si values
+        let mut h = Vec::with_capacity(num_proofs);
+        // Group elements in the CRS that get paired with the si values
+        let mut delta0 = Vec::with_capacity(num_proofs);
+        let mut delta1 = Vec::with_capacity(num_proofs);
+        // TODO: Remove this once we have proofs sharing alpha and beta
+        let mut alpha = Vec::with_capacity(num_proofs);
+        let mut beta = Vec::with_capacity(num_proofs);
+
+        // Go through each Groth16 proving key and extract the values necessary to fill the above
+        // vectors
+        for i in 0..num_proofs {
+            let pk = pk_fetcher(i);
+
+            s0.push(pk.vk.gamma_abc_g[0]);
+            s1.push(pk.vk.gamma_abc_g[1]);
+            s2.push(pk.vk.gamma_abc_g[2]);
+            s3.push(pk.vk.gamma_abc_g[3]);
+            h.push(pk.vk.gamma_h);
+            delta0.push(pk.vk.deltas_h[0]);
+            delta1.push(pk.vk.deltas_h[1]);
+            alpha.push(pk.vk.alpha_g);
+            beta.push(pk.vk.beta_h);
+        }
 
         // Commit to those group elements
         let com_s0 = ipp_ck.commit_left(&s0);
         let com_s1 = ipp_ck.commit_left(&s1);
         let com_s2 = ipp_ck.commit_left(&s2);
         let com_s3 = ipp_ck.commit_left(&s3);
-
-        // Extract the group elements in the CRS that get paired with the si values
-        let h = pks.par_iter().map(|pk| pk.vk.gamma_h).collect::<Vec<_>>();
         let com_h = ipp_ck.commit_right(&h);
-
-        // Extract the group elements in the CRS that get paired with the si values
-        let delta0 = pks
-            .par_iter()
-            .map(|pk| pk.vk.deltas_h[0])
-            .collect::<Vec<_>>();
-        let delta1 = pks
-            .par_iter()
-            .map(|pk| pk.vk.deltas_h[1])
-            .collect::<Vec<_>>();
         let com_delta0 = ipp_ck.commit_right(&delta0);
         let com_delta1 = ipp_ck.commit_right(&delta1);
-
-        let alpha = pks.par_iter().map(|pk| pk.vk.alpha_g).collect::<Vec<_>>();
-        let beta = pks.par_iter().map(|pk| pk.vk.beta_h).collect::<Vec<_>>();
 
         AggProvingKey {
             ipp_ck,

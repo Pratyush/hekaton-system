@@ -26,6 +26,7 @@ impl<G: AffineRepr> KzgEvalProof<G> {
     }
 }
 
+#[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct KzgComKey<E: Pairing> {
     /// $\{g^a^i\}_{i=0}^{2n-1}$ where n is the number of proofs to be aggregated
     /// We take all powers instead of only ones from n -> 2n-1 (w commitment key
@@ -68,7 +69,7 @@ impl<E: Pairing> KzgComKey<E> {
         prove_evaluation(&self.g_alpha_powers, &self.g_beta_powers, fw, point)
     }
 
-    pub(crate) fn gen<R: RngCore>(mut rng: R, size: usize) -> Self {
+    pub fn gen<R: RngCore>(mut rng: R, size: usize) -> Self {
         let alpha = E::ScalarField::rand(&mut rng);
         let beta = E::ScalarField::rand(&mut rng);
         let g = E::G1::generator();

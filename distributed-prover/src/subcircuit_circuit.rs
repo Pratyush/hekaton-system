@@ -312,7 +312,7 @@ mod test {
         // this for later use in stage 1
         let stage0_reqs = all_subcircuit_indices
             .iter()
-            .map(|idx| stage0_state.gen_package(*idx).to_owned())
+            .map(|idx| stage0_state.gen_request(*idx).to_owned())
             .collect::<Vec<_>>();
 
         // Make fake stage0 responses that cover all the subcircuits and has random commitments
@@ -403,14 +403,13 @@ mod test {
         };
 
         // Make the stage0 coordinator state
-        let super_com_key = SuperComCommittingKey::<E>::gen(&mut rng, num_subcircuits);
-        let stage0_state = CoordinatorStage0State::new::<TestParams>(circ, super_com_key.clone());
+        let stage0_state = CoordinatorStage0State::new::<TestParams>(circ);
 
         // Workers receives stage0 packages containing the subtraces it will need for this run. We
         // imagine the worker saves their package to disk.
         let stage0_reqs = all_subcircuit_indices
             .iter()
-            .map(|idx| stage0_state.gen_package(*idx).to_owned())
+            .map(|&idx| stage0_state.gen_request(idx).to_owned())
             .collect::<Vec<_>>();
 
         // Make stage0 responses wrt the real proving keys. This contains all the commitments
@@ -428,8 +427,12 @@ mod test {
             .collect::<Vec<_>>();
 
         // Move on to stage 1. Make the coordinator state
-        let stage1_state =
-            stage0_state.process_stage0_responses(tree_params.clone(), &stage0_resps);
+        let super_com_key = SuperComCommittingKey::<E>::gen(&mut rng, num_subcircuits);
+        let stage1_state = stage0_state.process_stage0_responses(
+            &super_com_key,
+            tree_params.clone(),
+            &stage0_resps,
+        );
 
         // Compute the values needed to prove stage1 for all subcircuits
         let stage1_reqs: Vec<Stage1Request<TestParams, _, _>> = all_subcircuit_indices
@@ -479,7 +482,9 @@ mod test {
 
         // Do aggregation. Make up whatever keys are necessary
         let kzg_ck = crate::kzg::KzgComKey::gen(&mut rng, num_subcircuits);
-        let agg_ck = AggProvingKey::new(super_com_key, kzg_ck, &proving_keys);
+        let agg_ck = AggProvingKey::new(super_com_key, kzg_ck, |subcircuit_idx| {
+            proving_keys[subcircuit_idx].clone()
+        });
         let super_com = &stage1_state.super_com;
 
         // Compute the aggregate proof

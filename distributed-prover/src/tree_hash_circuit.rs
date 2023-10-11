@@ -100,7 +100,7 @@ pub struct MerkleTreeCircuitParams {
 
 impl MerkleTreeCircuit {
     /// Makes a Merkle tree with a random set of leaves. The size is given by `params`
-    pub(crate) fn rand(mut rng: impl Rng, params: &MerkleTreeCircuitParams) -> Self {
+    pub fn rand(mut rng: impl Rng, params: &MerkleTreeCircuitParams) -> Self {
         let mut leaves = vec![EMPTY_LEAF; params.num_leaves];
         leaves.iter_mut().for_each(|l| rng.fill(l));
         let root_hash = calculate_root(&leaves);

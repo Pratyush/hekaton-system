@@ -279,8 +279,6 @@ where
     addr_ordered_subtraces: Vec<VecDeque<RomTranscriptEntry<E::ScalarField>>>,
     all_serialized_witnesses: Vec<Vec<u8>>,
     circ_params: P::Parameters,
-    // TODO: speedup: note that super_com_key isn't needed until we actually process the coms
-    super_com_key: SuperComCommittingKey<E>,
 }
 
 /// This is sent to every worker at the beginning of every distributed proof. It contains
@@ -342,7 +340,7 @@ where
     E: Pairing,
     P: CircuitWithPortals<E::ScalarField>,
 {
-    pub fn new<C: TreeConfig>(circ: P, super_com_key: SuperComCommittingKey<E>) -> Self {
+    pub fn new<C: TreeConfig>(circ: P) -> Self {
         // Extract everything we need to know from the circuit
         let circ_params = circ.get_params();
         // Serialize the circuit's witnesses
@@ -359,12 +357,11 @@ where
             addr_ordered_subtraces,
             all_serialized_witnesses,
             circ_params,
-            super_com_key,
         }
     }
 
-    /// Creates a stage0 package and request commitment for the given set of subcircuits
-    pub fn gen_package(&self, subcircuit_idx: usize) -> Stage0RequestRef<E::ScalarField> {
+    /// Creates a stage0 request for commitment for the given set of subcircuits
+    pub fn gen_request(&self, subcircuit_idx: usize) -> Stage0RequestRef<E::ScalarField> {
         Stage0RequestRef {
             subcircuit_idx,
             time_ordered_subtrace: self
@@ -383,6 +380,7 @@ where
     /// Processes the stage 0 repsonses and move to stage 1
     pub fn process_stage0_responses<C>(
         self,
+        super_com_key: &SuperComCommittingKey<E>,
         tree_params: ExecTreeParams<C>,
         responses: &[Stage0Response<E>],
     ) -> CoordinatorStage1State<C, E, P>
@@ -403,7 +401,7 @@ where
 
         // Commit to the commitments. These are in G1, so it's a "left" commitment. Don't worry
         // about what that means
-        let super_com = self.super_com_key.commit_left(&coms);
+        let super_com = super_com_key.commit_left(&coms);
 
         CoordinatorStage1State::new(
             tree_params,
