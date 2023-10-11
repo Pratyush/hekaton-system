@@ -12,6 +12,7 @@ use crate::{
     CircuitWithPortals, RomTranscriptEntry, RunningEvals,
 };
 
+use core::marker::PhantomData;
 use std::collections::VecDeque;
 
 use ark_cp_groth16::r1cs_to_qap::LibsnarkReduction as QAP;
@@ -59,45 +60,62 @@ where
     pm.subtraces
 }
 
-pub(crate) fn gen_subcircuit_proving_keys<C, CG, E, P>(
-    leaf_params: &LeafParam<C>,
-    two_to_one_params: &TwoToOneParam<C>,
-    circ: P,
-) -> Vec<G16ProvingKey<E>>
+/// Generates Groth16 proving keys
+pub struct G16ProvingKeyGenerator<C, CG, E, P>
 where
     E: Pairing,
+    P: CircuitWithPortals<E::ScalarField>,
     C: TreeConfig<Leaf = SerializedLeaf>,
     CG: TreeConfigGadget<C, E::ScalarField, Leaf = SerializedLeafVar<E::ScalarField>>,
-    P: CircuitWithPortals<E::ScalarField> + Clone,
 {
-    let mut rng = rand::thread_rng();
-    let num_subcircuits = circ.num_subcircuits();
-    let time_ordered_subtraces = get_subtraces::<C, _, _>(circ.clone());
+    circ: P,
+    time_ordered_subtraces: Vec<VecDeque<RomTranscriptEntry<E::ScalarField>>>,
+    _marker: PhantomData<(C, CG)>,
+}
 
-    // Create a Groth16 instance for each subcircuit
-    time_ordered_subtraces
-        .into_iter()
-        .enumerate()
-        .map(|(subcircuit_idx, subtrace)| {
-            let mut subcirc = SubcircuitWithPortalsProver::<_, P, _, CG>::new(
-                leaf_params.clone(),
-                two_to_one_params.clone(),
-                num_subcircuits,
-            );
+impl<C, CG, E, P> G16ProvingKeyGenerator<C, CG, E, P>
+where
+    E: Pairing,
+    P: CircuitWithPortals<E::ScalarField> + Clone,
+    C: TreeConfig<Leaf = SerializedLeaf>,
+    CG: TreeConfigGadget<C, E::ScalarField, Leaf = SerializedLeafVar<E::ScalarField>>,
+{
+    pub fn new(circ: P) -> Self {
+        let time_ordered_subtraces = get_subtraces::<C, _, _>(circ.clone());
 
-            // Set the index and the underlying circuit
-            subcirc.subcircuit_idx = subcircuit_idx;
-            subcirc.circ = Some(circ.clone());
+        G16ProvingKeyGenerator {
+            circ,
+            time_ordered_subtraces,
+            _marker: PhantomData,
+        }
+    }
 
-            // Make the subtraces the same. These are just placeholders anyway. They just have to be
-            // the right length.
-            subcirc.time_ordered_subtrace = subtrace.clone();
-            subcirc.addr_ordered_subtrace = subtrace.clone();
+    pub fn gen_pk(&self, subcircuit_idx: usize) -> G16ProvingKey<E> {
+        let mut rng = rand::thread_rng();
+        let num_subcircuits = self.circ.num_subcircuits();
 
-            // Generate the CRS
-            ark_cp_groth16::generator::generate_parameters::<_, E, QAP>(subcirc, &mut rng).unwrap()
-        })
-        .collect()
+        let (leaf_params, two_to_one_params) = gen_merkle_params::<C>();
+
+        // Create a Groth16 instance for each subcircuit
+        let subtrace = &self.time_ordered_subtraces[subcircuit_idx];
+        let mut subcirc = SubcircuitWithPortalsProver::<_, P, _, CG>::new(
+            leaf_params.clone(),
+            two_to_one_params.clone(),
+            num_subcircuits,
+        );
+
+        // Set the index and the underlying circuit
+        subcirc.subcircuit_idx = subcircuit_idx;
+        subcirc.circ = Some(self.circ.clone());
+
+        // Make the subtraces the same. These are just placeholders anyway. They just have to be
+        // the right length.
+        subcirc.time_ordered_subtrace = subtrace.clone();
+        subcirc.addr_ordered_subtrace = subtrace.clone();
+
+        // Generate the CRS
+        ark_cp_groth16::generator::generate_parameters::<_, E, QAP>(subcirc, &mut rng).unwrap()
+    }
 }
 
 /// Hashes the trace commitment and returns `(entry_chal, tr_chal)`

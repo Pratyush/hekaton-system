@@ -202,6 +202,8 @@ impl<F: PrimeField> CircuitWithPortals<F> for MerkleTreeCircuit {
         subcircuit_idx: usize,
         pm: &mut P,
     ) -> Result<(), SynthesisError> {
+        let starting_num_constraints = cs.num_constraints();
+
         // Special padding subcircuit. If it's the last subcircuit, do nothing. This pads us out to
         // a power of two
         if subcircuit_idx == <Self as CircuitWithPortals<F>>::num_subcircuits(&self) - 1 {
@@ -259,6 +261,20 @@ impl<F: PrimeField> CircuitWithPortals<F> for MerkleTreeCircuit {
                 parent_hash.enforce_equal(&expected_root_hash)?;
             }
         }
+
+        // Print out how big this circuit was
+        let ending_num_constraints = cs.num_constraints();
+        let ty = if is_leaf {
+            "leaf"
+        } else if is_root {
+            "root"
+        } else {
+            "parent"
+        };
+        println!(
+            "Merkle tree circuit {node_idx} of type {ty} costs {} constraints",
+            ending_num_constraints - starting_num_constraints
+        );
 
         Ok(())
     }

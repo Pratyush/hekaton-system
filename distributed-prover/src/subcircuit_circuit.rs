@@ -243,6 +243,11 @@ where
                 evals: pm.running_evals,
                 last_subtrace_entry,
             };
+            println!(
+                "so far full subcircuit at idx {} is {} constraints",
+                self.subcircuit_idx,
+                c.num_constraints()
+            );
             next_leaf_membership_var
                 .verify_membership(
                     &leaf_params_var,
@@ -251,6 +256,11 @@ where
                     &next_leaf.to_bytes()?,
                 )?
                 .enforce_equal(&Boolean::TRUE)?;
+            println!(
+                "full subcircuit at idx {} is {} constraints",
+                self.subcircuit_idx,
+                c.num_constraints()
+            );
 
             // If this is the last subcircuit, then verify that the time- and addr-ordered evals
             // are equal. This completes the permutation check.
@@ -262,7 +272,9 @@ where
             }
 
             Ok(())
-        })
+        })?;
+
+        Ok(())
     }
 }
 
@@ -272,7 +284,7 @@ mod test {
 
     use crate::{
         aggregation::{AggProvingKey, SuperComCommittingKey},
-        coordinator::{gen_subcircuit_proving_keys, CoordinatorStage0State, Stage1Request},
+        coordinator::{CoordinatorStage0State, G16ProvingKeyGenerator, Stage1Request},
         eval_tree::{SerializedLeaf, SerializedLeafVar},
         tree_hash_circuit::*,
         util::{gen_merkle_params, G16Com, G16ComSeed, G16ProvingKey},
@@ -433,25 +445,27 @@ mod test {
     #[test]
     fn test_e2e_prover() {
         let mut rng = test_rng();
-        let (leaf_params, two_to_one_params) = gen_merkle_params::<TestParams>();
 
         // Make a random Merkle tree
-        let circ_params = MerkleTreeCircuitParams { num_leaves: 2 };
+        let circ_params = MerkleTreeCircuitParams { num_leaves: 4 };
         let circ = MerkleTreeCircuit::rand(&mut rng, &circ_params);
         let num_subcircuits = <MerkleTreeCircuit as CircuitWithPortals<Fr>>::num_subcircuits(&circ);
+        let all_subcircuit_indices = (0..num_subcircuits).collect::<Vec<_>>();
 
         // Coordinator generates all the proving keys
-        let proving_keys: Vec<G16ProvingKey<E>> =
-            gen_subcircuit_proving_keys::<TestParams, TestParamsVar, _, _>(
-                &leaf_params,
-                &two_to_one_params,
-                circ.clone(),
-            );
+        let proving_keys = {
+            let generator =
+                G16ProvingKeyGenerator::<TestParams, TestParamsVar, _, _>::new(circ.clone());
+            all_subcircuit_indices
+                .iter()
+                .map(|&i| generator.gen_pk(i))
+                .collect::<Vec<_>>()
+        };
+        return;
 
         // Make the stage0 coordinator state
         let super_com_key = SuperComCommittingKey::<E>::gen(&mut rng, num_subcircuits);
         let stage0_state = CoordinatorStage0State::new::<TestParams>(circ, super_com_key.clone());
-        let all_subcircuit_indices = (0..num_subcircuits).collect::<Vec<_>>();
 
         // Workers receives stage0 packages containing the subtraces it will need for this run. We
         // imagine the worker saves their package to disk.

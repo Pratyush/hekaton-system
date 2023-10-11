@@ -14,17 +14,16 @@ use ark_relations::{
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use xxhash_rust::xxh3::xxh3_128;
 
-//mod worker_node;
-mod aggregation;
-mod coordinator;
-mod eval_tree;
-mod kzg;
-mod pairing_ops;
-mod portal_manager;
-mod subcircuit_circuit;
-mod tree_hash_circuit;
-mod util;
-mod worker;
+pub mod aggregation;
+pub mod coordinator;
+pub mod eval_tree;
+pub mod kzg;
+pub mod pairing_ops;
+pub mod portal_manager;
+pub mod subcircuit_circuit;
+pub mod tree_hash_circuit;
+pub mod util;
+pub mod worker;
 
 use portal_manager::PortalManager;
 
