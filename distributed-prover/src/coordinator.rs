@@ -286,7 +286,7 @@ where
 /// also requests some stage0 commitments from the worker.
 #[derive(Clone, CanonicalDeserialize)]
 pub struct Stage0Request<F: PrimeField> {
-    pub(crate) subcircuit_idx: usize,
+    pub subcircuit_idx: usize,
     pub(crate) time_ordered_subtrace: VecDeque<RomTranscriptEntry<F>>,
     pub(crate) addr_ordered_subtrace: VecDeque<RomTranscriptEntry<F>>,
 }

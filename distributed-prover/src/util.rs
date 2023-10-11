@@ -5,9 +5,10 @@ use crate::eval_tree::{
 
 use ark_crypto_primitives::crh::{CRHScheme, TwoToOneCRHScheme};
 use ark_ff::PrimeField;
-use ark_serialize::CanonicalSerialize;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rand::SeedableRng;
 use rand_chacha::ChaCha12Rng;
+use std::{fs::File, io, path::PathBuf};
 
 pub use ark_cp_groth16::data_structures::{
     Comm as G16Com, Proof as G16Proof, ProvingKey as G16ProvingKey,
@@ -67,4 +68,48 @@ impl TranscriptProtocol for ProtoTranscript {
         let mut rng = ChaCha12Rng::from_seed(buf);
         F::rand(&mut rng)
     }
+}
+
+// Helpers for the binaries
+
+/// Serializes the given value to "DIR/FILENAMEPREFIX_INDEX". The "_INDEX" part is ommitted if no
+/// index is given.
+pub fn serialize_to_path<T: CanonicalSerialize>(
+    val: &T,
+    dir: &PathBuf,
+    filename_prefix: &str,
+    index: Option<usize>,
+) -> io::Result<()> {
+    let idx_str = if let Some(i) = index {
+        format!("_{i}")
+    } else {
+        "".to_string()
+    };
+    let filename = format!("{}{}.bin", filename_prefix, idx_str);
+
+    let file_path = dir.join(filename);
+
+    let mut f = File::create(file_path)?;
+    val.serialize_uncompressed(&mut f).unwrap();
+
+    Ok(())
+}
+
+/// Deserializes "DIR/FILENAMEPREFIX_INDEX" to the given type. The "_INDEX" part is ommitted if no
+/// index is given.
+pub fn deserialize_from_path<T: CanonicalDeserialize>(
+    dir: &PathBuf,
+    filename_prefix: &str,
+    index: Option<usize>,
+) -> io::Result<T> {
+    let idx_str = if let Some(i) = index {
+        format!("_{i}")
+    } else {
+        "".to_string()
+    };
+    let filename = format!("{}{}.bin", filename_prefix, idx_str);
+
+    let file_path = dir.join(filename);
+    let mut f = File::open(&file_path).expect(&format!("couldn't open file {:?}", file_path));
+    Ok(T::deserialize_uncompressed_unchecked(&mut f).unwrap())
 }

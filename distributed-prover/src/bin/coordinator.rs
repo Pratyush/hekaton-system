@@ -6,7 +6,7 @@ use distributed_prover::{
         gen_merkle_params, PoseidonTreeConfig as TreeConfig, PoseidonTreeConfigVar as TreeConfigVar,
     },
     tree_hash_circuit::{MerkleTreeCircuit, MerkleTreeCircuitParams},
-    util::{G16Com, G16ComSeed, G16ProvingKey},
+    util::{deserialize_from_path, serialize_to_path, G16Com, G16ComSeed, G16ProvingKey},
     worker::{process_stage0_request, process_stage1_request, Stage0Response, Stage1Response},
     CircuitWithPortals,
 };
@@ -21,6 +21,7 @@ use clap::{Parser, Subcommand};
 const G16_PK_FILENAME_PREFIX: &str = "g16_pk";
 const AGG_CK_FILENAME_PREFIX: &str = "agg_ck";
 const STAGE0_REQ_FILENAME_PREFIX: &str = "stage0_req";
+const STAGE0_RESP_FILENAME_PREFIX: &str = "stage0_resp";
 const COORD_STATE_FILENAME_PREFIX: &str = "coordinator_state";
 
 #[derive(Parser)]
@@ -44,7 +45,7 @@ enum Command {
     },
 
     /// Generates an aggregation commitment key for a test circuit consisting of `n` subcircuits.
-    /// Places it in `STATE_DIR/agg_ck.bin`.
+    /// Places it in `COORD_STATE_DIR/agg_ck.bin`.
     GenAggKey {
         /// Path to where the Groth16 proving keys are stored
         #[clap(short, long, value_name = "DIR")]
@@ -52,7 +53,7 @@ enum Command {
 
         /// Path to the coordinator's state directory
         #[clap(short, long, value_name = "DIR")]
-        state_dir: PathBuf,
+        coord_state_dir: PathBuf,
 
         /// Test circuit param: Number of subcircuits. MUST be a power of two and greater than 1.
         #[clap(short, long, value_name = "NUM")]
@@ -70,7 +71,7 @@ enum Command {
         /// Path to place the coordinator's intermediate state once all the requests are generated.
         /// This is named `coord_state.bin`.
         #[clap(short, long, value_name = "DIR")]
-        state_dir: PathBuf,
+        coord_state_dir: PathBuf,
 
         /// Test circuit param: Number of subcircuits. MUST be a power of two and greater than 1.
         #[clap(short, long, value_name = "NUM")]
@@ -78,7 +79,7 @@ enum Command {
     },
 }
 
-fn generate_g16_pks(circ_params: MerkleTreeCircuitParams, out_dir: PathBuf) -> io::Result<()> {
+fn generate_g16_pks(circ_params: MerkleTreeCircuitParams, out_dir: &PathBuf) {
     let mut rng = rand::thread_rng();
     let tree_params = gen_merkle_params();
 
@@ -95,34 +96,22 @@ fn generate_g16_pks(circ_params: MerkleTreeCircuitParams, out_dir: PathBuf) -> i
     for subcircuit_idx in 0..num_subcircuits {
         // Generate the subcircuit's G16 proving key
         let pk = generator.gen_pk(&mut rng, subcircuit_idx);
-
-        // Construct the output filename
-        let filename = format!("{}_{}.bin", G16_PK_FILENAME_PREFIX, subcircuit_idx);
-        let out_path = out_dir.join(filename);
-
-        // Write to file
-        let mut f = File::create(out_path)?;
-        pk.serialize_uncompressed(&mut f).unwrap();
+        // Save it
+        serialize_to_path(&pk, out_dir, G16_PK_FILENAME_PREFIX, Some(subcircuit_idx)).unwrap();
     }
-
-    Ok(())
 }
 
 fn generate_agg_ck(
     circ_params: MerkleTreeCircuitParams,
-    g16_pk_dir: PathBuf,
-    state_dir: PathBuf,
-) -> io::Result<()> {
+    g16_pk_dir: &PathBuf,
+    coord_state_dir: &PathBuf,
+) {
     let mut rng = rand::thread_rng();
     let num_subcircuits = 2 * circ_params.num_leaves;
 
     // Create a lambda that returns the given subcircuit's Groth16 proving key
     let pk_fetcher = |subcircuit_idx| {
-        // Construct the output filename
-        let filename = format!("{}{}.bin", G16_PK_FILENAME_PREFIX, subcircuit_idx);
-        let out_path = g16_pk_dir.join(filename);
-        let mut f = File::open(&out_path).expect(&format!("couldn't open file {:?}", out_path));
-        G16ProvingKey::deserialize_uncompressed_unchecked(&mut f).unwrap()
+        deserialize_from_path(g16_pk_dir, G16_PK_FILENAME_PREFIX, Some(subcircuit_idx)).unwrap()
     };
 
     // Construct the aggregator commitment key
@@ -133,21 +122,14 @@ fn generate_agg_ck(
         AggProvingKey::new(super_com_key, kzg_ck, pk_fetcher)
     };
 
-    // Construct the output filename
-    let filename = format!("{}.bin", AGG_CK_FILENAME_PREFIX);
-    let out_path = state_dir.join(filename);
-
-    // Write to file
-    let mut f = File::create(out_path)?;
-    agg_ck.serialize_uncompressed(&mut f).unwrap();
-
-    Ok(())
+    // Save the aggregator key
+    serialize_to_path(&agg_ck, coord_state_dir, AGG_CK_FILENAME_PREFIX, None).unwrap();
 }
 
 fn begin_stage0(
     circ_params: MerkleTreeCircuitParams,
-    worker_req_dir: PathBuf,
-    state_dir: PathBuf,
+    worker_req_dir: &PathBuf,
+    coord_state_dir: &PathBuf,
 ) -> io::Result<()> {
     let mut rng = rand::thread_rng();
     let num_subcircuits = 2 * circ_params.num_leaves;
@@ -162,23 +144,21 @@ fn begin_stage0(
     // imagine the worker saves their package to disk.
     for subcircuit_idx in 0..num_subcircuits {
         let req = stage0_state.gen_request(subcircuit_idx);
-
-        // Construct the request output filename
-        let filename = format!("{}_{}.bin", STAGE0_REQ_FILENAME_PREFIX, subcircuit_idx);
-        let out_path = worker_req_dir.join(filename);
-
-        // Write to file
-        let mut f = File::create(out_path)?;
-        req.serialize_uncompressed(&mut f).unwrap();
+        serialize_to_path(
+            &req,
+            worker_req_dir,
+            STAGE0_REQ_FILENAME_PREFIX,
+            Some(subcircuit_idx),
+        )?;
     }
 
-    // Construct the state filename
-    let filename = format!("{}.bin", COORD_STATE_FILENAME_PREFIX);
-    let out_path = state_dir.join(filename);
-
-    // Write to file
-    let mut f = File::create(out_path)?;
-    stage0_state.serialize_uncompressed(&mut f).unwrap();
+    // Save the coordinator state
+    serialize_to_path(
+        &stage0_state,
+        coord_state_dir,
+        COORD_STATE_FILENAME_PREFIX,
+        None,
+    )?;
 
     Ok(())
 }
@@ -200,12 +180,12 @@ fn main() {
             let circ_params = MerkleTreeCircuitParams {
                 num_leaves: num_subcircuits / 2,
             };
-            generate_g16_pks(circ_params, out_dir).unwrap();
+            generate_g16_pks(circ_params, &out_dir);
         },
 
         Command::GenAggKey {
             g16_pk_dir,
-            state_dir,
+            coord_state_dir,
             num_subcircuits,
         } => {
             assert!(
@@ -217,12 +197,12 @@ fn main() {
             let circ_params = MerkleTreeCircuitParams {
                 num_leaves: num_subcircuits / 2,
             };
-            generate_agg_ck(circ_params, g16_pk_dir, state_dir).unwrap();
+            generate_agg_ck(circ_params, &g16_pk_dir, &coord_state_dir);
         },
 
         Command::StartRandomProof {
             worker_req_dir,
-            state_dir,
+            coord_state_dir,
             num_subcircuits,
         } => {
             assert!(
@@ -234,7 +214,7 @@ fn main() {
             let circ_params = MerkleTreeCircuitParams {
                 num_leaves: num_subcircuits / 2,
             };
-            begin_stage0(circ_params, worker_req_dir, state_dir).unwrap();
+            begin_stage0(circ_params, &worker_req_dir, &coord_state_dir).unwrap();
         },
     }
 }
