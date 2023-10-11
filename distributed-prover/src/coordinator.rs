@@ -1,12 +1,12 @@
 use crate::{
     aggregation::{IppCom, SuperComCommittingKey},
     eval_tree::{
-        ExecTreeLeaf, LeafParam, MerkleRoot, SerializedLeaf, SerializedLeafVar, TreeConfig,
-        TreeConfigGadget, TwoToOneParam,
+        ExecTreeLeaf, ExecTreeParams, MerkleRoot, SerializedLeaf, SerializedLeafVar, TreeConfig,
+        TreeConfigGadget,
     },
     portal_manager::SetupPortalManager,
     subcircuit_circuit::SubcircuitWithPortalsProver,
-    util::{gen_merkle_params, G16Com, G16ComSeed, G16ProvingKey},
+    util::{G16Com, G16ComSeed, G16ProvingKey},
     varname_hasher,
     worker::Stage0Response,
     CircuitWithPortals, RomTranscriptEntry, RunningEvals,
@@ -21,13 +21,13 @@ use ark_crypto_primitives::{
     merkle_tree::{MerkleTree, Path as MerklePath},
 };
 use ark_ec::pairing::Pairing;
-use ark_ff::PrimeField;
+use ark_ff::{PrimeField, ToConstraintField};
 use ark_relations::r1cs::{ConstraintSystem, ConstraintSystemRef};
 use ark_serialize::{
     CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Write,
 };
 
-fn get_subtraces<C, F, P>(mut circ: P) -> Vec<VecDeque<RomTranscriptEntry<F>>>
+fn get_subtraces<C, F, P>(circ: P) -> Vec<VecDeque<RomTranscriptEntry<F>>>
 where
     C: TreeConfig,
     F: PrimeField,
@@ -65,9 +65,10 @@ pub struct G16ProvingKeyGenerator<C, CG, E, P>
 where
     E: Pairing,
     P: CircuitWithPortals<E::ScalarField>,
-    C: TreeConfig<Leaf = SerializedLeaf>,
+    C: TreeConfig<Leaf = SerializedLeaf<E::ScalarField>>,
     CG: TreeConfigGadget<C, E::ScalarField, Leaf = SerializedLeafVar<E::ScalarField>>,
 {
+    tree_params: ExecTreeParams<C>,
     circ: P,
     time_ordered_subtraces: Vec<VecDeque<RomTranscriptEntry<E::ScalarField>>>,
     _marker: PhantomData<(C, CG)>,
@@ -77,13 +78,14 @@ impl<C, CG, E, P> G16ProvingKeyGenerator<C, CG, E, P>
 where
     E: Pairing,
     P: CircuitWithPortals<E::ScalarField> + Clone,
-    C: TreeConfig<Leaf = SerializedLeaf>,
+    C: TreeConfig<Leaf = SerializedLeaf<E::ScalarField>>,
     CG: TreeConfigGadget<C, E::ScalarField, Leaf = SerializedLeafVar<E::ScalarField>>,
 {
-    pub fn new(circ: P) -> Self {
+    pub fn new(circ: P, tree_params: ExecTreeParams<C>) -> Self {
         let time_ordered_subtraces = get_subtraces::<C, _, _>(circ.clone());
 
         G16ProvingKeyGenerator {
+            tree_params,
             circ,
             time_ordered_subtraces,
             _marker: PhantomData,
@@ -94,13 +96,11 @@ where
         let mut rng = rand::thread_rng();
         let num_subcircuits = self.circ.num_subcircuits();
 
-        let (leaf_params, two_to_one_params) = gen_merkle_params::<C>();
-
         // Create a Groth16 instance for each subcircuit
         let subtrace = &self.time_ordered_subtraces[subcircuit_idx];
+        // TODO: Avoid the clones here
         let mut subcirc = SubcircuitWithPortalsProver::<_, P, _, CG>::new(
-            leaf_params.clone(),
-            two_to_one_params.clone(),
+            self.tree_params.clone(),
             num_subcircuits,
         );
 
@@ -177,15 +177,14 @@ fn sort_subtraces_by_addr<F: PrimeField>(
 /// where `last_trace_elem` is the last element of the i-th address-ordered subtrace. Returns the
 /// computed tree and its leaves
 fn generate_exec_tree<E, C>(
-    leaf_params: &LeafParam<C>,
-    two_to_one_params: &TwoToOneParam<C>,
+    tree_params: &ExecTreeParams<C>,
     super_com: &IppCom<E>,
     time_ordered_subtraces: &[VecDeque<RomTranscriptEntry<E::ScalarField>>],
     addr_ordered_subtraces: &[VecDeque<RomTranscriptEntry<E::ScalarField>>],
 ) -> (MerkleTree<C>, Vec<ExecTreeLeaf<E::ScalarField>>)
 where
     E: Pairing,
-    C: TreeConfig<Leaf = SerializedLeaf>,
+    C: TreeConfig<Leaf = SerializedLeaf<E::ScalarField>>,
 {
     let (entry_chal, tr_chal) = get_chals(&super_com);
 
@@ -217,10 +216,15 @@ where
         leaves.push(leaf);
     }
 
-    let serialized_leaves = leaves.iter().map(|leaf| leaf.to_bytes());
+    let serialized_leaves = leaves.iter().map(|leaf| leaf.to_field_elements().unwrap());
 
     (
-        MerkleTree::new(leaf_params, two_to_one_params, serialized_leaves).unwrap(),
+        MerkleTree::new(
+            &tree_params.leaf_params,
+            &tree_params.two_to_one_params,
+            serialized_leaves,
+        )
+        .unwrap(),
         leaves,
     )
 }
@@ -371,10 +375,11 @@ where
     /// Processes the stage 0 repsonses and move to stage 1
     pub fn process_stage0_responses<C>(
         self,
+        tree_params: ExecTreeParams<C>,
         responses: &[Stage0Response<E>],
     ) -> CoordinatorStage1State<C, E, P>
     where
-        C: TreeConfig<Leaf = SerializedLeaf>,
+        C: TreeConfig<Leaf = SerializedLeaf<E::ScalarField>>,
     {
         let (coms, com_seeds) = {
             // Sort responses by subcircuit idx
@@ -393,6 +398,7 @@ where
         let super_com = self.super_com_key.commit_left(&coms);
 
         CoordinatorStage1State::new(
+            tree_params,
             self.time_ordered_subtraces,
             self.addr_ordered_subtraces,
             self.all_serialized_witnesses,
@@ -407,7 +413,7 @@ where
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct CoordinatorStage1State<C, E, P>
 where
-    C: TreeConfig<Leaf = SerializedLeaf>,
+    C: TreeConfig<Leaf = SerializedLeaf<E::ScalarField>>,
     E: Pairing,
     P: CircuitWithPortals<E::ScalarField>,
 {
@@ -437,11 +443,12 @@ where
 
 impl<C, E, P> CoordinatorStage1State<C, E, P>
 where
-    C: TreeConfig<Leaf = SerializedLeaf>,
+    C: TreeConfig<Leaf = SerializedLeaf<E::ScalarField>>,
     E: Pairing,
     P: CircuitWithPortals<E::ScalarField>,
 {
     fn new(
+        tree_params: ExecTreeParams<C>,
         time_ordered_subtraces: Vec<VecDeque<RomTranscriptEntry<E::ScalarField>>>,
         addr_ordered_subtraces: Vec<VecDeque<RomTranscriptEntry<E::ScalarField>>>,
         all_serialized_witnesses: Vec<Vec<u8>>,
@@ -450,12 +457,9 @@ where
         seeds: Vec<G16ComSeed>,
         super_com: IppCom<E>,
     ) -> Self {
-        let (leaf_params, two_to_one_params) = gen_merkle_params::<C>();
-
         // Generate the execution tree
         let (exec_tree, tree_leaves) = generate_exec_tree::<E, C>(
-            &leaf_params,
-            &two_to_one_params,
+            &tree_params,
             &super_com,
             &time_ordered_subtraces,
             &addr_ordered_subtraces,

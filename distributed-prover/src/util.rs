@@ -20,17 +20,6 @@ pub type G16ComSeed = [u8; 32];
 
 const MERKLE_HASH_PARAMS_SEED: &'static [u8; 32] = b"horizontal-snark-hash-param-seed";
 
-pub(crate) fn gen_merkle_params<C>() -> (LeafParam<C>, TwoToOneParam<C>)
-where
-    C: TreeConfig,
-{
-    let mut rng = ChaCha12Rng::from_seed(*MERKLE_HASH_PARAMS_SEED);
-    (
-        <C::LeafHash as CRHScheme>::setup(&mut rng).unwrap(),
-        <C::TwoToOneHash as TwoToOneCRHScheme>::setup(&mut rng).unwrap(),
-    )
-}
-
 pub(crate) fn log2(x: usize) -> usize {
     // We set log2(0) == 0
     if x == 0 {

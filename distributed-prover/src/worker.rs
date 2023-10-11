@@ -1,8 +1,8 @@
 use crate::{
     coordinator::{Stage0Request, Stage1Request},
-    eval_tree::{SerializedLeaf, SerializedLeafVar, TreeConfig, TreeConfigGadget},
+    eval_tree::{ExecTreeParams, SerializedLeaf, SerializedLeafVar, TreeConfig, TreeConfigGadget},
     subcircuit_circuit::SubcircuitWithPortalsProver,
-    util::{gen_merkle_params, G16Com, G16ComSeed, G16ProvingKey},
+    util::{G16Com, G16ComSeed, G16ProvingKey},
     CircuitWithPortals,
 };
 
@@ -13,6 +13,7 @@ use ark_cp_groth16::{
     Proof as G16Proof,
 };
 use ark_ec::pairing::Pairing;
+use ark_r1cs_std::fields::fp::FpVar;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rand::RngCore;
 use rand::{Rng, SeedableRng};
@@ -36,11 +37,12 @@ pub struct Stage1Response<E: Pairing> {
 /// Consumes the stage0 request and performs the necessary Groth16 commitment
 pub fn process_stage0_request<C, CG, E, P, R>(
     mut rng: R,
+    tree_params: ExecTreeParams<C>,
     pk: &G16ProvingKey<E>,
     req: Stage0Request<E::ScalarField>,
 ) -> Stage0Response<E>
 where
-    C: TreeConfig<Leaf = SerializedLeaf>,
+    C: TreeConfig<Leaf = SerializedLeaf<E::ScalarField>>,
     CG: TreeConfigGadget<C, E::ScalarField, Leaf = SerializedLeafVar<E::ScalarField>>,
     E: Pairing,
     P: CircuitWithPortals<E::ScalarField> + Clone,
@@ -53,9 +55,6 @@ where
         addr_ordered_subtrace,
     } = req;
 
-    // Generate the merkle params
-    let (leaf_params, two_to_one_params) = gen_merkle_params::<C>();
-
     // Commit to their stage 0 inputs (ie the subtraces), and save the commitments and RNG seeds
 
     // Make an empty prover
@@ -64,11 +63,7 @@ where
     // Make it 2 so that we don't get underflow by accident
     let num_subcircuits = 2;
     // TODO: Make this circuit take refs. Avoid the cloning
-    let mut prover = SubcircuitWithPortalsProver::<_, P, _, CG>::new(
-        leaf_params,
-        two_to_one_params,
-        num_subcircuits,
-    );
+    let mut prover = SubcircuitWithPortalsProver::<_, P, _, CG>::new(tree_params, num_subcircuits);
 
     // Fill in the correct subcircuit index and subtrace data
     prover.subcircuit_idx = subcircuit_idx;
@@ -96,20 +91,19 @@ where
 /// produces a Groth16 proof
 pub fn process_stage1_request<C, CG, E, P, R>(
     mut rng: R,
+    tree_params: ExecTreeParams<C>,
     pk: &G16ProvingKey<E>,
     stage0_req: Stage0Request<E::ScalarField>,
     stage0_resp: Stage0Response<E>,
     stage1_req: Stage1Request<C, E::ScalarField, P>,
 ) -> Stage1Response<E>
 where
-    C: TreeConfig<Leaf = SerializedLeaf>,
+    C: TreeConfig<Leaf = SerializedLeaf<E::ScalarField>>,
     CG: TreeConfigGadget<C, E::ScalarField, Leaf = SerializedLeafVar<E::ScalarField>>,
     E: Pairing,
     P: CircuitWithPortals<E::ScalarField>,
     R: RngCore,
 {
-    let (leaf_params, two_to_one_params) = gen_merkle_params::<C>();
-
     // Unpack everything we'll need
     let Stage1Request {
         subcircuit_idx,
@@ -130,8 +124,7 @@ where
     let real_circ = SubcircuitWithPortalsProver {
         subcircuit_idx,
         circ: Some(partial_circ),
-        leaf_params: leaf_params.clone(),
-        two_to_one_params: two_to_one_params.clone(),
+        tree_params: tree_params.clone(),
         time_ordered_subtrace: stage0_req.time_ordered_subtrace.clone(),
         addr_ordered_subtrace: stage0_req.addr_ordered_subtrace.clone(),
         time_ordered_subtrace_var: VecDeque::new(),

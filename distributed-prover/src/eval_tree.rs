@@ -19,13 +19,13 @@ use ark_crypto_primitives::crh::{
     sha256::{digest::Digest, Sha256},
 };
 use ark_ec::pairing::Pairing;
-use ark_ff::PrimeField;
+use ark_ff::{PrimeField, ToConstraintField};
 use ark_r1cs_std::{
     alloc::{AllocVar, AllocationMode},
     bits::{boolean::Boolean, uint8::UInt8, ToBytesGadget},
     eq::EqGadget,
     fields::{fp::FpVar, FieldVar},
-    R1CSVar,
+    R1CSVar, ToConstraintFieldGadget,
 };
 use ark_relations::{
     ns,
@@ -50,6 +50,20 @@ pub(crate) type TwoToOneParamVar<CG, C, F> =
         <C as TreeConfig>::TwoToOneHash,
         F,
     >>::ParametersVar;
+
+pub struct ExecTreeParams<C: TreeConfig> {
+    pub leaf_params: LeafParam<C>,
+    pub two_to_one_params: TwoToOneParam<C>,
+}
+
+impl<C: TreeConfig> Clone for ExecTreeParams<C> {
+    fn clone(&self) -> Self {
+        ExecTreeParams {
+            leaf_params: self.leaf_params.clone(),
+            two_to_one_params: self.two_to_one_params.clone(),
+        }
+    }
+}
 
 /// A leaf in the execution tree
 #[derive(Clone, Default, Debug, PartialEq, Eq, CanonicalSerialize, CanonicalDeserialize)]
@@ -76,17 +90,39 @@ impl<F: PrimeField> ExecTreeLeaf<F> {
     }
 }
 
+impl<F: PrimeField> ToConstraintField<F> for ExecTreeLeaf<F> {
+    fn to_field_elements(&self) -> Option<Vec<F>> {
+        Some(vec![
+            self.evals.time_ordered_eval,
+            self.evals.addr_ordered_eval,
+            varname_hasher::<F>(&self.last_subtrace_entry.name),
+            self.last_subtrace_entry.val,
+        ])
+    }
+}
+
 /// The ZK version of `Leaf`
 pub(crate) struct ExecTreeLeafVar<F: PrimeField> {
     pub evals: RunningEvalsVar<F>,
     pub last_subtrace_entry: RomTranscriptEntryVar<F>,
 }
 
+impl<F: PrimeField> ToConstraintFieldGadget<F> for ExecTreeLeafVar<F> {
+    fn to_constraint_field(&self) -> Result<Vec<FpVar<F>>, SynthesisError> {
+        Ok(vec![
+            self.evals.time_ordered_eval.clone(),
+            self.evals.addr_ordered_eval.clone(),
+            self.last_subtrace_entry.addr.clone(),
+            self.last_subtrace_entry.val.clone(),
+        ])
+    }
+}
+
 /// `ExecTreeLeaf` serializes to bytes. This is the form it's in when put into the exec tree
-pub(crate) type SerializedLeaf = [u8];
+pub(crate) type SerializedLeaf<F> = [F];
 
 /// The ZK version of `SerializedLeaf`
-pub(crate) type SerializedLeafVar<F> = [UInt8<F>];
+pub(crate) type SerializedLeafVar<F> = [FpVar<F>];
 
 impl<F: PrimeField> R1CSVar<F> for ExecTreeLeafVar<F> {
     type Value = ExecTreeLeaf<F>;

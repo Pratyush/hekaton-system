@@ -1,7 +1,7 @@
 use crate::{
     eval_tree::{
-        ExecTreeLeaf, ExecTreeLeafVar, LeafParam, LeafParamVar, MerkleRoot, MerkleRootVar,
-        SerializedLeafVar, TwoToOneParam, TwoToOneParamVar,
+        ExecTreeLeaf, ExecTreeLeafVar, ExecTreeParams, LeafParamVar, MerkleRoot, MerkleRootVar,
+        SerializedLeafVar, TwoToOneParamVar,
     },
     portal_manager::ProverPortalManager,
     util::log2,
@@ -18,12 +18,12 @@ use ark_crypto_primitives::merkle_tree::{
 use ark_ff::PrimeField;
 use ark_r1cs_std::{
     alloc::AllocVar,
-    bits::{boolean::Boolean, ToBytesGadget},
+    bits::boolean::Boolean,
     eq::EqGadget,
     fields::{fp::FpVar, FieldVar},
+    ToConstraintFieldGadget,
 };
 use ark_relations::{ns, r1cs::SynthesisError};
-use ark_std::{end_timer, start_timer};
 
 // A ZK circuit that takes a CircuitWithPortals and proves just 1 subcircuit
 pub(crate) struct SubcircuitWithPortalsProver<F, P, C, CG>
@@ -37,8 +37,7 @@ where
     pub circ: Option<P>,
 
     // Merkle tree things
-    pub leaf_params: LeafParam<C>,
-    pub two_to_one_params: TwoToOneParam<C>,
+    pub tree_params: ExecTreeParams<C>,
 
     // Stage 0 committed values
     pub time_ordered_subtrace: VecDeque<RomTranscriptEntry<F>>,
@@ -69,8 +68,7 @@ where
         SubcircuitWithPortalsProver {
             subcircuit_idx: self.subcircuit_idx,
             circ: self.circ.clone(),
-            leaf_params: self.leaf_params.clone(),
-            two_to_one_params: self.two_to_one_params.clone(),
+            tree_params: self.tree_params.clone(),
             time_ordered_subtrace: self.time_ordered_subtrace.clone(),
             addr_ordered_subtrace: self.addr_ordered_subtrace.clone(),
             time_ordered_subtrace_var: self.time_ordered_subtrace_var.clone(),
@@ -93,11 +91,7 @@ where
     CG: TreeConfigGadget<C, F>,
 {
     // Makes a new struct with subcircuit idx 0, no subtraces, and an empty Merkle auth path
-    pub(crate) fn new(
-        leaf_params: LeafParam<C>,
-        two_to_one_params: TwoToOneParam<C>,
-        num_subcircuits: usize,
-    ) -> Self {
+    pub(crate) fn new(tree_params: ExecTreeParams<C>, num_subcircuits: usize) -> Self {
         // Create an auth path of the correct length
         let auth_path_len = log2(num_subcircuits) - 1;
         let mut auth_path = MerklePath::default();
@@ -106,8 +100,7 @@ where
         SubcircuitWithPortalsProver {
             subcircuit_idx: 0,
             circ: None,
-            leaf_params,
-            two_to_one_params,
+            tree_params,
             time_ordered_subtrace: VecDeque::new(),
             addr_ordered_subtrace: VecDeque::new(),
             time_ordered_subtrace_var: VecDeque::new(),
@@ -176,11 +169,13 @@ where
             let root_var = MerkleRootVar::<_, _, CG>::new_input(ns!(c, "root"), || Ok(&self.root))?;
 
             // Input the Merkle tree params as constants
-            let leaf_params_var =
-                LeafParamVar::<CG, _, _>::new_constant(ns!(c, "leaf param"), &self.leaf_params)?;
+            let leaf_params_var = LeafParamVar::<CG, _, _>::new_constant(
+                ns!(c, "leaf param"),
+                &self.tree_params.leaf_params,
+            )?;
             let two_to_one_params_var = TwoToOneParamVar::<CG, _, _>::new_constant(
                 ns!(c, "2-to-1 param"),
-                &self.two_to_one_params,
+                &self.tree_params.two_to_one_params,
             )?;
 
             // Ensure that at subcircuit 0, the provided evals and last subtrace entry are the
@@ -253,7 +248,7 @@ where
                     &leaf_params_var,
                     &two_to_one_params_var,
                     &root_var,
-                    &next_leaf.to_bytes()?,
+                    &next_leaf.to_constraint_field()?,
                 )?
                 .enforce_equal(&Boolean::TRUE)?;
             println!(
@@ -285,79 +280,23 @@ mod test {
     use crate::{
         aggregation::{AggProvingKey, SuperComCommittingKey},
         coordinator::{CoordinatorStage0State, G16ProvingKeyGenerator, Stage1Request},
-        eval_tree::{SerializedLeaf, SerializedLeafVar},
+        poseidon_util::gen_merkle_params,
+        poseidon_util::{PoseidonTreeConfig as TestParams, PoseidonTreeConfigVar as TestParamsVar},
         tree_hash_circuit::*,
-        util::{gen_merkle_params, G16Com, G16ComSeed, G16ProvingKey},
+        util::{G16Com, G16ComSeed},
         worker::{process_stage0_request, process_stage1_request, Stage0Response, Stage1Response},
     };
 
     use ark_bls12_381::{Bls12_381 as E, Fr};
     use ark_cp_groth16::verifier::{prepare_verifying_key, verify_proof};
-    use ark_crypto_primitives::{
-        crh::{
-            bowe_hopwood,
-            constraints::{CRHSchemeGadget, TwoToOneCRHSchemeGadget},
-            pedersen, CRHScheme, TwoToOneCRHScheme,
-        },
-        merkle_tree::{
-            constraints::{BytesVarDigestConverter, ConfigGadget},
-            ByteDigestConverter, Config,
-        },
-    };
-    use ark_ed_on_bls12_381::{constraints::FqVar, JubjubConfig};
     use ark_ff::{ToConstraintField, UniformRand};
     use ark_std::test_rng;
-
-    #[derive(Clone, PartialEq, Eq, Hash)]
-    struct LeafWindow;
-    #[derive(Clone, PartialEq, Eq, Hash)]
-    struct InnerWindow;
-
-    impl pedersen::Window for LeafWindow {
-        const WINDOW_SIZE: usize = 63;
-        const NUM_WINDOWS: usize = 6;
-    }
-
-    impl pedersen::Window for InnerWindow {
-        const WINDOW_SIZE: usize = 63;
-        const NUM_WINDOWS: usize = 9;
-    }
-
-    type LeafH = bowe_hopwood::CRH<JubjubConfig, LeafWindow>;
-    type LeafHG = bowe_hopwood::constraints::CRHGadget<JubjubConfig, FqVar>;
-
-    type CompressH = bowe_hopwood::TwoToOneCRH<JubjubConfig, InnerWindow>;
-    type CompressHG = bowe_hopwood::constraints::TwoToOneCRHGadget<JubjubConfig, FqVar>;
-
-    #[derive(Clone)]
-    struct TestParams;
-    impl Config for TestParams {
-        type Leaf = SerializedLeaf;
-
-        type LeafHash = LeafH;
-        type TwoToOneHash = CompressH;
-
-        type LeafDigest = <LeafH as CRHScheme>::Output;
-        type LeafInnerDigestConverter = ByteDigestConverter<Self::LeafDigest>;
-        type InnerDigest = <CompressH as TwoToOneCRHScheme>::Output;
-    }
-
-    struct TestParamsVar;
-    impl ConfigGadget<TestParams, Fr> for TestParamsVar {
-        type Leaf = SerializedLeafVar<Fr>;
-
-        type LeafDigest = <LeafHG as CRHSchemeGadget<LeafH, Fr>>::OutputVar;
-        type LeafInnerConverter = BytesVarDigestConverter<Self::LeafDigest, Fr>;
-        type InnerDigest = <CompressHG as TwoToOneCRHSchemeGadget<CompressH, Fr>>::OutputVar;
-        type LeafHash = LeafHG;
-        type TwoToOneHash = CompressHG;
-    }
 
     // Checks that the SubcircuitWithPortalsProver is satisfied when the correct inputs are given
     #[test]
     fn test_subcircuit_portal_prover_satisfied() {
         let mut rng = test_rng();
-        let (leaf_params, two_to_one_params) = gen_merkle_params::<TestParams>();
+        let tree_params = gen_merkle_params();
 
         // Make a random Merkle tree
         let circ_params = MerkleTreeCircuitParams { num_leaves: 4 };
@@ -389,7 +328,8 @@ mod test {
             .collect::<Vec<_>>();
 
         // Move on to stage 1. Make the coordinator state
-        let stage1_state = stage0_state.process_stage0_responses(&fake_stage0_resps);
+        let stage1_state =
+            stage0_state.process_stage0_responses(tree_params.clone(), &fake_stage0_resps);
 
         // Compute the values needed to prove stage1 for all subcircuits
         let stage1_reqs = all_subcircuit_indices
@@ -417,8 +357,7 @@ mod test {
             let mut subcirc_circ = SubcircuitWithPortalsProver {
                 subcircuit_idx,
                 circ: Some(partial_circ),
-                leaf_params: leaf_params.clone(),
-                two_to_one_params: two_to_one_params.clone(),
+                tree_params: tree_params.clone(),
                 time_ordered_subtrace: stage0_req.time_ordered_subtrace.clone(),
                 addr_ordered_subtrace: stage0_req.addr_ordered_subtrace.clone(),
                 time_ordered_subtrace_var: VecDeque::new(),
@@ -445,6 +384,7 @@ mod test {
     #[test]
     fn test_e2e_prover() {
         let mut rng = test_rng();
+        let tree_params = gen_merkle_params();
 
         // Make a random Merkle tree
         let circ_params = MerkleTreeCircuitParams { num_leaves: 4 };
@@ -454,14 +394,15 @@ mod test {
 
         // Coordinator generates all the proving keys
         let proving_keys = {
-            let generator =
-                G16ProvingKeyGenerator::<TestParams, TestParamsVar, _, _>::new(circ.clone());
+            let generator = G16ProvingKeyGenerator::<TestParams, TestParamsVar, _, _>::new(
+                circ.clone(),
+                tree_params.clone(),
+            );
             all_subcircuit_indices
                 .iter()
                 .map(|&i| generator.gen_pk(i))
                 .collect::<Vec<_>>()
         };
-        return;
 
         // Make the stage0 coordinator state
         let super_com_key = SuperComCommittingKey::<E>::gen(&mut rng, num_subcircuits);
@@ -481,6 +422,7 @@ mod test {
             .map(|(req, pk)| {
                 process_stage0_request::<_, TestParamsVar, _, MerkleTreeCircuit, _>(
                     &mut rng,
+                    tree_params.clone(),
                     pk,
                     req.clone(),
                 )
@@ -488,7 +430,8 @@ mod test {
             .collect::<Vec<_>>();
 
         // Move on to stage 1. Make the coordinator state
-        let stage1_state = stage0_state.process_stage0_responses(&stage0_resps);
+        let stage1_state =
+            stage0_state.process_stage0_responses(tree_params.clone(), &stage0_resps);
 
         // Compute the values needed to prove stage1 for all subcircuits
         let stage1_reqs: Vec<Stage1Request<TestParams, _, _>> = all_subcircuit_indices
@@ -520,6 +463,7 @@ mod test {
                 let Stage1Response { proof, .. } =
                     process_stage1_request::<_, TestParamsVar, _, _, _>(
                         &mut rng,
+                        tree_params.clone(),
                         &pk,
                         stage0_req,
                         stage0_resp,

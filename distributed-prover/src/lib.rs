@@ -20,6 +20,7 @@ pub mod eval_tree;
 pub mod kzg;
 pub mod pairing_ops;
 pub mod portal_manager;
+pub mod poseidon_util;
 pub mod subcircuit_circuit;
 pub mod tree_hash_circuit;
 pub mod util;

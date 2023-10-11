@@ -305,20 +305,6 @@ pub(crate) fn calculate_root(leaves: &[TestLeaf]) -> InnerHash {
     root
 }
 
-/// Converts a u8 to its little-endian bit representation
-fn u8_le_bits(x: u8) -> [bool; 8] {
-    [
-        x & 0b00000001 != 0,
-        x & 0b00000010 != 0,
-        x & 0b00000100 != 0,
-        x & 0b00001000 != 0,
-        x & 0b00010000 != 0,
-        x & 0b00100000 != 0,
-        x & 0b01000000 != 0,
-        x & 0b10000000 != 0,
-    ]
-}
-
 /******** TREE MATH ********/
 
 // We use a mapping of subcircuit idx to tree node as follows. Stolen from the MLS spec
