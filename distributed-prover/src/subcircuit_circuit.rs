@@ -304,7 +304,7 @@ mod test {
         // Make the stage0 coordinator state. The value of the commitment key doesn't really matter
         // since we don't test aggregation here.
         let super_com_key = SuperComCommittingKey::<E>::gen(&mut rng, num_subcircuits);
-        let stage0_state = CoordinatorStage0State::new::<TestParams>(circ, super_com_key);
+        let stage0_state = CoordinatorStage0State::new::<TestParams>(circ);
         let all_subcircuit_indices = (0..num_subcircuits).collect::<Vec<_>>();
 
         // Worker receives a stage0 package containing all the subtraces it will need for this run.
@@ -326,8 +326,11 @@ mod test {
             .collect::<Vec<_>>();
 
         // Move on to stage 1. Make the coordinator state
-        let stage1_state =
-            stage0_state.process_stage0_responses(tree_params.clone(), &fake_stage0_resps);
+        let stage1_state = stage0_state.process_stage0_responses(
+            &super_com_key,
+            tree_params.clone(),
+            &fake_stage0_resps,
+        );
 
         // Compute the values needed to prove stage1 for all subcircuits
         let stage1_reqs = all_subcircuit_indices
