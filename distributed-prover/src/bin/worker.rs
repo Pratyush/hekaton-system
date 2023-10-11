@@ -20,9 +20,10 @@ use clap::{Parser, Subcommand};
 
 const G16_PK_FILENAME_PREFIX: &str = "g16_pk";
 const AGG_CK_FILENAME_PREFIX: &str = "agg_ck";
+const COORD_STATE_FILENAME_PREFIX: &str = "coordinator_state";
 const STAGE0_REQ_FILENAME_PREFIX: &str = "stage0_req";
 const STAGE0_RESP_FILENAME_PREFIX: &str = "stage0_resp";
-const COORD_STATE_FILENAME_PREFIX: &str = "coordinator_state";
+const STAGE1_REQ_FILENAME_PREFIX: &str = "stage1_req";
 
 #[derive(Parser)]
 struct Args {

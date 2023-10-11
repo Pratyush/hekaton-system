@@ -17,12 +17,14 @@ use ark_bls12_381::{Bls12_381 as E, Fr};
 use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use clap::{Parser, Subcommand};
+use rayon::prelude::*;
 
 const G16_PK_FILENAME_PREFIX: &str = "g16_pk";
 const AGG_CK_FILENAME_PREFIX: &str = "agg_ck";
+const COORD_STATE_FILENAME_PREFIX: &str = "coordinator_state";
 const STAGE0_REQ_FILENAME_PREFIX: &str = "stage0_req";
 const STAGE0_RESP_FILENAME_PREFIX: &str = "stage0_resp";
-const COORD_STATE_FILENAME_PREFIX: &str = "coordinator_state";
+const STAGE1_REQ_FILENAME_PREFIX: &str = "stage1_req";
 
 #[derive(Parser)]
 struct Args {
@@ -60,9 +62,9 @@ enum Command {
         num_subcircuits: usize,
     },
 
-    /// Begins a proof for a large circuit with the given parameters. This produces _worker request
-    /// packages_ which are processed in parallel by worker nodes.
-    StartRandomProof {
+    /// Begins stage0 for a random proof for a large circuit with the given parameters. This
+    /// produces _worker request packages_ which are processed in parallel by worker nodes.
+    StartStage0 {
         /// Path to place worker request packages in. These are named `stage0_req_i.bin` where `i`
         /// is the subcircuit index.
         #[clap(short, long, value_name = "DIR")]
@@ -74,6 +76,26 @@ enum Command {
         coord_state_dir: PathBuf,
 
         /// Test circuit param: Number of subcircuits. MUST be a power of two and greater than 1.
+        #[clap(short, long, value_name = "NUM")]
+        num_subcircuits: usize,
+    },
+
+    /// Process the stage0 responses from workers and produce stage1 reqeusts
+    StartStage1 {
+        /// Directory where the stage0 worker responses are stored
+        #[clap(short, long, value_name = "DIR")]
+        stage0_resp_dir: PathBuf,
+
+        /// Directory where the coordinator's intermediate state is stored.
+        #[clap(short, long, value_name = "DIR")]
+        coord_state_dir: PathBuf,
+
+        /// Path to place worker request packages in. These are named `stage0_req_i.bin` where `i`
+        /// is the subcircuit index.
+        #[clap(short, long, value_name = "DIR")]
+        worker_req_dir: PathBuf,
+
+        /// How many responses there are
         #[clap(short, long, value_name = "NUM")]
         num_subcircuits: usize,
     },
@@ -163,6 +185,62 @@ fn begin_stage0(
     Ok(())
 }
 
+fn process_stage0_resps(
+    num_subcircuits: usize,
+    stage0_resp_dir: &PathBuf,
+    coord_state_dir: &PathBuf,
+    worker_req_dir: &PathBuf,
+) {
+    let tree_params = gen_merkle_params();
+
+    // Deserialize the coordinator's state and the aggregation key
+    let coord_state = deserialize_from_path::<CoordinatorStage0State<E, MerkleTreeCircuit>>(
+        coord_state_dir,
+        COORD_STATE_FILENAME_PREFIX,
+        None,
+    )
+    .unwrap();
+    let super_com_key = {
+        let agg_ck = deserialize_from_path::<AggProvingKey<E>>(
+            coord_state_dir,
+            AGG_CK_FILENAME_PREFIX,
+            None,
+        )
+        .unwrap();
+        agg_ck.ipp_ck
+    };
+
+    // Collect all the repsonses into a single vec. They're tiny, so this is fine.
+    let stage0_resps = (0..num_subcircuits)
+        .into_par_iter()
+        .map(|subcircuit_idx| {
+            deserialize_from_path::<Stage0Response<E>>(
+                stage0_resp_dir,
+                STAGE0_RESP_FILENAME_PREFIX,
+                Some(subcircuit_idx),
+            )
+            .unwrap()
+        })
+        .collect::<Vec<_>>();
+
+    // Process the responses and get a new coordinator state
+    let new_coord_state =
+        coord_state.process_stage0_responses(&super_com_key, tree_params, &stage0_resps);
+
+    // Create all the stage1 requests
+    for subcircuit_idx in 0..num_subcircuits {
+        // Construct the request and serialize it
+        let stage1_req = new_coord_state.gen_request(subcircuit_idx);
+        serialize_to_path(
+            &stage1_req,
+            worker_req_dir,
+            STAGE1_REQ_FILENAME_PREFIX,
+            Some(subcircuit_idx),
+        )
+        .unwrap();
+    }
+}
+
 fn main() {
     let args = Args::parse();
 
@@ -200,7 +278,7 @@ fn main() {
             generate_agg_ck(circ_params, &g16_pk_dir, &coord_state_dir);
         },
 
-        Command::StartRandomProof {
+        Command::StartStage0 {
             worker_req_dir,
             coord_state_dir,
             num_subcircuits,
@@ -215,6 +293,20 @@ fn main() {
                 num_leaves: num_subcircuits / 2,
             };
             begin_stage0(circ_params, &worker_req_dir, &coord_state_dir).unwrap();
+        },
+
+        Command::StartStage1 {
+            stage0_resp_dir,
+            coord_state_dir,
+            worker_req_dir,
+            num_subcircuits,
+        } => {
+            process_stage0_resps(
+                num_subcircuits,
+                &stage0_resp_dir,
+                &coord_state_dir,
+                &worker_req_dir,
+            );
         },
     }
 }
