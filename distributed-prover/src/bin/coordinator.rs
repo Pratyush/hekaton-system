@@ -19,6 +19,7 @@ use std::{fs::File, io, path::PathBuf};
 use ark_bls12_381::{Bls12_381 as E, Fr};
 use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use ark_std::{end_timer, start_timer};
 use clap::{Parser, Subcommand};
 use rayon::prelude::*;
 
@@ -243,12 +244,15 @@ fn generate_agg_ck(
     };
 
     // Construct the aggregator commitment key
+    let start =
+        start_timer!(|| format!("Generating aggregation key for {num_subcircuits} subcircuits"));
     let agg_ck = {
         // Need some intermediate keys
         let super_com_key = SuperComCommittingKey::<E>::gen(&mut rng, num_subcircuits);
         let kzg_ck = KzgComKey::gen(&mut rng, num_subcircuits);
         AggProvingKey::new(super_com_key, kzg_ck, pk_fetcher)
     };
+    end_timer!(start);
 
     // Save the aggregator key
     serialize_to_path(&agg_ck, coord_state_dir, AGG_CK_FILENAME_PREFIX, None).unwrap();
@@ -268,17 +272,26 @@ fn begin_stage0(
     // Make the stage0 coordinator state
     let stage0_state = CoordinatorStage0State::<E, _>::new::<TreeConfig>(circ);
 
-    // Workers receives stage0 packages containing the subtraces it will need for this run. We
-    // imagine the worker saves their package to disk.
-    for subcircuit_idx in 0..num_subcircuits {
-        let req = stage0_state.gen_request(subcircuit_idx);
-        serialize_to_path(
-            &req,
-            worker_req_dir,
-            STAGE0_REQ_FILENAME_PREFIX,
-            Some(subcircuit_idx),
-        )?;
-    }
+    // Sender sends stage0 requests containing the subtraces. Workers will commit to these
+    let start =
+        start_timer!(|| format!("Generating stage0 requests for {num_subcircuits} subcircuits"));
+    let reqs = (0..num_subcircuits)
+        .into_par_iter()
+        .map(|subcircuit_idx| stage0_state.gen_request(subcircuit_idx))
+        .collect::<Vec<_>>();
+    end_timer!(start);
+
+    reqs.into_par_iter()
+        .enumerate()
+        .for_each(|(subcircuit_idx, req)| {
+            serialize_to_path(
+                &req,
+                worker_req_dir,
+                STAGE0_REQ_FILENAME_PREFIX,
+                Some(subcircuit_idx),
+            )
+            .unwrap()
+        });
 
     // Save the coordinator state
     serialize_to_path(
@@ -334,17 +347,25 @@ fn process_stage0_resps(
         coord_state.process_stage0_responses(&super_com_key, tree_params, &stage0_resps);
 
     // Create all the stage1 requests
-    for subcircuit_idx in 0..num_subcircuits {
-        // Construct the request and serialize it
-        let stage1_req = new_coord_state.gen_request(subcircuit_idx);
-        serialize_to_path(
-            &stage1_req,
-            req_dir,
-            STAGE1_REQ_FILENAME_PREFIX,
-            Some(subcircuit_idx),
-        )
-        .unwrap();
-    }
+    let start =
+        start_timer!(|| format!("Generating stage1 requests for {num_subcircuits} subcircuits"));
+    let reqs = (0..num_subcircuits)
+        .into_par_iter()
+        .map(|subcircuit_idx| new_coord_state.gen_request(subcircuit_idx))
+        .collect::<Vec<_>>();
+    end_timer!(start);
+
+    reqs.into_par_iter()
+        .enumerate()
+        .for_each(|(subcircuit_idx, req)| {
+            serialize_to_path(
+                &req,
+                req_dir,
+                STAGE1_REQ_FILENAME_PREFIX,
+                Some(subcircuit_idx),
+            )
+            .unwrap()
+        });
 
     // Convert the coordinator state to an aggregator state and save it
     let final_agg_state = new_coord_state.into_agg_state();
@@ -384,13 +405,16 @@ fn process_stage1_resps(num_subcircuits: usize, coord_state_dir: &PathBuf, resp_
         .collect::<Vec<_>>();
 
     // Compute the aggregate
+    let start = start_timer!(|| format!("Aggregating proofs for {num_subcircuits} subcircuits"));
     let agg_proof = final_agg_state.gen_agg_proof(&agg_ck, &stage1_resps);
+    end_timer!(start);
     // Save the proof
     serialize_to_path(&agg_proof, coord_state_dir, FINAL_PROOF_PREFIX, None).unwrap();
 }
 
 fn main() {
     let args = Args::parse();
+    let start = start_timer!(|| format!("Running coordinator"));
 
     match args.command {
         Command::GenGroth16Keys {
@@ -436,4 +460,6 @@ fn main() {
             process_stage1_resps(num_subcircuits, &coord_state_dir, &resp_dir);
         },
     }
+
+    end_timer!(start);
 }

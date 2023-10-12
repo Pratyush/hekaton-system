@@ -16,6 +16,7 @@ use std::{fs::File, io, path::PathBuf};
 use ark_bls12_381::{Bls12_381 as E, Fr};
 use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use ark_std::{end_timer, start_timer};
 use clap::{Parser, Subcommand};
 
 const G16_PK_FILENAME_PREFIX: &str = "g16_pk";
@@ -100,6 +101,7 @@ fn process_stage0_request(
     assert_eq!(stage0_req.subcircuit_idx, subcircuit_idx);
 
     // Compute the response
+    let start = start_timer!(|| format!("Processing stage0 request"));
     let stage0_resp = distributed_prover::worker::process_stage0_request::<
         _,
         TreeConfigVar,
@@ -107,6 +109,7 @@ fn process_stage0_request(
         MerkleTreeCircuit,
         _,
     >(&mut rng, tree_params, &g16_pk, stage0_req);
+    end_timer!(start);
 
     // Save it
     serialize_to_path(
@@ -154,6 +157,7 @@ fn process_stage1_request(
     .unwrap();
 
     // Compute the response. This is a Groth16 proof over a potentially large circuit
+    let start = start_timer!(|| format!("Processing stage1 request"));
     let stage1_resp = distributed_prover::worker::process_stage1_request::<_, TreeConfigVar, _, _, _>(
         &mut rng,
         tree_params,
@@ -162,6 +166,7 @@ fn process_stage1_request(
         stage0_resp,
         stage1_req,
     );
+    end_timer!(start);
 
     // Save it
     serialize_to_path(
@@ -175,6 +180,7 @@ fn process_stage1_request(
 
 fn main() {
     let args = Args::parse();
+    let start = start_timer!(|| format!("Running worker"));
 
     match args.command {
         Command::ProcessStage0Request {
@@ -191,4 +197,6 @@ fn main() {
             subcircuit_index,
         } => process_stage1_request(subcircuit_index, &g16_pk_dir, &req_dir, &resp_dir),
     }
+
+    end_timer!(start);
 }
