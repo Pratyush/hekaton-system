@@ -285,6 +285,19 @@ impl<F: PrimeField> CircuitWithPortals<F> for MerkleTreeCircuit {
             }
         }
 
+        // Do some placeholder memory operations
+        // First, set the portal value
+        if subcircuit_idx == 0 {
+            let _ = pm.set(
+                "placeholder".to_string(),
+                &FpVar::new_witness(ns!(cs, "placeholder"), || Ok(F::ZERO))?,
+            )?;
+        }
+        // Now hammer the portal wire
+        for _ in 0..self.params.num_portals_per_subcircuit - 1 {
+            let _ = pm.get("placeholder")?;
+        }
+
         // Print out how big this circuit was
         let ending_num_constraints = cs.num_constraints();
         let ty = if is_leaf {
@@ -437,7 +450,7 @@ mod test {
         let circ_params = MerkleTreeCircuitParams {
             num_leaves: 16,
             num_sha_iterations: 2,
-            num_portals_per_subcircuit: 1,
+            num_portals_per_subcircuit: 7,
         };
 
         // Make a random Merkle tree
