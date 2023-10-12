@@ -297,7 +297,11 @@ mod test {
         let tree_params = gen_merkle_params();
 
         // Make a random Merkle tree
-        let circ_params = MerkleTreeCircuitParams { num_leaves: 4 };
+        let circ_params = MerkleTreeCircuitParams {
+            num_leaves: 4,
+            num_sha_iterations: 4,
+            num_portals_per_subcircuit: 1,
+        };
         let circ = MerkleTreeCircuit::rand(&mut rng, &circ_params);
         let num_subcircuits = <MerkleTreeCircuit as CircuitWithPortals<Fr>>::num_subcircuits(&circ);
 
@@ -388,7 +392,11 @@ mod test {
         let tree_params = gen_merkle_params();
 
         // Make a random Merkle tree
-        let circ_params = MerkleTreeCircuitParams { num_leaves: 4 };
+        let circ_params = MerkleTreeCircuitParams {
+            num_leaves: 4,
+            num_sha_iterations: 1,
+            num_portals_per_subcircuit: 1,
+        };
         let circ = MerkleTreeCircuit::rand(&mut rng, &circ_params);
         let num_subcircuits = <MerkleTreeCircuit as CircuitWithPortals<Fr>>::num_subcircuits(&circ);
         let all_subcircuit_indices = (0..num_subcircuits).collect::<Vec<_>>();
@@ -448,30 +456,29 @@ mod test {
         let final_agg_state = stage1_state.into_agg_state();
 
         // Now compute all the proofs, check them, and collect them for aggregation
-        let proofs = stage0_reqs
+        let stage1_resps = stage0_reqs
             .into_iter()
             .zip(stage0_resps.into_iter())
             .zip(stage1_reqs.into_iter())
             .zip(proving_keys.iter())
             .map(|(((stage0_req, stage0_resp), stage1_req), pk)| {
                 // Compute the proof
-                let Stage1Response { proof, .. } =
-                    process_stage1_request::<_, TestParamsVar, _, _, _>(
-                        &mut rng,
-                        tree_params.clone(),
-                        &pk,
-                        stage0_req,
-                        stage0_resp,
-                        stage1_req,
-                    );
+                let resp = process_stage1_request::<_, TestParamsVar, _, _, _>(
+                    &mut rng,
+                    tree_params.clone(),
+                    &pk,
+                    stage0_req,
+                    stage0_resp,
+                    stage1_req,
+                );
 
                 // Verify
 
                 let public_inputs = &final_agg_state.public_inputs;
                 let pvk = prepare_verifying_key(&pk.vk());
-                assert!(verify_proof(&pvk, &proof, &public_inputs).unwrap());
+                assert!(verify_proof(&pvk, &resp.proof, &public_inputs).unwrap());
 
-                proof
+                resp
             })
             .collect::<Vec<_>>();
 
@@ -480,15 +487,9 @@ mod test {
         let agg_ck = AggProvingKey::new(super_com_key, kzg_ck, |subcircuit_idx| {
             proving_keys[subcircuit_idx].clone()
         });
-        let super_com = &stage1_state.super_com;
 
         // Compute the aggregate proof
-        agg_ck.agg_subcircuit_proofs(
-            &mut crate::util::ProtoTranscript::new(b"test-e2e"),
-            super_com,
-            &proofs,
-            &public_inputs,
-        );
+        final_agg_state.gen_agg_proof(&agg_ck, &stage1_resps);
 
         // TODO: Check verification
     }

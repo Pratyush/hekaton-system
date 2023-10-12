@@ -119,6 +119,20 @@ enum Command {
     },
 }
 
+fn gen_circuit_params(num_subcircuits: usize) -> MerkleTreeCircuitParams {
+    assert!(
+        num_subcircuits.is_power_of_two(),
+        "#subcircuits MUST be a power of 2"
+    );
+    assert!(num_subcircuits > 1, "#subcircuits MUST be > 1");
+
+    MerkleTreeCircuitParams {
+        num_leaves: num_subcircuits / 2,
+        num_sha_iterations: 1,
+        num_portals_per_subcircuit: 1,
+    }
+}
+
 fn generate_g16_pks(circ_params: MerkleTreeCircuitParams, g16_pk_dir: &PathBuf) {
     let mut rng = rand::thread_rng();
     let tree_params = gen_merkle_params();
@@ -315,15 +329,7 @@ fn main() {
             g16_pk_dir,
             num_subcircuits,
         } => {
-            assert!(
-                num_subcircuits.is_power_of_two(),
-                "#subcircuits MUST be a power of 2"
-            );
-            assert!(num_subcircuits > 1, "#subcircuits MUST be > 1");
-
-            let circ_params = MerkleTreeCircuitParams {
-                num_leaves: num_subcircuits / 2,
-            };
+            let circ_params = gen_circuit_params(num_subcircuits);
             generate_g16_pks(circ_params, &g16_pk_dir);
         },
 
@@ -332,15 +338,7 @@ fn main() {
             coord_state_dir,
             num_subcircuits,
         } => {
-            assert!(
-                num_subcircuits.is_power_of_two(),
-                "#subcircuits MUST be a power of 2"
-            );
-            assert!(num_subcircuits > 1, "#subcircuits MUST be > 1");
-
-            let circ_params = MerkleTreeCircuitParams {
-                num_leaves: num_subcircuits / 2,
-            };
+            let circ_params = gen_circuit_params(num_subcircuits);
             generate_agg_ck(circ_params, &g16_pk_dir, &coord_state_dir);
         },
 
@@ -349,15 +347,7 @@ fn main() {
             coord_state_dir,
             num_subcircuits,
         } => {
-            assert!(
-                num_subcircuits.is_power_of_two(),
-                "#subcircuits MUST be a power of 2"
-            );
-            assert!(num_subcircuits > 1, "#subcircuits MUST be > 1");
-
-            let circ_params = MerkleTreeCircuitParams {
-                num_leaves: num_subcircuits / 2,
-            };
+            let circ_params = gen_circuit_params(num_subcircuits);
             begin_stage0(circ_params, &req_dir, &coord_state_dir).unwrap();
         },
 

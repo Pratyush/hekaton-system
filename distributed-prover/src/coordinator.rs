@@ -451,7 +451,7 @@ where
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct FinalAggState<E: Pairing> {
     pub(crate) public_inputs: Vec<E::ScalarField>,
-    super_com: IppCom<E>,
+    pub(crate) super_com: IppCom<E>,
 }
 
 impl<E: Pairing> FinalAggState<E> {

@@ -88,23 +88,52 @@ fn subcircuit_idx_to_node_idx(subcircuit_idx: usize, num_leaves: usize) -> u32 {
 pub struct MerkleTreeCircuit {
     pub(crate) leaves: Vec<TestLeaf>,
     pub(crate) root_hash: InnerHash,
+    pub(crate) params: MerkleTreeCircuitParams,
 }
 
 /// Parameters that define the Merkle tree. For now this is just size
 // TODO: for benchmarking make a variable number of SHA2 iterations, variable # portal wires,
 // variable # witnesses, etc.
-#[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
+#[derive(Copy, Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct MerkleTreeCircuitParams {
+    /// Number of leaves in this Merkle tree
     pub num_leaves: usize,
+    /// Number of times to iterate SHA256 at each node
+    pub num_sha_iterations: usize,
+    /// Number of outgoing portal wires at each node
+    pub num_portals_per_subcircuit: usize,
 }
 
 impl MerkleTreeCircuit {
     /// Makes a Merkle tree with a random set of leaves. The size is given by `params`
-    pub fn rand(mut rng: impl Rng, params: &MerkleTreeCircuitParams) -> Self {
+    pub fn rand(mut rng: impl Rng, &params: &MerkleTreeCircuitParams) -> Self {
         let mut leaves = vec![EMPTY_LEAF; params.num_leaves];
         leaves.iter_mut().for_each(|l| rng.fill(l));
-        let root_hash = calculate_root(&leaves);
-        MerkleTreeCircuit { leaves, root_hash }
+        let root_hash = calculate_root(&leaves, params);
+        MerkleTreeCircuit {
+            leaves,
+            root_hash,
+            params,
+        }
+    }
+}
+
+impl MerkleTreeCircuit {
+    /// Helper function. Runs SHA256 over the input `self.num_sha_iterations` many times, and
+    /// interprets the final hash as a field element
+    fn iterated_sha256<F: PrimeField>(
+        &self,
+        input: &[UInt8<F>],
+    ) -> Result<FpVar<F>, SynthesisError> {
+        // Set the initial digest to the input
+        let mut digest = DigestVar(input.to_vec());
+        // Iteratively apply SHA256 to the digest
+        for _ in 0..self.params.num_sha_iterations {
+            digest = Sha256Gadget::digest(&digest.0)?;
+        }
+
+        // Convert the final digest to a field element
+        digest_to_fpvar(digest)
     }
 }
 
@@ -118,20 +147,25 @@ impl<F: PrimeField> CircuitWithPortals<F> for MerkleTreeCircuit {
     }
 
     fn get_params(&self) -> MerkleTreeCircuitParams {
-        MerkleTreeCircuitParams {
-            num_leaves: self.leaves.len(),
-        }
+        self.params
     }
 
     // Make a new empty merkle tree circuit
-    fn new(params: &Self::Parameters) -> Self {
-        let MerkleTreeCircuitParams { num_leaves } = params;
+    fn new(&params: &Self::Parameters) -> Self {
+        assert!(
+            params.num_sha_iterations > 0,
+            "cannot have 0 SHA256 iterations in test circuit"
+        );
 
-        let leaves = vec![EMPTY_LEAF; *num_leaves];
+        let leaves = vec![EMPTY_LEAF; params.num_leaves];
         // Set the default root hash
         let root_hash = InnerHash::default();
 
-        MerkleTreeCircuit { leaves, root_hash }
+        MerkleTreeCircuit {
+            leaves,
+            root_hash,
+            params,
+        }
     }
 
     fn get_serialized_witnesses(&self, subcircuit_idx: usize) -> Vec<u8> {
@@ -225,12 +259,7 @@ impl<F: PrimeField> CircuitWithPortals<F> for MerkleTreeCircuit {
             let leaf_var = UInt8::new_witness_vec(ns!(cs, "leaf"), &self.leaves[leaf_idx])?;
 
             // Compute the leaf hash and store it in the portal manager
-            let leaf_hash = {
-                let mut hasher = Sha256Gadget::default();
-                hasher.update(&leaf_var)?;
-                let digest = hasher.finalize()?;
-                digest_to_fpvar(digest)?
-            };
+            let leaf_hash = self.iterated_sha256(&leaf_var)?;
             pm.set(format!("node {node_idx} hash"), &leaf_hash)?;
         } else {
             // This is a non-root parent node. Get the left and right hashes
@@ -245,12 +274,7 @@ impl<F: PrimeField> CircuitWithPortals<F> for MerkleTreeCircuit {
             let concatted_bytes = [left_bytes, right_bytes].concat();
 
             // Compute the parent hash and store it in the portal manager
-            let parent_hash = {
-                let mut hasher = Sha256Gadget::default();
-                hasher.update(&concatted_bytes)?;
-                let digest = hasher.finalize()?;
-                digest_to_fpvar(digest)?
-            };
+            let parent_hash = self.iterated_sha256(&concatted_bytes)?;
             pm.set(format!("node {node_idx} hash"), &parent_hash)?;
 
             // Finally, if this is the root, verify that the parent hash equals the public hash
@@ -281,9 +305,25 @@ impl<F: PrimeField> CircuitWithPortals<F> for MerkleTreeCircuit {
 
 // Calculates the Merkle tree root in the same way as is calculated above. That is, truncating each
 // hash to 31 bytes, and computing parents as H(left || right).
-pub(crate) fn calculate_root(leaves: &[TestLeaf]) -> InnerHash {
+pub(crate) fn calculate_root(leaves: &[TestLeaf], params: MerkleTreeCircuitParams) -> InnerHash {
+    // A helper function
+    let iterated_sha256 = |input: &[u8]| {
+        let mut digest = input.to_vec();
+        for _ in 0..params.num_sha_iterations {
+            digest = Sha256::digest(&digest).to_vec();
+        }
+
+        // Output the final digest
+        let mut outbuf = [0u8; 32];
+        outbuf.copy_from_slice(&digest);
+        outbuf
+    };
+
     // Compute all the leaf digests
-    let mut cur_level = leaves.iter().map(Sha256::digest).collect::<Vec<_>>();
+    let mut cur_level = leaves
+        .iter()
+        .map(|leaf| iterated_sha256(leaf))
+        .collect::<Vec<_>>();
 
     // Compute all the parents level by level until there's only 1 element left (the root)
     let mut next_level = Vec::new();
@@ -291,7 +331,7 @@ pub(crate) fn calculate_root(leaves: &[TestLeaf]) -> InnerHash {
         for siblings in cur_level.chunks(2) {
             let left = siblings[0];
             let right = siblings[1];
-            let parent = Sha256::digest([&left[..31], &right[..31]].concat());
+            let parent = iterated_sha256(&[&left[..31], &right[..31]].concat());
             next_level.push(parent)
         }
 
@@ -394,7 +434,11 @@ mod test {
     #[test]
     fn test_merkle_tree_correctness() {
         let mut rng = test_rng();
-        let circ_params = MerkleTreeCircuitParams { num_leaves: 16 };
+        let circ_params = MerkleTreeCircuitParams {
+            num_leaves: 16,
+            num_sha_iterations: 2,
+            num_portals_per_subcircuit: 1,
+        };
 
         // Make a random Merkle tree
         let mut circ = MerkleTreeCircuit::rand(&mut rng, &circ_params);
