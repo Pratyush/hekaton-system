@@ -6,7 +6,13 @@ use std::{
 };
 
 use ark_ff::PrimeField;
-use ark_r1cs_std::{alloc::AllocVar, eq::EqGadget, fields::fp::FpVar, R1CSVar};
+use ark_r1cs_std::{
+    alloc::AllocVar,
+    bits::boolean::Boolean,
+    eq::EqGadget,
+    fields::{fp::FpVar, FieldVar},
+    R1CSVar,
+};
 use ark_relations::{
     ns,
     r1cs::{ConstraintSystemRef, SynthesisError},
@@ -138,10 +144,15 @@ impl<F: PrimeField> PortalManager<F> for ProverPortalManager<F> {
         let next_entry = self.addr_ordered_subtrace.front().unwrap();
         let (next_addr, next_val) = (&next_entry.addr, &next_entry.val);
 
-        // Check cur_addr <= next_addr
-        cur_addr.enforce_cmp(next_addr, Ordering::Less, true)?;
+        // Check cur_addr <= next_addr. In fact, next_addr is guaranteed to be cur_addr + 1 if not
+        // equal.
+        let is_same_addr = next_addr.is_eq(&cur_addr)?;
+        let is_incrd_addr = next_addr.is_eq(&(cur_addr + FpVar::one()))?;
+        is_same_addr
+            .or(&is_incrd_addr)?
+            .enforce_equal(&Boolean::TRUE)?;
+
         // Check cur_val == next_val if cur_addr == next_addr
-        let is_same_addr = cur_addr.is_eq(next_addr)?;
         cur_val.conditional_enforce_equal(next_val, &is_same_addr)?;
 
         // Log the peeked addr-ordered entry. This means that every addr-ordered entry is logged
