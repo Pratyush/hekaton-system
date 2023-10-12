@@ -430,7 +430,7 @@ impl<E: Pairing> AggProvingKey<E> {
         let z_sh = cross_terms[1][1];
         let z_ddelta0 = cross_terms[2][2];
         let z_cdelta1 = cross_terms[3][3];
-        debug_assert_eq!(
+        assert_eq!(
             z_ab,
             pairing::<E>(&alpha_r, &self.beta) + z_sh + z_ddelta0 + z_cdelta1
         );

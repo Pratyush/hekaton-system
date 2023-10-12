@@ -133,6 +133,7 @@ fn gen_circuit_params(num_subcircuits: usize) -> MerkleTreeCircuitParams {
     }
 }
 
+/// Generates all the Groth16 proving keys that the workers will use
 fn generate_g16_pks(circ_params: MerkleTreeCircuitParams, g16_pk_dir: &PathBuf) {
     let mut rng = rand::thread_rng();
     let tree_params = gen_merkle_params();
@@ -146,19 +147,86 @@ fn generate_g16_pks(circ_params: MerkleTreeCircuitParams, g16_pk_dir: &PathBuf) 
         tree_params.clone(),
     );
 
-    // For every subcircuit...
-    for subcircuit_idx in 0..num_subcircuits {
-        // Generate the subcircuit's G16 proving key
-        let pk = generator.gen_pk(&mut rng, subcircuit_idx);
-        // Save it
+    // We don't actually have to generate every circuit proving key individually. Remember the test
+    // circuit only really has 5 subcircuits: the first leaf, the root, every other leaf, every
+    // other parent, and the final padding circuit. So we only have to generate 5 proving keys and
+    // copy them a bunch of times.
+
+    // First a special case: if there's just 4 subcircuits, generate them all and be done with it
+    if num_subcircuits <= 4 {
+        for subcircuit_idx in 0..num_subcircuits {
+            // Generate the subcircuit's G16 proving key
+            let pk = generator.gen_pk(&mut rng, subcircuit_idx);
+            // Save it
+            serialize_to_path(
+                &pk,
+                g16_pk_dir,
+                G16_PK_FILENAME_PREFIX,
+                Some(subcircuit_idx),
+            )
+            .unwrap();
+        }
+
+        return;
+    }
+
+    // Now if there are more than 4 subcircuits:
+
+    // Generate the first leaf
+    let first_leaf_pk = generator.gen_pk(&mut rng, 0);
+    // Generate the second leaf
+    let second_leaf_pk = generator.gen_pk(&mut rng, 1);
+    // Generate the padding
+    let padding_pk = generator.gen_pk(&mut rng, num_subcircuits - 1);
+    // Generate the root
+    let root_pk = generator.gen_pk(&mut rng, num_subcircuits - 2);
+    // Generate the second to last parent
+    let parent_pk = generator.gen_pk(&mut rng, num_subcircuits - 3);
+
+    // Now save them
+
+    // Save the first leaf
+    serialize_to_path(&first_leaf_pk, g16_pk_dir, G16_PK_FILENAME_PREFIX, Some(0)).unwrap();
+
+    // Save all the rest of the leaves
+    for subcircuit_idx in 1..(num_subcircuits / 2) {
         serialize_to_path(
-            &pk,
+            &second_leaf_pk,
             g16_pk_dir,
             G16_PK_FILENAME_PREFIX,
             Some(subcircuit_idx),
         )
         .unwrap();
     }
+
+    // Save all the parents
+    for subcircuit_idx in (num_subcircuits / 2)..(num_subcircuits - 2) {
+        serialize_to_path(
+            &parent_pk,
+            g16_pk_dir,
+            G16_PK_FILENAME_PREFIX,
+            Some(subcircuit_idx),
+        )
+        .unwrap();
+    }
+
+    // Save the root
+    serialize_to_path(
+        &root_pk,
+        g16_pk_dir,
+        G16_PK_FILENAME_PREFIX,
+        Some(num_subcircuits - 2),
+    )
+    .unwrap();
+
+    // Save the padding
+    serialize_to_path(
+        &padding_pk,
+        g16_pk_dir,
+        G16_PK_FILENAME_PREFIX,
+        Some(num_subcircuits - 1),
+    )
+    .unwrap();
 }
 
 fn generate_agg_ck(
