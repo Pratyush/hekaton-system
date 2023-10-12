@@ -7,7 +7,6 @@ use crate::{
     portal_manager::SetupPortalManager,
     subcircuit_circuit::SubcircuitWithPortalsProver,
     util::{G16Com, G16ComSeed, G16Proof, G16ProvingKey},
-    varname_hasher,
     worker::{Stage0Response, Stage1Response},
     CircuitWithPortals, RomTranscriptEntry, RunningEvals,
 };
@@ -168,7 +167,7 @@ fn sort_subtraces_by_addr<F: PrimeField>(
         .flat_map(|st| st)
         .collect::<Vec<_>>();
     // Sort by address, i.e., the hash of the name
-    flat_trace.sort_by_key(|entry| varname_hasher::<F>(&entry.name));
+    flat_trace.sort_by_key(|entry| &entry.addr);
 
     // Chunk back up
     let mut out = Vec::new();

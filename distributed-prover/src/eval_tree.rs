@@ -1,8 +1,7 @@
 use crate::{
     portal_manager::{ProverPortalManager, SetupPortalManager},
     util::log2,
-    varname_hasher, CircuitWithPortals, RomTranscriptEntry, RomTranscriptEntryVar, RunningEvals,
-    RunningEvalsVar,
+    CircuitWithPortals, RomTranscriptEntry, RomTranscriptEntryVar, RunningEvals, RunningEvalsVar,
 };
 
 use std::{borrow::Borrow, collections::VecDeque, marker::PhantomData};
@@ -95,7 +94,7 @@ impl<F: PrimeField> ToConstraintField<F> for ExecTreeLeaf<F> {
         Some(vec![
             self.evals.time_ordered_eval,
             self.evals.addr_ordered_eval,
-            varname_hasher::<F>(&self.last_subtrace_entry.name),
+            self.last_subtrace_entry.addr,
             self.last_subtrace_entry.val,
         ])
     }

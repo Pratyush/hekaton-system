@@ -28,8 +28,6 @@ pub mod worker;
 
 use portal_manager::PortalManager;
 
-pub(crate) const PADDING_VARNAME: &str = "__PADDING";
-
 #[macro_export]
 macro_rules! par {
     ($(let $name:ident = $f:expr),+) => {
@@ -47,17 +45,6 @@ macro_rules! par {
             let $name = $name.unwrap();
         )+
     };
-}
-
-/// Hashes a portal wire name to a field element. Note: if name == PADDING_VARNAME, then this
-/// outputs 0. This is a special varaible name.
-pub(crate) fn varname_hasher<F: PrimeField>(name: &str) -> F {
-    if name == PADDING_VARNAME {
-        F::zero()
-    } else {
-        // Hash to u64 and convert to field elem
-        F::from(xxh3_128(name.as_bytes()))
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, CanonicalSerialize, CanonicalDeserialize)]
@@ -99,7 +86,7 @@ impl<F: PrimeField> RunningEvals<F> {
 
         // The single-field-element representation of a transcript entry is val + entry_chal*addr,
         // where addr is the hash of the name
-        let entry_repr = entry.val + entry_chal * &varname_hasher(&entry.name);
+        let entry_repr = entry.val + entry_chal * &entry.addr;
 
         // Now add the entry to the running polynomial eval. The polynomial is Π (X - entryᵢ)
         // evaluated at X=tr_chal
@@ -115,7 +102,7 @@ impl<F: PrimeField> RunningEvals<F> {
 
         // The single-field-element representation of a transcript entry is val + entry_chal*addr,
         // where addr is the hash of the name
-        let entry_repr = entry.val + entry_chal * &varname_hasher(&entry.name);
+        let entry_repr = entry.val + entry_chal * &entry.addr;
 
         // Now add the entry to the running polynomial eval. The polynomial is Π (X - entryᵢ)
         // evaluated at X=tr_chal
@@ -229,16 +216,16 @@ impl<F: PrimeField> AllocVar<RunningEvals<F>, F> for RunningEvalsVar<F> {
 }
 
 /// An entry in the transcript of portal wire reads
-#[derive(Clone, Default, Debug, PartialEq, Eq, CanonicalSerialize, CanonicalDeserialize)]
+#[derive(Copy, Clone, Default, Debug, PartialEq, Eq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct RomTranscriptEntry<F: PrimeField> {
-    name: String,
+    addr: F,
     val: F,
 }
 
 impl<F: PrimeField> RomTranscriptEntry<F> {
     fn to_bytes(&self) -> Vec<u8> {
         [
-            varname_hasher::<F>(&self.name).into_bigint().to_bytes_le(),
+            self.addr.into_bigint().to_bytes_le(),
             self.val.into_bigint().to_bytes_le(),
         ]
         .concat()
@@ -248,8 +235,8 @@ impl<F: PrimeField> RomTranscriptEntry<F> {
     /// address-sorted transcript
     fn padding() -> Self {
         RomTranscriptEntry {
-            name: PADDING_VARNAME.to_string(), // This makes the address 0
-            val: F::zero(),
+            addr: F::ZERO,
+            val: F::ZERO,
         }
     }
 }
@@ -272,7 +259,7 @@ impl<F: PrimeField> R1CSVar<F> for RomTranscriptEntryVar<F> {
     fn value(&self) -> Result<Self::Value, SynthesisError> {
         Ok(RomTranscriptEntry {
             val: self.val.value()?,
-            name: "[name]".to_string(),
+            addr: self.addr.value()?,
         })
     }
 }
@@ -295,11 +282,8 @@ impl<F: PrimeField> AllocVar<RomTranscriptEntry<F>, F> for RomTranscriptEntryVar
         let res = f();
         let entry = res.as_ref().map(|e| e.borrow()).map_err(|err| *err);
 
-        // Hash the variable name into a field element
-        let name_hash: Result<F, _> = entry.map(|e| e.name.as_str()).map(varname_hasher);
-
         let val = FpVar::new_variable(ns!(cs, "val"), || entry.map(|e| F::from(e.val)), mode)?;
-        let addr = FpVar::new_variable(ns!(cs, "addr"), || name_hash, mode)?;
+        let addr = FpVar::new_variable(ns!(cs, "addr"), || entry.map(|e| F::from(e.addr)), mode)?;
 
         Ok(RomTranscriptEntryVar { val, addr })
     }
@@ -366,7 +350,7 @@ mod test {
         ));
 
         let entry = RomTranscriptEntry {
-            name: "test".to_string(),
+            addr: Fr::rand(&mut rng),
             val: Fr::rand(&mut rng),
         };
         let entry_var = RomTranscriptEntryVar::new_constant(cs.clone(), &entry).unwrap();
@@ -374,7 +358,7 @@ mod test {
         re_var.update_time_ordered(&entry_var);
 
         let entry = RomTranscriptEntry {
-            name: "test".to_string(),
+            addr: Fr::rand(&mut rng),
             val: Fr::rand(&mut rng),
         };
         let entry_var = RomTranscriptEntryVar::new_constant(cs.clone(), &entry).unwrap();

@@ -1,4 +1,4 @@
-use crate::{varname_hasher, RomTranscriptEntry, RomTranscriptEntryVar, RunningEvalsVar};
+use crate::{RomTranscriptEntry, RomTranscriptEntryVar, RunningEvalsVar};
 
 use std::{
     cmp::Ordering,
@@ -23,20 +23,25 @@ pub trait PortalManager<F: PrimeField> {
 
 /// This portal manager is used by the coordinator to produce the trace
 pub struct SetupPortalManager<F: PrimeField> {
+    /// All the subtraces from the full run of the circuit
     pub subtraces: Vec<VecDeque<RomTranscriptEntry<F>>>,
 
-    cs: ConstraintSystemRef<F>,
+    /// The address that this manager will assign to the next unseen variable name
+    next_var_addr: usize,
 
-    // Technically not necessary, but useful for sanity checks
-    map: HashMap<String, F>,
+    /// A map from variable names to their transcript entry
+    var_map: HashMap<String, RomTranscriptEntry<F>>,
+
+    cs: ConstraintSystemRef<F>,
 }
 
 impl<F: PrimeField> SetupPortalManager<F> {
     pub fn new(cs: ConstraintSystemRef<F>) -> Self {
         SetupPortalManager {
             cs,
+            next_var_addr: 1, // We have to start at 1 because 0 is reserved for padding
             subtraces: Vec::new(),
-            map: HashMap::new(),
+            var_map: HashMap::new(),
         }
     }
 
@@ -48,21 +53,20 @@ impl<F: PrimeField> SetupPortalManager<F> {
 impl<F: PrimeField> PortalManager<F> for SetupPortalManager<F> {
     /// Gets the value from the map, witnesses it, and adds the entry to the trace
     fn get(&mut self, name: &str) -> Result<FpVar<F>, SynthesisError> {
-        // Get the value
-        let val = *self
-            .map
+        // Get the transcript entry corresponding to this variable
+        let entry = *self
+            .var_map
             .get(name)
             .expect(&format!("cannot get portal wire '{name}'"));
+
         // Witness the value
-        let val_var = FpVar::new_witness(ns!(self.cs, "wireval"), || Ok(val))?;
-        // Make the transcript entry
+        let val_var = FpVar::new_witness(ns!(self.cs, "wireval"), || Ok(entry.val))?;
+
+        // Add the entry to the time-ordered subtrace
         self.subtraces
             .last_mut()
             .expect("must run start_subtrace() before using SetupPortalManager")
-            .push_back(RomTranscriptEntry {
-                name: name.to_string(),
-                val,
-            });
+            .push_back(entry);
 
         // Return the witnessed value
         Ok(val_var)
@@ -72,19 +76,24 @@ impl<F: PrimeField> PortalManager<F> for SetupPortalManager<F> {
     fn set(&mut self, name: String, val: &FpVar<F>) -> Result<(), SynthesisError> {
         // This is ROM. You cannot overwrite values
         assert!(
-            self.map.get(&name).is_none(),
+            self.var_map.get(&name).is_none(),
             "cannot set portal wire more than once; wire '{name}'"
         );
 
+        // Make a new transcript entry. Use a fresh address
+        let entry = RomTranscriptEntry {
+            val: val.value().unwrap(),
+            addr: F::from(self.next_var_addr as u128),
+        };
+        // Increment to the next unused address
+        self.next_var_addr += 1;
+
         // Log the concrete (not ZK) entry
-        self.map.insert(name.to_string(), val.value().unwrap());
+        self.var_map.insert(name.to_string(), entry);
         self.subtraces
             .last_mut()
             .expect("must run start_subtrace() before using SetupPortalManager")
-            .push_back(RomTranscriptEntry {
-                name,
-                val: val.value().unwrap(),
-            });
+            .push_back(entry);
 
         Ok(())
     }
@@ -100,17 +109,18 @@ pub(crate) struct ProverPortalManager<F: PrimeField> {
 }
 
 impl<F: PrimeField> PortalManager<F> for ProverPortalManager<F> {
-    /// Pops off the subtrace, sanity checks that the names match, updates the running polyn
-    /// evals to reflect the read op, and does one step of the name-ordered coherence check.
-    fn get(&mut self, name: &str) -> Result<FpVar<F>, SynthesisError> {
+    /// Pops off the subtrace, updates the running polyn evals to reflect the read op, and does one
+    /// step of the name-ordered coherence check.
+    fn get(&mut self, _name: &str) -> Result<FpVar<F>, SynthesisError> {
         // Pop the value and sanity check the name
         let entry = self
             .time_ordered_subtrace
             .pop_front()
             .expect("ran out of time-ordered subtrace entries");
-        if let Ok(addr) = entry.addr.value() {
-            assert_eq!(addr, varname_hasher(name));
-        }
+
+        // TODO: Would probably be a good thing to have RomTranscriptEntry and
+        // RomTranscriptEntryVar carry a copy of their variable name so you could catch errors in
+        // trace ordering.
 
         // Update the running polyn
         self.running_evals.update_time_ordered(&entry);
