@@ -431,7 +431,7 @@ mod test {
                 process_stage0_request::<_, TestParamsVar, _, MerkleTreeCircuit, _>(
                     &mut rng,
                     tree_params.clone(),
-                    pk,
+                    pk.ck.clone(),
                     req.clone(),
                 )
             })

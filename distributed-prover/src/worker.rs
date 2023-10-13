@@ -2,7 +2,7 @@ use crate::{
     coordinator::{Stage0Request, Stage1Request},
     eval_tree::{ExecTreeParams, SerializedLeaf, SerializedLeafVar, TreeConfig, TreeConfigGadget},
     subcircuit_circuit::SubcircuitWithPortalsProver,
-    util::{G16Com, G16ComSeed, G16ProvingKey},
+    util::{G16Com, G16ComKey, G16ComSeed, G16ProvingKey},
     CircuitWithPortals,
 };
 
@@ -38,7 +38,7 @@ pub struct Stage1Response<E: Pairing> {
 pub fn process_stage0_request<C, CG, E, P, R>(
     mut rng: R,
     tree_params: ExecTreeParams<C>,
-    pk: &G16ProvingKey<E>,
+    g16_ck: G16ComKey<E>,
     req: Stage0Request<E::ScalarField>,
 ) -> Stage0Response<E>
 where
@@ -74,8 +74,31 @@ where
     let com_seed = rng.gen::<G16ComSeed>();
     let mut subcircuit_rng = ChaCha12Rng::from_seed(com_seed);
 
+    // Huge hack: we're only running the G16CommitmentBuilder for the commit() step, so we don't
+    // actually need the full proving key. So we make an empty proving key where just the committer
+    // key is set
+    let empty_pk = G16ProvingKey {
+        ck: g16_ck,
+
+        // Rest is empty
+        vk: ark_cp_groth16::data_structures::VerifyingKey {
+            alpha_g: E::G1Affine::default(),
+            beta_h: E::G2Affine::default(),
+            gamma_h: E::G2Affine::default(),
+            last_delta_h: E::G2Affine::default(),
+            gamma_abc_g: Vec::new(),
+            deltas_h: Vec::new(),
+        },
+        beta_g: E::G1Affine::default(),
+        a_g: Vec::new(),
+        b_g: Vec::new(),
+        b_h: Vec::new(),
+        h_g: Vec::new(),
+        deltas_g: Vec::new(),
+    };
+
     // Commit to the stage 0 values (the subtraces)
-    let mut cb = G16CommitmentBuilder::<_, E, QAP>::new(prover, &pk);
+    let mut cb = G16CommitmentBuilder::<_, E, QAP>::new(prover, &empty_pk);
     let (com, _) = cb
         .commit(&mut subcircuit_rng)
         .expect("failed to commit to subtrace");

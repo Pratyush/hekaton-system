@@ -6,7 +6,7 @@ use distributed_prover::{
         gen_merkle_params, PoseidonTreeConfig as TreeConfig, PoseidonTreeConfigVar as TreeConfigVar,
     },
     tree_hash_circuit::{MerkleTreeCircuit, MerkleTreeCircuitParams},
-    util::{deserialize_from_path, serialize_to_path},
+    util::{cli_filenames::*, deserialize_from_path, serialize_to_path},
     worker::{Stage0Response, Stage1Response},
     CircuitWithPortals,
 };
@@ -17,17 +17,6 @@ use ark_bls12_381::{Bls12_381 as E, Fr};
 use ark_std::{end_timer, start_timer};
 use clap::{Parser, Subcommand};
 use rayon::prelude::*;
-
-const G16_PK_FILENAME_PREFIX: &str = "g16_pk";
-const AGG_CK_FILENAME_PREFIX: &str = "agg_ck";
-const TEST_CIRC_PARAM_FILENAME_PREFIX: &str = "test_circ_params";
-const STAGE0_COORD_STATE_FILENAME_PREFIX: &str = "stage0_coordinator_state";
-const FINAL_AGG_STATE_FILENAME_PREFIX: &str = "final_aggregator_state";
-const STAGE0_REQ_FILENAME_PREFIX: &str = "stage0_req";
-const STAGE0_RESP_FILENAME_PREFIX: &str = "stage0_resp";
-const STAGE1_REQ_FILENAME_PREFIX: &str = "stage1_req";
-const STAGE1_RESP_FILENAME_PREFIX: &str = "stage1_resp";
-const FINAL_PROOF_PREFIX: &str = "agg_proof";
 
 #[derive(Parser)]
 struct Args {
@@ -138,7 +127,7 @@ fn gen_test_circuit_params(
     }
 }
 
-/// Generates all the Groth16 proving keys that the workers will use
+/// Generates all the Groth16 proving and committing keys keys that the workers will use
 fn generate_g16_pks(circ_params: MerkleTreeCircuitParams, g16_pk_dir: &PathBuf) {
     let mut rng = rand::thread_rng();
     let tree_params = gen_merkle_params();
@@ -190,8 +179,15 @@ fn generate_g16_pks(circ_params: MerkleTreeCircuitParams, g16_pk_dir: &PathBuf) 
 
     // Now save them
 
-    // Save the first leaf
+    // Save the first leaf (proving key and committing key)
     serialize_to_path(&first_leaf_pk, g16_pk_dir, G16_PK_FILENAME_PREFIX, Some(0)).unwrap();
+    serialize_to_path(
+        &first_leaf_pk.ck,
+        g16_pk_dir,
+        G16_CK_FILENAME_PREFIX,
+        Some(0),
+    )
+    .unwrap();
 
     // Save all the rest of the leaves
     for subcircuit_idx in 1..(num_subcircuits / 2) {
@@ -199,6 +195,13 @@ fn generate_g16_pks(circ_params: MerkleTreeCircuitParams, g16_pk_dir: &PathBuf) 
             &second_leaf_pk,
             g16_pk_dir,
             G16_PK_FILENAME_PREFIX,
+            Some(subcircuit_idx),
+        )
+        .unwrap();
+        serialize_to_path(
+            &second_leaf_pk.ck,
+            g16_pk_dir,
+            G16_CK_FILENAME_PREFIX,
             Some(subcircuit_idx),
         )
         .unwrap();
@@ -213,6 +216,13 @@ fn generate_g16_pks(circ_params: MerkleTreeCircuitParams, g16_pk_dir: &PathBuf) 
             Some(subcircuit_idx),
         )
         .unwrap();
+        serialize_to_path(
+            &parent_pk.ck,
+            g16_pk_dir,
+            G16_CK_FILENAME_PREFIX,
+            Some(subcircuit_idx),
+        )
+        .unwrap();
     }
 
     // Save the root
@@ -223,12 +233,26 @@ fn generate_g16_pks(circ_params: MerkleTreeCircuitParams, g16_pk_dir: &PathBuf) 
         Some(num_subcircuits - 2),
     )
     .unwrap();
+    serialize_to_path(
+        &root_pk.ck,
+        g16_pk_dir,
+        G16_CK_FILENAME_PREFIX,
+        Some(num_subcircuits - 2),
+    )
+    .unwrap();
 
     // Save the padding
     serialize_to_path(
         &padding_pk,
         g16_pk_dir,
         G16_PK_FILENAME_PREFIX,
+        Some(num_subcircuits - 1),
+    )
+    .unwrap();
+    serialize_to_path(
+        &padding_pk.ck,
+        g16_pk_dir,
+        G16_CK_FILENAME_PREFIX,
         Some(num_subcircuits - 1),
     )
     .unwrap();

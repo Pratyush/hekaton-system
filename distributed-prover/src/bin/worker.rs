@@ -1,31 +1,16 @@
 use distributed_prover::{
-    aggregation::{AggProvingKey, SuperComCommittingKey},
-    coordinator::{CoordinatorStage0State, G16ProvingKeyGenerator, Stage0Request, Stage1Request},
-    kzg::KzgComKey,
-    poseidon_util::{
-        gen_merkle_params, PoseidonTreeConfig as TreeConfig, PoseidonTreeConfigVar as TreeConfigVar,
-    },
-    tree_hash_circuit::{MerkleTreeCircuit, MerkleTreeCircuitParams},
-    util::{deserialize_from_path, serialize_to_path, G16Com, G16ComSeed, G16ProvingKey},
-    worker::{Stage0Response, Stage1Response},
-    CircuitWithPortals,
+    coordinator::{Stage0Request, Stage1Request},
+    poseidon_util::{gen_merkle_params, PoseidonTreeConfigVar as TreeConfigVar},
+    tree_hash_circuit::MerkleTreeCircuit,
+    util::{cli_filenames::*, deserialize_from_path, serialize_to_path, G16ComKey, G16ProvingKey},
+    worker::Stage0Response,
 };
 
-use std::{fs::File, io, path::PathBuf};
+use std::path::PathBuf;
 
 use ark_bls12_381::{Bls12_381 as E, Fr};
-use ark_ff::PrimeField;
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{end_timer, start_timer};
 use clap::{Parser, Subcommand};
-
-const G16_PK_FILENAME_PREFIX: &str = "g16_pk";
-const AGG_CK_FILENAME_PREFIX: &str = "agg_ck";
-const COORD_STATE_FILENAME_PREFIX: &str = "coordinator_state";
-const STAGE0_REQ_FILENAME_PREFIX: &str = "stage0_req";
-const STAGE0_RESP_FILENAME_PREFIX: &str = "stage0_resp";
-const STAGE1_REQ_FILENAME_PREFIX: &str = "stage1_req";
-const STAGE1_RESP_FILENAME_PREFIX: &str = "stage1_resp";
 
 #[derive(Parser)]
 struct Args {
@@ -83,10 +68,10 @@ fn process_stage0_request(
     let mut rng = rand::thread_rng();
     let tree_params = gen_merkle_params();
 
-    // Deserialize the appropriate proving key and request
-    let g16_pk = deserialize_from_path::<G16ProvingKey<E>>(
+    // Deserialize the appropriate committing key and request
+    let g16_ck = deserialize_from_path::<G16ComKey<E>>(
         g16_pk_dir,
-        G16_PK_FILENAME_PREFIX,
+        G16_CK_FILENAME_PREFIX,
         Some(subcircuit_idx),
     )
     .unwrap();
@@ -108,7 +93,7 @@ fn process_stage0_request(
         _,
         MerkleTreeCircuit,
         _,
-    >(&mut rng, tree_params, &g16_pk, stage0_req);
+    >(&mut rng, tree_params, g16_ck, stage0_req);
     end_timer!(start);
 
     // Save it

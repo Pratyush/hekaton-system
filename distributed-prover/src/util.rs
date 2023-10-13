@@ -11,7 +11,7 @@ use rand_chacha::ChaCha12Rng;
 use std::{fs::File, io, path::PathBuf};
 
 pub use ark_cp_groth16::data_structures::{
-    Comm as G16Com, Proof as G16Proof, ProvingKey as G16ProvingKey,
+    Comm as G16Com, CommitterKey as G16ComKey, Proof as G16Proof, ProvingKey as G16ProvingKey,
 };
 pub use merlin::Transcript as ProtoTranscript;
 
@@ -71,6 +71,20 @@ impl TranscriptProtocol for ProtoTranscript {
 }
 
 // Helpers for the binaries
+
+pub mod cli_filenames {
+    pub const G16_PK_FILENAME_PREFIX: &str = "g16_pk";
+    pub const G16_CK_FILENAME_PREFIX: &str = "g16_ck";
+    pub const AGG_CK_FILENAME_PREFIX: &str = "agg_ck";
+    pub const STAGE0_REQ_FILENAME_PREFIX: &str = "stage0_req";
+    pub const STAGE0_RESP_FILENAME_PREFIX: &str = "stage0_resp";
+    pub const STAGE1_REQ_FILENAME_PREFIX: &str = "stage1_req";
+    pub const STAGE1_RESP_FILENAME_PREFIX: &str = "stage1_resp";
+    pub const TEST_CIRC_PARAM_FILENAME_PREFIX: &str = "test_circ_params";
+    pub const STAGE0_COORD_STATE_FILENAME_PREFIX: &str = "stage0_coordinator_state";
+    pub const FINAL_AGG_STATE_FILENAME_PREFIX: &str = "final_aggregator_state";
+    pub const FINAL_PROOF_PREFIX: &str = "agg_proof";
+}
 
 /// Serializes the given value to "DIR/FILENAMEPREFIX_INDEX". The "_INDEX" part is ommitted if no
 /// index is given.
