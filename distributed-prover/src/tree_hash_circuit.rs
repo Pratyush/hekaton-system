@@ -251,51 +251,57 @@ impl<F: PrimeField> CircuitWithPortals<F> for MerkleTreeCircuit {
 
         let num_leaves = self.leaves.len();
 
-        // The subcircuit ordering is level by level. Pick the right node idx
-        let node_idx = subcircuit_idx_to_node_idx(subcircuit_idx, num_leaves);
-
-        let is_leaf = level(node_idx) == 0;
-        let is_root = root_idx(num_leaves) == node_idx;
         // The last subcircuit is a padding subcircuit. This is not a leaf or a parent or a root
         let is_padding =
             subcircuit_idx == <Self as CircuitWithPortals<F>>::num_subcircuits(&self) - 1;
 
-        // Special padding subcircuit. If it's the last subcircuit, do some iterated hashes and
-        // throw them away
+        // The special padding subcircuit lies outside the tree. If it's the last subcircuit,
+        // do some iterated hashes and throw them away
         if is_padding {
             let input = UInt8::new_witness_vec(ns!(cs, "padding input"), &[0u8; 32])?;
             let _ = self.iterated_sha256(&input)?;
-        } else if is_leaf {
-            // This is a leaf node. Get the leaf number
-            let leaf_idx = (node_idx / 2) as usize;
-
-            // Witness the leaf
-            let leaf_var = UInt8::new_witness_vec(ns!(cs, "leaf"), &self.leaves[leaf_idx])?;
-
-            // Compute the leaf hash and store it in the portal manager
-            let leaf_hash = self.iterated_sha256(&leaf_var)?;
-            pm.set(format!("node {node_idx} hash"), &leaf_hash)?;
         } else {
-            // This is a non-root parent node. Get the left and right hashes
-            let left = left_child(node_idx);
-            let right = right_child(node_idx);
-            let left_child_hash = pm.get(&format!("node {left} hash"))?;
-            let right_child_hash = pm.get(&format!("node {right} hash"))?;
+            // Not padding
 
-            // Convert the hashes back into bytes and concat them
-            let left_bytes = fpvar_to_digest(left_child_hash)?;
-            let right_bytes = fpvar_to_digest(right_child_hash)?;
-            let concatted_bytes = [left_bytes, right_bytes].concat();
+            // The subcircuit ordering is level by level. Pick the right node idx
+            let node_idx = subcircuit_idx_to_node_idx(subcircuit_idx, num_leaves);
 
-            // Compute the parent hash and store it in the portal manager
-            let parent_hash = self.iterated_sha256(&concatted_bytes)?;
-            pm.set(format!("node {node_idx} hash"), &parent_hash)?;
+            // Every non-padding node is a leaf, the root, or else a parent
+            let is_leaf = level(node_idx) == 0;
+            let is_root = root_idx(num_leaves) == node_idx;
 
-            // Finally, if this is the root, verify that the parent hash equals the public hash
-            // value
-            if is_root {
-                let expected_root_hash = input_digest(cs.clone(), self.root_hash)?;
-                parent_hash.enforce_equal(&expected_root_hash)?;
+            if is_leaf {
+                // This is a leaf node. Get the leaf number
+                let leaf_idx = (node_idx / 2) as usize;
+
+                // Witness the leaf
+                let leaf_var = UInt8::new_witness_vec(ns!(cs, "leaf"), &self.leaves[leaf_idx])?;
+
+                // Compute the leaf hash and store it in the portal manager
+                let leaf_hash = self.iterated_sha256(&leaf_var)?;
+                pm.set(format!("node {node_idx} hash"), &leaf_hash)?;
+            } else {
+                // This is a non-root parent node. Get the left and right hashes
+                let left = left_child(node_idx);
+                let right = right_child(node_idx);
+                let left_child_hash = pm.get(&format!("node {left} hash"))?;
+                let right_child_hash = pm.get(&format!("node {right} hash"))?;
+
+                // Convert the hashes back into bytes and concat them
+                let left_bytes = fpvar_to_digest(left_child_hash)?;
+                let right_bytes = fpvar_to_digest(right_child_hash)?;
+                let concatted_bytes = [left_bytes, right_bytes].concat();
+
+                // Compute the parent hash and store it in the portal manager
+                let parent_hash = self.iterated_sha256(&concatted_bytes)?;
+                pm.set(format!("node {node_idx} hash"), &parent_hash)?;
+
+                // Finally, if this is the root, verify that the parent hash equals the public hash
+                // value
+                if is_root {
+                    let expected_root_hash = input_digest(cs.clone(), self.root_hash)?;
+                    parent_hash.enforce_equal(&expected_root_hash)?;
+                }
             }
         }
 
@@ -314,15 +320,8 @@ impl<F: PrimeField> CircuitWithPortals<F> for MerkleTreeCircuit {
 
         // Print out how big this circuit was
         let ending_num_constraints = cs.num_constraints();
-        let ty = if is_leaf {
-            "leaf"
-        } else if is_root {
-            "root"
-        } else {
-            "parent"
-        };
         println!(
-            "Test subcircuit {subcircuit_idx} of type {ty} costs {} constraints",
+            "Test subcircuit {subcircuit_idx} costs {} constraints",
             ending_num_constraints - starting_num_constraints
         );
 
