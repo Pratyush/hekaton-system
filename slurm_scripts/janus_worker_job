@@ -3,10 +3,7 @@
 #SBATCH --job-name=sbatch-test
 #SBATCH --constraint="Xeon&4216"
 #
-#SBATCH --output=out_%a.txt
-#SBATCH --error=err_%a.txt ## Note %a is the SLURM_ARRAY_TASK_ID value enumerated 1-$1
-#SBATCH --cpus-per-task=1  ## This must match the parameter in SRUN
-#SBATCH --mem-per-cpu=10   ## Default in MB
+#SBATCH --cpus-per-task=1
 
 set -euf
 
@@ -17,16 +14,13 @@ fi
 
 CMD=$1
 WORKERBIN=$2
-BENCHDIR=$3
+SCRATCHDIR=$3
 
-PKDIR="$BENCHDIR/g16_pks"
-STATEDIR="$BENCHDIR/coord_state"
-REQDIR="$BENCHDIR/reqs"
-RESPDIR="$BENCHDIR/resps"
+PKDIR="$SCRATCHDIR/g16_pks"
+REQDIR="$SCRATCHDIR/reqs"
+RESPDIR="$SCRATCHDIR/resps"
 
-mkdir -p "$PKDIR"
-mkdir -p "$STATEDIR"
-mkdir -p "$REQDIR"
+# Only RESPDIR might not exist already
 mkdir -p "$RESPDIR"
 
 # The subcircuit ID is the task ID (minus 1 because 0-indexing)

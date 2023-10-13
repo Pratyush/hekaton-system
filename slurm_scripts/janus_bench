@@ -1,11 +1,15 @@
 #!/bin/bash
 
-set -euf
+set -u
 
 # Parameters: $1 (first command line arg) is the number of tasks to be run labeled [1-$1].
 
 COORDBIN="/nfshomes/micro/horizontally-scalable-snarks-system/target/release/coordinator"
 WORKERBIN="/nfshomes/micro/horizontally-scalable-snarks-system/target/release/worker"
+TOPSCRATCHDIR="/fs/nexus-scratch/micro"
+#TOPSCRATCHDIR="/scratch/zt1/project/imiers-prj/shared/"
+
+SACCT_EXTRA_ARGS="-P --delimiter=, --format=jobid,jobname,state,elapsed,cputime,totalcpu,maxvm,maxdiskread"
 
 HELPSTR="\
 Usage:\n\
@@ -19,10 +23,16 @@ fi
 
 BENCHDIR=$1
 
-PKDIR="$BENCHDIR/g16_pks"
-STATEDIR="$BENCHDIR/coord_state"
-REQDIR="$BENCHDIR/reqs"
-RESPDIR="$BENCHDIR/resps"
+# Get a version without a date (ie cutting everything before '-') so we can reuse a setup for multiple bench runs
+BENCHDIR_NODATE=$(echo -n "$BENCHDIR" | cut -d'-' -f1)
+
+# Make a directory in scratch space specifically for this parameter set
+SCRATCHDIR="$TOPSCRATCHDIR/$BENCHDIR_NODATE"
+
+PKDIR="$SCRATCHDIR/g16_pks"
+STATEDIR="$SCRATCHDIR/coord_state"
+REQDIR="$SCRATCHDIR/reqs"
+RESPDIR="$SCRATCHDIR/resps"
 
 mkdir -p "$PKDIR"
 mkdir -p "$STATEDIR"
@@ -30,45 +40,55 @@ mkdir -p "$REQDIR"
 mkdir -p "$RESPDIR"
 
 # Get number of subcircuits. This is the same as the number of G16 proving keys
-NUM_SUBCIRCUITS=$(ls "$PKDIR" | wc -l)
+NUM_SUBCIRCUITS=$(ls "$PKDIR"/g16_pk* | wc -l)
 
 # Coordinator creates stage0 requests
 echo "Building stage0 requests..."
 $COORDBIN start-stage0 \
 	--coord-state-dir "$STATEDIR" \
-	--req-dir "$REQDIR"
+	--req-dir "$REQDIR" \
+	> "$BENCHDIR/start_stage0.txt" \
+|| { echo "FAILED"; exit 1; }
 
 echo "Waiting for stage0 responses..."
 
-stage0_batch_out=$(\
-sbatch --wait --array="1-$NUM_SUBCIRCUITS" --ntasks="$NUM_SUBCIRCUITS" janus_worker_job stage0 "$WORKERBIN" "$BENCHDIR" \
-)
-
-# Post-Parallel
-# Saves metrices about run
-# Note -l specifies long formatting. Can be replaced with
-# 'format=elapsed (other fields)' to make succint.
-echo $stage0_batch_out
-job_id=$(echo ${stage0_batch_out} | grep -Po "\\d+")
-sacct -l -j $job_id >> metrics_stage0_${job_id}.out
+SBATCH_STDOUT=$(\
+sbatch --wait \
+	--array="1-$NUM_SUBCIRCUITS" \
+       	--ntasks="$NUM_SUBCIRCUITS" \
+	--output="$BENCHDIR/stage0_out_%a.txt" \
+	--error="$BENCHDIR/stage0_err_%a.txt" \
+       	janus_worker_job stage0 "$WORKERBIN" "$SCRATCHDIR" \
+) || { echo "FAILED"; exit 1; }
+JOB_ID=$(echo ${SBATCH_STDOUT} | grep -Po "\\d+")
+sacct -j $JOB_ID $SACCT_EXTRA_ARGS > "$BENCHDIR/metrics_stage0.txt"
 
 echo "Building stage1 requests..."
 $COORDBIN start-stage1 \
 	--resp-dir "$RESPDIR" \
 	--coord-state-dir "$STATEDIR" \
-	--req-dir "$REQDIR"
+	--req-dir "$REQDIR" \
+	> "$BENCHDIR/start_stage1.txt" \
+|| { echo "FAILED"; exit 1; }
+
 
 echo "Waiting for stage1 responses (this may take a while)..."
-stage1_batch_out=$(\
-sbatch --wait --array="1-$NUM_SUBCIRCUITS" --ntasks="$NUM_SUBCIRCUITS" janus_worker_job stage1 "$WORKERBIN" "$BENCHDIR" \
-)
-echo $stage1_batch_out
-job_id=$(echo ${stage1_batch_out} | grep -Po "\\d+")
-sacct -l -j $job_id >> metrics_stage1_${job_id}.out
+SBATCH_STDOUT=$(\
+sbatch --wait \
+	--array="1-$NUM_SUBCIRCUITS" \
+	--ntasks="$NUM_SUBCIRCUITS" \
+	--output="$BENCHDIR/stage1_out_%a.txt" \
+	--error="$BENCHDIR/stage1_err_%a.txt" \
+	janus_worker_job stage1 "$WORKERBIN" "$SCRATCHDIR" \
+) || { echo "FAILED"; exit 1; }
+JOB_ID=$(echo ${SBATCH_STDOUT} | grep -Po "\\d+")
+sacct -j $JOB_ID $SACCT_EXTRA_ARGS > "$BENCHDIR/metrics_stage1.txt"
 
 echo "Aggregating proofs"
 $COORDBIN end-proof \
 	--resp-dir "$RESPDIR" \
-   	--coord-state-dir "$STATEDIR"
+   	--coord-state-dir "$STATEDIR" \
+	> "$BENCHDIR/end_proof.txt" \
+|| { echo "FAILED"; exit 1; }
 
 echo "Done"
