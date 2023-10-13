@@ -99,9 +99,21 @@ pub struct MerkleTreeCircuitParams {
     /// Number of leaves in this Merkle tree
     pub num_leaves: usize,
     /// Number of times to iterate SHA256 at each node
-    pub num_sha_iterations: usize,
+    pub num_sha_iters_per_subcircuit: usize,
     /// Number of outgoing portal wires at each node
     pub num_portals_per_subcircuit: usize,
+}
+
+impl std::fmt::Display for MerkleTreeCircuitParams {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        writeln!(
+            f,
+            "[n_subcircs={}, n_iters={}, n_portals={}]",
+            2 * self.num_leaves,
+            self.num_sha_iters_per_subcircuit,
+            self.num_portals_per_subcircuit
+        )
+    }
 }
 
 impl MerkleTreeCircuit {
@@ -128,7 +140,7 @@ impl MerkleTreeCircuit {
         // Set the initial digest to the input
         let mut digest = DigestVar(input.to_vec());
         // Iteratively apply SHA256 to the digest
-        for _ in 0..self.params.num_sha_iterations {
+        for _ in 0..self.params.num_sha_iters_per_subcircuit {
             digest = Sha256Gadget::digest(&digest.0)?;
         }
 
@@ -153,7 +165,7 @@ impl<F: PrimeField> CircuitWithPortals<F> for MerkleTreeCircuit {
     // Make a new empty merkle tree circuit
     fn new(&params: &Self::Parameters) -> Self {
         assert!(
-            params.num_sha_iterations > 0,
+            params.num_sha_iters_per_subcircuit > 0,
             "cannot have 0 SHA256 iterations in test circuit"
         );
 
@@ -322,7 +334,7 @@ pub(crate) fn calculate_root(leaves: &[TestLeaf], params: MerkleTreeCircuitParam
     // A helper function
     let iterated_sha256 = |input: &[u8]| {
         let mut digest = input.to_vec();
-        for _ in 0..params.num_sha_iterations {
+        for _ in 0..params.num_sha_iters_per_subcircuit {
             digest = Sha256::digest(&digest).to_vec();
         }
 
@@ -449,7 +461,7 @@ mod test {
         let mut rng = test_rng();
         let circ_params = MerkleTreeCircuitParams {
             num_leaves: 16,
-            num_sha_iterations: 2,
+            num_sha_iters_per_subcircuit: 2,
             num_portals_per_subcircuit: 7,
         };
 

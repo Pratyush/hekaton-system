@@ -1,30 +1,26 @@
 use distributed_prover::{
     aggregation::{AggProvingKey, SuperComCommittingKey},
-    coordinator::{
-        CoordinatorStage0State, CoordinatorStage1State, FinalAggState, G16ProvingKeyGenerator,
-        Stage1Request,
-    },
+    coordinator::{CoordinatorStage0State, FinalAggState, G16ProvingKeyGenerator},
     kzg::KzgComKey,
     poseidon_util::{
         gen_merkle_params, PoseidonTreeConfig as TreeConfig, PoseidonTreeConfigVar as TreeConfigVar,
     },
     tree_hash_circuit::{MerkleTreeCircuit, MerkleTreeCircuitParams},
-    util::{deserialize_from_path, serialize_to_path, G16Com, G16ComSeed, G16ProvingKey},
-    worker::{process_stage0_request, process_stage1_request, Stage0Response, Stage1Response},
+    util::{deserialize_from_path, serialize_to_path},
+    worker::{Stage0Response, Stage1Response},
     CircuitWithPortals,
 };
 
-use std::{fs::File, io, path::PathBuf};
+use std::{io, path::PathBuf};
 
 use ark_bls12_381::{Bls12_381 as E, Fr};
-use ark_ff::PrimeField;
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{end_timer, start_timer};
 use clap::{Parser, Subcommand};
 use rayon::prelude::*;
 
 const G16_PK_FILENAME_PREFIX: &str = "g16_pk";
 const AGG_CK_FILENAME_PREFIX: &str = "agg_ck";
+const TEST_CIRC_PARAM_FILENAME_PREFIX: &str = "test_circ_params";
 const STAGE0_COORD_STATE_FILENAME_PREFIX: &str = "stage0_coordinator_state";
 const FINAL_AGG_STATE_FILENAME_PREFIX: &str = "final_aggregator_state";
 const STAGE0_REQ_FILENAME_PREFIX: &str = "stage0_req";
@@ -48,9 +44,21 @@ enum Command {
         #[clap(short, long, value_name = "DIR")]
         g16_pk_dir: PathBuf,
 
+        /// Directory where the coordinator's intermediate state is stored.
+        #[clap(short, long, value_name = "DIR")]
+        coord_state_dir: PathBuf,
+
         /// Test circuit param: Number of subcircuits. MUST be a power of two and greater than 1.
         #[clap(short, long, value_name = "NUM")]
         num_subcircuits: usize,
+
+        /// Test circuit param: Number of SHA256 iterations per subcircuit. MUST be at least 1.
+        #[clap(short, long, value_name = "NUM")]
+        num_sha2_iters: usize,
+
+        /// Test circuit param: Number of portal wire ops per subcircuit. MUST be at least 1.
+        #[clap(short, long, value_name = "NUM")]
+        num_portals: usize,
     },
 
     /// Generates an aggregation commitment key for a test circuit consisting of `n` subcircuits.
@@ -63,27 +71,18 @@ enum Command {
         /// Path to the coordinator's state directory
         #[clap(short, long, value_name = "DIR")]
         coord_state_dir: PathBuf,
-
-        /// Test circuit param: Number of subcircuits. MUST be a power of two and greater than 1.
-        #[clap(short, long, value_name = "NUM")]
-        num_subcircuits: usize,
     },
 
     /// Begins stage0 for a random proof for a large circuit with the given parameters. This
     /// produces _worker request packages_ which are processed in parallel by worker nodes.
     StartStage0 {
-        /// Path to place the coordinator's intermediate state once all the requests are generated.
-        /// This is named `coord_state.bin`.
+        /// Directory where the coordinator's intermediate state is stored.
         #[clap(short, long, value_name = "DIR")]
         coord_state_dir: PathBuf,
 
         /// Directory where the worker requests are stored
         #[clap(short, long, value_name = "DIR")]
         req_dir: PathBuf,
-
-        /// Test circuit param: Number of subcircuits. MUST be a power of two and greater than 1.
-        #[clap(short, long, value_name = "NUM")]
-        num_subcircuits: usize,
     },
 
     /// Process the stage0 responses from workers and produce stage1 reqeusts
@@ -99,10 +98,6 @@ enum Command {
         /// Directory where the worker responses are stored
         #[clap(short, long, value_name = "DIR")]
         resp_dir: PathBuf,
-
-        /// How many responses there are
-        #[clap(short, long, value_name = "NUM")]
-        num_subcircuits: usize,
     },
 
     /// Process the stage1 responses from workers and produce a final aggregate
@@ -113,24 +108,33 @@ enum Command {
 
         #[clap(short, long, value_name = "DIR")]
         resp_dir: PathBuf,
-
-        /// How many responses there are
-        #[clap(short, long, value_name = "NUM")]
-        num_subcircuits: usize,
     },
 }
 
-fn gen_circuit_params(num_subcircuits: usize) -> MerkleTreeCircuitParams {
+// Checks the test circuit parameters and puts them in a struct
+fn gen_test_circuit_params(
+    num_subcircuits: usize,
+    num_sha_iterations: usize,
+    num_portals_per_subcircuit: usize,
+) -> MerkleTreeCircuitParams {
     assert!(
         num_subcircuits.is_power_of_two(),
         "#subcircuits MUST be a power of 2"
     );
-    assert!(num_subcircuits > 1, "#subcircuits MUST be > 1");
+    assert!(num_subcircuits > 1, "num. of subcircuits MUST be > 1");
+    assert!(
+        num_sha_iterations > 0,
+        "num. of SHA256 iterations per subcircuit MUST be > 0"
+    );
+    assert!(
+        num_portals_per_subcircuit > 0,
+        "num. of portal ops per subcircuit MUST be > 0"
+    );
 
     MerkleTreeCircuitParams {
         num_leaves: num_subcircuits / 2,
-        num_sha_iterations: 1,
-        num_portals_per_subcircuit: 1,
+        num_sha_iters_per_subcircuit: num_sha_iterations,
+        num_portals_per_subcircuit,
     }
 }
 
@@ -230,12 +234,17 @@ fn generate_g16_pks(circ_params: MerkleTreeCircuitParams, g16_pk_dir: &PathBuf) 
     .unwrap();
 }
 
-fn generate_agg_ck(
-    circ_params: MerkleTreeCircuitParams,
-    g16_pk_dir: &PathBuf,
-    coord_state_dir: &PathBuf,
-) {
+fn generate_agg_ck(g16_pk_dir: &PathBuf, coord_state_dir: &PathBuf) {
     let mut rng = rand::thread_rng();
+
+    // Get the circuit parameters determined at Groth16 PK generation
+    let circ_params = deserialize_from_path::<MerkleTreeCircuitParams>(
+        &coord_state_dir,
+        TEST_CIRC_PARAM_FILENAME_PREFIX,
+        None,
+    )
+    .unwrap();
+    // Num subcircuits is 2× num leaves
     let num_subcircuits = 2 * circ_params.num_leaves;
 
     // Create a lambda that returns the given subcircuit's Groth16 proving key
@@ -244,8 +253,7 @@ fn generate_agg_ck(
     };
 
     // Construct the aggregator commitment key
-    let start =
-        start_timer!(|| format!("Generating aggregation key for {num_subcircuits} subcircuits"));
+    let start = start_timer!(|| format!("Generating aggregation key with params {circ_params}"));
     let agg_ck = {
         // Need some intermediate keys
         let super_com_key = SuperComCommittingKey::<E>::gen(&mut rng, num_subcircuits);
@@ -258,23 +266,27 @@ fn generate_agg_ck(
     serialize_to_path(&agg_ck, coord_state_dir, AGG_CK_FILENAME_PREFIX, None).unwrap();
 }
 
-fn begin_stage0(
-    circ_params: MerkleTreeCircuitParams,
-    worker_req_dir: &PathBuf,
-    coord_state_dir: &PathBuf,
-) -> io::Result<()> {
+fn begin_stage0(worker_req_dir: &PathBuf, coord_state_dir: &PathBuf) -> io::Result<()> {
     let mut rng = rand::thread_rng();
+
+    // Get the circuit parameters determined at Groth16 PK generation
+    let circ_params = deserialize_from_path::<MerkleTreeCircuitParams>(
+        &coord_state_dir,
+        TEST_CIRC_PARAM_FILENAME_PREFIX,
+        None,
+    )
+    .unwrap();
+    // Num subcircuits is 2× num leaves
     let num_subcircuits = 2 * circ_params.num_leaves;
 
-    // Make a random circuit with teh given parameters
+    // Make a random circuit with the given parameters
     let circ = MerkleTreeCircuit::rand(&mut rng, &circ_params);
 
     // Make the stage0 coordinator state
     let stage0_state = CoordinatorStage0State::<E, _>::new::<TreeConfig>(circ);
 
     // Sender sends stage0 requests containing the subtraces. Workers will commit to these
-    let start =
-        start_timer!(|| format!("Generating stage0 requests for {num_subcircuits} subcircuits"));
+    let start = start_timer!(|| format!("Generating stage0 requests with params {circ_params}"));
     let reqs = (0..num_subcircuits)
         .into_par_iter()
         .map(|subcircuit_idx| stage0_state.gen_request(subcircuit_idx))
@@ -304,13 +316,18 @@ fn begin_stage0(
     Ok(())
 }
 
-fn process_stage0_resps(
-    num_subcircuits: usize,
-    coord_state_dir: &PathBuf,
-    req_dir: &PathBuf,
-    resp_dir: &PathBuf,
-) {
+fn process_stage0_resps(coord_state_dir: &PathBuf, req_dir: &PathBuf, resp_dir: &PathBuf) {
     let tree_params = gen_merkle_params();
+
+    // Get the circuit parameters determined at Groth16 PK generation
+    let circ_params = deserialize_from_path::<MerkleTreeCircuitParams>(
+        &coord_state_dir,
+        TEST_CIRC_PARAM_FILENAME_PREFIX,
+        None,
+    )
+    .unwrap();
+    // Num subcircuits is 2× num leaves
+    let num_subcircuits = 2 * circ_params.num_leaves;
 
     // Deserialize the coordinator's state and the aggregation key
     let coord_state = deserialize_from_path::<CoordinatorStage0State<E, MerkleTreeCircuit>>(
@@ -347,8 +364,9 @@ fn process_stage0_resps(
         coord_state.process_stage0_responses(&super_com_key, tree_params, &stage0_resps);
 
     // Create all the stage1 requests
-    let start =
-        start_timer!(|| format!("Generating stage1 requests for {num_subcircuits} subcircuits"));
+    let start = start_timer!(|| format!(
+        "Generating stage1 requests for circuit with params {circ_params}"
+    ));
     let reqs = (0..num_subcircuits)
         .into_par_iter()
         .map(|subcircuit_idx| new_coord_state.gen_request(subcircuit_idx))
@@ -378,7 +396,17 @@ fn process_stage0_resps(
     .unwrap();
 }
 
-fn process_stage1_resps(num_subcircuits: usize, coord_state_dir: &PathBuf, resp_dir: &PathBuf) {
+fn process_stage1_resps(coord_state_dir: &PathBuf, resp_dir: &PathBuf) {
+    // Get the circuit parameters determined at Groth16 PK generation
+    let circ_params = deserialize_from_path::<MerkleTreeCircuitParams>(
+        &coord_state_dir,
+        TEST_CIRC_PARAM_FILENAME_PREFIX,
+        None,
+    )
+    .unwrap();
+    // Num subcircuits is 2× num leaves
+    let num_subcircuits = 2 * circ_params.num_leaves;
+
     // Deserialize the coordinator's final state, the aggregation key
     let final_agg_state = deserialize_from_path::<FinalAggState<E>>(
         coord_state_dir,
@@ -405,7 +433,8 @@ fn process_stage1_resps(num_subcircuits: usize, coord_state_dir: &PathBuf, resp_
         .collect::<Vec<_>>();
 
     // Compute the aggregate
-    let start = start_timer!(|| format!("Aggregating proofs for {num_subcircuits} subcircuits"));
+    let start =
+        start_timer!(|| format!("Aggregating proofs for circuit with params {circ_params}"));
     let agg_proof = final_agg_state.gen_agg_proof(&agg_ck, &stage1_resps);
     end_timer!(start);
     // Save the proof
@@ -419,45 +448,52 @@ fn main() {
     match args.command {
         Command::GenGroth16Keys {
             g16_pk_dir,
+            coord_state_dir,
             num_subcircuits,
+            num_sha2_iters,
+            num_portals,
         } => {
-            let circ_params = gen_circuit_params(num_subcircuits);
+            // Make the circuit params and save them to disk
+            let circ_params = gen_test_circuit_params(num_subcircuits, num_sha2_iters, num_portals);
+            serialize_to_path(
+                &circ_params,
+                &coord_state_dir,
+                TEST_CIRC_PARAM_FILENAME_PREFIX,
+                None,
+            )
+            .unwrap();
+
+            // Now run the subcommand
             generate_g16_pks(circ_params, &g16_pk_dir);
         },
 
         Command::GenAggKey {
             g16_pk_dir,
             coord_state_dir,
-            num_subcircuits,
         } => {
-            let circ_params = gen_circuit_params(num_subcircuits);
-            generate_agg_ck(circ_params, &g16_pk_dir, &coord_state_dir);
+            generate_agg_ck(&g16_pk_dir, &coord_state_dir);
         },
 
         Command::StartStage0 {
             req_dir,
             coord_state_dir,
-            num_subcircuits,
         } => {
-            let circ_params = gen_circuit_params(num_subcircuits);
-            begin_stage0(circ_params, &req_dir, &coord_state_dir).unwrap();
+            begin_stage0(&req_dir, &coord_state_dir).unwrap();
         },
 
         Command::StartStage1 {
             resp_dir,
             coord_state_dir,
             req_dir,
-            num_subcircuits,
         } => {
-            process_stage0_resps(num_subcircuits, &coord_state_dir, &req_dir, &resp_dir);
+            process_stage0_resps(&coord_state_dir, &req_dir, &resp_dir);
         },
 
         Command::EndProof {
             coord_state_dir,
             resp_dir,
-            num_subcircuits,
         } => {
-            process_stage1_resps(num_subcircuits, &coord_state_dir, &resp_dir);
+            process_stage1_resps(&coord_state_dir, &resp_dir);
         },
     }
 

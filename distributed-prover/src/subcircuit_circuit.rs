@@ -299,7 +299,7 @@ mod test {
         // Make a random Merkle tree
         let circ_params = MerkleTreeCircuitParams {
             num_leaves: 4,
-            num_sha_iterations: 4,
+            num_sha_iters_per_subcircuit: 4,
             num_portals_per_subcircuit: 12,
         };
         let circ = MerkleTreeCircuit::rand(&mut rng, &circ_params);
@@ -394,7 +394,7 @@ mod test {
         // Make a random Merkle tree
         let circ_params = MerkleTreeCircuitParams {
             num_leaves: 2,
-            num_sha_iterations: 1,
+            num_sha_iters_per_subcircuit: 1,
             num_portals_per_subcircuit: 1,
         };
         let circ = MerkleTreeCircuit::rand(&mut rng, &circ_params);
