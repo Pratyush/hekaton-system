@@ -159,6 +159,14 @@ fn generate_g16_pks(circ_params: MerkleTreeCircuitParams, g16_pk_dir: &PathBuf) 
                 Some(subcircuit_idx),
             )
             .unwrap();
+            // Save the corresponding committing key
+            serialize_to_path(
+                &pk.ck,
+                g16_pk_dir,
+                G16_CK_FILENAME_PREFIX,
+                Some(subcircuit_idx),
+            )
+            .unwrap();
         }
 
         return;
