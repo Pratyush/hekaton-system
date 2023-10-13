@@ -258,7 +258,7 @@ impl<F: PrimeField> CircuitWithPortals<F> for MerkleTreeCircuit {
         // The special padding subcircuit lies outside the tree. If it's the last subcircuit,
         // do some iterated hashes and throw them away
         if is_padding {
-            let input = UInt8::new_witness_vec(ns!(cs, "padding input"), &[0u8; 32])?;
+            let input = UInt8::new_witness_vec(ns!(cs, "padding input"), &EMPTY_LEAF)?;
             let _ = self.iterated_sha256(&input)?;
         } else {
             // Not padding
