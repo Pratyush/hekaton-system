@@ -1,0 +1,54 @@
+#!/bin/bash
+#
+#SBATCH --job-name=sbatch-test
+#SBATCH --constraint="Xeon&4216"
+#
+#SBATCH --output=out_%a.txt
+#SBATCH --error=err_%a.txt ## Note %a is the SLURM_ARRAY_TASK_ID value enumerated 1-$1
+#SBATCH --cpus-per-task=1  ## This must match the parameter in SRUN
+#SBATCH --mem-per-cpu=10   ## Default in MB
+
+set -euf
+
+if [ -z ${1+x} ] || [ -z ${2+x} ]; then
+    echo "Invalid number of args"
+    exit 1
+fi
+
+CMD=$1
+WORKERBIN=$2
+BENCHDIR=$3
+
+PKDIR="$BENCHDIR/g16_pks"
+STATEDIR="$BENCHDIR/coord_state"
+REQDIR="$BENCHDIR/reqs"
+RESPDIR="$BENCHDIR/resps"
+
+mkdir -p "$PKDIR"
+mkdir -p "$STATEDIR"
+mkdir -p "$REQDIR"
+mkdir -p "$RESPDIR"
+
+# The subcircuit ID is the task ID (minus 1 because 0-indexing)
+SUBCIRCUIT_IDX="$((SLURM_ARRAY_TASK_ID-1))"
+
+# If the command is "stage0" then process the corresponding stage0 request
+if [ $CMD = "stage0" ]; then
+	echo "Processing stage0 req #$SUBCIRCUIT_IDX"
+	"$WORKERBIN" process-stage0-request \
+		--g16-pk-dir "$PKDIR" \
+		--req-dir "$REQDIR" \
+		--resp-dir "$RESPDIR" \
+		--subcircuit-index $SUBCIRCUIT_IDX
+elif [ $CMD = "stage1" ]; then
+	# If the command is "stage1" then process the corresponding stage1 request
+	echo "Processing stage1 req #$SUBCIRCUIT_IDX"
+	"$WORKERBIN" process-stage1-request \
+		--g16-pk-dir "$PKDIR" \
+		--req-dir "$REQDIR" \
+		--resp-dir "$RESPDIR" \
+		--subcircuit-index $SUBCIRCUIT_IDX
+else
+	echo "invalid command $CMD"
+	exit 1
+fi

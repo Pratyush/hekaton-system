@@ -1,0 +1,33 @@
+#!/bin/bash
+
+set -euf
+
+# Parameters: $1 (first command line arg) is the number of tasks to be run labeled [1-$1].
+
+COORDBIN="/nfshomes/micro/horizontally-scalable-snarks-system/target/release/coordinator"
+SCRATCHDIR="/scratch0/"
+#SCRATCHDIR="/scratch/zt1/project/imiers-prj/shared/"
+
+HELPSTR="\
+Usage:\n\
+janus_setup <benchdir> <num_circuits> <num_sha2_iters_per_subcircuit> <num_portals_per_subcircuit>\
+"
+
+if [ -z ${1+x} ] || [ -z ${2+x} ] || [ -z ${3+x} ] || [ -z ${4+x} ]; then
+    echo -e "$HELPSTR"
+    exit 1
+fi
+
+BENCHDIR=$1
+NUM_SUBCIRCUITS=$2
+NUM_SHA2_ITERS=$3
+NUM_PORTALS=$4
+
+PKDIR="$BENCHDIR/g16_pks"
+STATEDIR="$BENCHDIR/coord_state"
+
+mkdir -p "$PKDIR"
+mkdir -p "$STATEDIR"
+
+"$COORDBIN" gen-groth16-keys --g16-pk-dir "$PKDIR" --coord-state-dir "$STATEDIR" --num-subcircuits $NUM_SUBCIRCUITS --num-sha2-iters $NUM_SHA2_ITERS --num-portals $NUM_PORTALS
+"$COORDBIN" gen-agg-key --g16-pk-dir "$PKDIR" --coord-state-dir "$STATEDIR"

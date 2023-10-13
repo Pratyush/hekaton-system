@@ -1,0 +1,74 @@
+#!/bin/bash
+
+set -euf
+
+# Parameters: $1 (first command line arg) is the number of tasks to be run labeled [1-$1].
+
+COORDBIN="/nfshomes/micro/horizontally-scalable-snarks-system/target/release/coordinator"
+WORKERBIN="/nfshomes/micro/horizontally-scalable-snarks-system/target/release/worker"
+
+HELPSTR="\
+Usage:\n\
+    janus_bench <benchdir>\
+"
+
+if [ -z ${1+x} ]; then
+    echo -e "$HELPSTR"
+    exit 1
+fi
+
+BENCHDIR=$1
+
+PKDIR="$BENCHDIR/g16_pks"
+STATEDIR="$BENCHDIR/coord_state"
+REQDIR="$BENCHDIR/reqs"
+RESPDIR="$BENCHDIR/resps"
+
+mkdir -p "$PKDIR"
+mkdir -p "$STATEDIR"
+mkdir -p "$REQDIR"
+mkdir -p "$RESPDIR"
+
+# Get number of subcircuits. This is the same as the number of G16 proving keys
+NUM_SUBCIRCUITS=$(ls "$PKDIR" | wc -l)
+
+# Coordinator creates stage0 requests
+echo "Building stage0 requests..."
+$COORDBIN start-stage0 \
+	--coord-state-dir "$STATEDIR" \
+	--req-dir "$REQDIR"
+
+echo "Waiting for stage0 responses..."
+
+stage0_batch_out=$(\
+sbatch --wait --array="1-$NUM_SUBCIRCUITS" --ntasks="$NUM_SUBCIRCUITS" janus_worker_job stage0 "$WORKERBIN" "$BENCHDIR" \
+)
+
+# Post-Parallel
+# Saves metrices about run
+# Note -l specifies long formatting. Can be replaced with
+# 'format=elapsed (other fields)' to make succint.
+echo $stage0_batch_out
+job_id=$(echo ${stage0_batch_out} | grep -Po "\\d+")
+sacct -l -j $job_id >> metrics_stage0_${job_id}.out
+
+echo "Building stage1 requests..."
+$COORDBIN start-stage1 \
+	--resp-dir "$RESPDIR" \
+	--coord-state-dir "$STATEDIR" \
+	--req-dir "$REQDIR"
+
+echo "Waiting for stage1 responses (this may take a while)..."
+stage1_batch_out=$(\
+sbatch --wait --array="1-$NUM_SUBCIRCUITS" --ntasks="$NUM_SUBCIRCUITS" janus_worker_job stage1 "$WORKERBIN" "$BENCHDIR" \
+)
+echo $stage1_batch_out
+job_id=$(echo ${stage1_batch_out} | grep -Po "\\d+")
+sacct -l -j $job_id >> metrics_stage1_${job_id}.out
+
+echo "Aggregating proofs"
+$COORDBIN end-proof \
+	--resp-dir "$RESPDIR" \
+   	--coord-state-dir "$STATEDIR"
+
+echo "Done"
