@@ -249,12 +249,6 @@ impl<F: PrimeField> CircuitWithPortals<F> for MerkleTreeCircuit {
     ) -> Result<(), SynthesisError> {
         let starting_num_constraints = cs.num_constraints();
 
-        // Special padding subcircuit. If it's the last subcircuit, do nothing. This pads us out to
-        // a power of two
-        if subcircuit_idx == <Self as CircuitWithPortals<F>>::num_subcircuits(&self) - 1 {
-            return Ok(());
-        }
-
         let num_leaves = self.leaves.len();
 
         // The subcircuit ordering is level by level. Pick the right node idx
@@ -262,9 +256,17 @@ impl<F: PrimeField> CircuitWithPortals<F> for MerkleTreeCircuit {
 
         let is_leaf = level(node_idx) == 0;
         let is_root = root_idx(num_leaves) == node_idx;
+        // The last subcircuit is a padding subcircuit. This is not a leaf or a parent or a root
+        let is_padding =
+            subcircuit_idx == <Self as CircuitWithPortals<F>>::num_subcircuits(&self) - 1;
 
-        if is_leaf {
-            // Which number leaf is it
+        // Special padding subcircuit. If it's the last subcircuit, do some iterated hashes and
+        // throw them away
+        if is_padding {
+            let input = UInt8::new_witness_vec(ns!(cs, "padding input"), &[0u8; 32])?;
+            let _ = self.iterated_sha256(&input)?;
+        } else if is_leaf {
+            // This is a leaf node. Get the leaf number
             let leaf_idx = (node_idx / 2) as usize;
 
             // Witness the leaf
@@ -298,7 +300,7 @@ impl<F: PrimeField> CircuitWithPortals<F> for MerkleTreeCircuit {
         }
 
         // Do some placeholder memory operations
-        // First, set the portal value
+        // First, set the portal value. Only need to do this once.
         if subcircuit_idx == 0 {
             let _ = pm.set(
                 "placeholder".to_string(),
