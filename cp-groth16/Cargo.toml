@@ -23,3 +23,9 @@ ark-r1cs-std = "0.4"
 default = ["parallel"]
 std = ["ark-ff/std", "ark-ec/std", "ark-poly/std", "ark-relations/std", "ark-std/std", "ark-serialize/std" ]
 parallel = ["std", "ark-ff/parallel", "ark-poly/parallel", "ark-ec/parallel", "ark-std/parallel", "ark-serialize/std", "rayon"]
+
+[[bench]]
+name = "groth16-benches"
+path = "benches/bench.rs"
+harness = false
+required-features = ["std"]
