@@ -188,6 +188,7 @@ fn generate_g16_pks(circ_params: MerkleTreeCircuitParams, g16_pk_dir: &PathBuf) 
     // Now save them
 
     // Save the first leaf (proving key and committing key)
+    println!("Writing first leaf");
     serialize_to_path(&first_leaf_pk, g16_pk_dir, G16_PK_FILENAME_PREFIX, Some(0)).unwrap();
     serialize_to_path(
         &first_leaf_pk.ck,
@@ -199,6 +200,7 @@ fn generate_g16_pks(circ_params: MerkleTreeCircuitParams, g16_pk_dir: &PathBuf) 
 
     // Save all the rest of the leaves
     for subcircuit_idx in 1..(num_subcircuits / 2) {
+        println!("Writing leaf {subcircuit_idx}");
         serialize_to_path(
             &second_leaf_pk,
             g16_pk_dir,
@@ -217,6 +219,7 @@ fn generate_g16_pks(circ_params: MerkleTreeCircuitParams, g16_pk_dir: &PathBuf) 
 
     // Save all the parents
     for subcircuit_idx in (num_subcircuits / 2)..(num_subcircuits - 2) {
+        println!("Writing parent {subcircuit_idx}");
         serialize_to_path(
             &parent_pk,
             g16_pk_dir,
@@ -234,6 +237,7 @@ fn generate_g16_pks(circ_params: MerkleTreeCircuitParams, g16_pk_dir: &PathBuf) 
     }
 
     // Save the root
+    println!("Writing root");
     serialize_to_path(
         &root_pk,
         g16_pk_dir,
@@ -250,6 +254,7 @@ fn generate_g16_pks(circ_params: MerkleTreeCircuitParams, g16_pk_dir: &PathBuf) 
     .unwrap();
 
     // Save the padding
+    println!("Writing padding");
     serialize_to_path(
         &padding_pk,
         g16_pk_dir,
