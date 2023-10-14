@@ -26,9 +26,9 @@ struct Args {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Generates the Groth16 proving keys for a test circuit consisting of `n` subcircuits. Places
-    /// them in `OUT_DIR` with the name `g16_pk_i.bin`, where `i` is the subcircuit index.
-    GenGroth16Keys {
+    /// Generates the Groth16 proving keys and aggregation key  for a test circuit consisting of
+    /// `n` subcircuits. Places them in coord-state-dir
+    GenKeys {
         /// Directory where the Groth16 proving keys will be stored
         #[clap(short, long, value_name = "DIR")]
         g16_pk_dir: PathBuf,
@@ -48,18 +48,6 @@ enum Command {
         /// Test circuit param: Number of portal wire ops per subcircuit. MUST be at least 1.
         #[clap(short, long, value_name = "NUM")]
         num_portals: usize,
-    },
-
-    /// Generates an aggregation commitment key for a test circuit consisting of `n` subcircuits.
-    /// Places it in `COORD_STATE_DIR/agg_ck.bin`.
-    GenAggKey {
-        /// Path to where the Groth16 proving keys are stored
-        #[clap(short, long, value_name = "DIR")]
-        g16_pk_dir: PathBuf,
-
-        /// Path to the coordinator's state directory
-        #[clap(short, long, value_name = "DIR")]
-        coord_state_dir: PathBuf,
     },
 
     /// Begins stage0 for a random proof for a large circuit with the given parameters. This
@@ -128,7 +116,11 @@ fn gen_test_circuit_params(
 }
 
 /// Generates all the Groth16 proving and committing keys keys that the workers will use
-fn generate_g16_pks(circ_params: MerkleTreeCircuitParams, g16_pk_dir: &PathBuf) {
+fn generate_g16_pks(
+    circ_params: MerkleTreeCircuitParams,
+    g16_pk_dir: &PathBuf,
+    coord_state_dir: &PathBuf,
+) {
     let mut rng = rand::thread_rng();
     let tree_params = gen_merkle_params();
 
@@ -188,7 +180,7 @@ fn generate_g16_pks(circ_params: MerkleTreeCircuitParams, g16_pk_dir: &PathBuf) 
     // Now save them
 
     // Save the first leaf (proving key and committing key)
-    println!("Writing first leaf");
+    println!("Writing first leaf proving key");
     serialize_to_path(&first_leaf_pk, g16_pk_dir, G16_PK_FILENAME_PREFIX, Some(0)).unwrap();
     serialize_to_path(
         &first_leaf_pk.ck,
@@ -199,25 +191,25 @@ fn generate_g16_pks(circ_params: MerkleTreeCircuitParams, g16_pk_dir: &PathBuf) 
     .unwrap();
 
     // Save all the rest of the leaves
-    println!("Writing leaves");
-    let leaf_idxs = 1..(num_subcircuits / 2);
+    println!("Writing leaf proving keys");
+    let other_leaf_idxs = 1..(num_subcircuits / 2);
     serialize_to_paths(
         &second_leaf_pk,
         g16_pk_dir,
         G16_PK_FILENAME_PREFIX,
-        leaf_idxs.clone(),
+        other_leaf_idxs.clone(),
     )
     .unwrap();
     serialize_to_paths(
         &second_leaf_pk.ck,
         g16_pk_dir,
         G16_CK_FILENAME_PREFIX,
-        leaf_idxs,
+        other_leaf_idxs.clone(),
     )
     .unwrap();
 
     // Save all the parents
-    println!("Writing parents");
+    println!("Writing parent proving keys");
     let parent_idxs = (num_subcircuits / 2)..(num_subcircuits - 2);
     serialize_to_paths(
         &parent_pk,
@@ -230,12 +222,12 @@ fn generate_g16_pks(circ_params: MerkleTreeCircuitParams, g16_pk_dir: &PathBuf) 
         &parent_pk.ck,
         g16_pk_dir,
         G16_CK_FILENAME_PREFIX,
-        parent_idxs,
+        parent_idxs.clone(),
     )
     .unwrap();
 
     // Save the root
-    println!("Writing root");
+    println!("Writing root proving key");
     serialize_to_path(
         &root_pk,
         g16_pk_dir,
@@ -252,7 +244,7 @@ fn generate_g16_pks(circ_params: MerkleTreeCircuitParams, g16_pk_dir: &PathBuf) 
     .unwrap();
 
     // Save the padding
-    println!("Writing padding");
+    println!("Writing padding proving key");
     serialize_to_path(
         &padding_pk,
         g16_pk_dir,
@@ -267,24 +259,23 @@ fn generate_g16_pks(circ_params: MerkleTreeCircuitParams, g16_pk_dir: &PathBuf) 
         Some(num_subcircuits - 1),
     )
     .unwrap();
-}
 
-fn generate_agg_ck(g16_pk_dir: &PathBuf, coord_state_dir: &PathBuf) {
-    let mut rng = rand::thread_rng();
-
-    // Get the circuit parameters determined at Groth16 PK generation
-    let circ_params = deserialize_from_path::<MerkleTreeCircuitParams>(
-        &coord_state_dir,
-        TEST_CIRC_PARAM_FILENAME_PREFIX,
-        None,
-    )
-    .unwrap();
-    // Num subcircuits is 2× num leaves
-    let num_subcircuits = 2 * circ_params.num_leaves;
-
-    // Create a lambda that returns the given subcircuit's Groth16 proving key
-    let pk_fetcher = |subcircuit_idx| {
-        deserialize_from_path(g16_pk_dir, G16_PK_FILENAME_PREFIX, Some(subcircuit_idx)).unwrap()
+    // To generate the aggregation key, we need an efficient G16 pk fetcher. Normally this hits
+    // disk, but this might take a long long time.
+    let pk_fetcher = move |subcircuit_idx: usize| {
+        if subcircuit_idx == 0 {
+            first_leaf_pk.clone()
+        } else if other_leaf_idxs.contains(&subcircuit_idx) {
+            second_leaf_pk.clone()
+        } else if parent_idxs.contains(&subcircuit_idx) {
+            parent_pk.clone()
+        } else if subcircuit_idx == num_subcircuits - 2 {
+            root_pk.clone()
+        } else if subcircuit_idx == num_subcircuits - 1 {
+            padding_pk.clone()
+        } else {
+            panic!("unexpected subcircuit index {subcircuit_idx}")
+        }
     };
 
     // Construct the aggregator commitment key
@@ -298,6 +289,7 @@ fn generate_agg_ck(g16_pk_dir: &PathBuf, coord_state_dir: &PathBuf) {
     end_timer!(start);
 
     // Save the aggregator key
+    println!("Writing aggregation key");
     serialize_to_path(&agg_ck, coord_state_dir, AGG_CK_FILENAME_PREFIX, None).unwrap();
 }
 
@@ -483,7 +475,7 @@ fn main() {
     let start = start_timer!(|| format!("Running coordinator"));
 
     match args.command {
-        Command::GenGroth16Keys {
+        Command::GenKeys {
             g16_pk_dir,
             coord_state_dir,
             num_subcircuits,
@@ -501,14 +493,7 @@ fn main() {
             .unwrap();
 
             // Now run the subcommand
-            generate_g16_pks(circ_params, &g16_pk_dir);
-        },
-
-        Command::GenAggKey {
-            g16_pk_dir,
-            coord_state_dir,
-        } => {
-            generate_agg_ck(&g16_pk_dir, &coord_state_dir);
+            generate_g16_pks(circ_params, &g16_pk_dir, &coord_state_dir);
         },
 
         Command::StartStage0 {
