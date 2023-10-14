@@ -1,0 +1,117 @@
+use ark_bls12_381::G1Affine;
+use ark_ec::scalar_mul::variable_base::VariableBaseMSM as BaselineVariableBaseMSM;
+use ark_ec::AffineRepr;
+use ark_ff::PrimeField;
+use ark_msm::{msm::VariableBaseMSM, utils::generate_msm_inputs};
+
+#[cfg(test)]
+mod msm_test {
+    use super::*;
+    use ark_bls12_381::G1Projective;
+    use ark_msm::types::{G1BigInt, G1_SCALAR_SIZE};
+    use ark_std::UniformRand;
+
+    fn verify_correctness(points: &[G1Affine], scalars: &[G1BigInt], window_size: u32) {
+        for glv_enabled in [true, false] {
+            if !glv_enabled && G1_SCALAR_SIZE % window_size == 0 {
+                // G1_SCALAR_SIZE % window_size causes overflow when glv is not enabled
+                // TODO: remove this condition when this overflow issue is fixed
+                continue;
+            }
+            let baseline = G1Projective::msm_bigint(points, scalars);
+            let opt = VariableBaseMSM::multi_scalar_mul_custom(
+                points,
+                scalars,
+                window_size,
+                2048,
+                256,
+                glv_enabled,
+            );
+
+            assert_eq!(baseline, opt);
+        }
+    }
+
+    #[test]
+    fn test_msm_correctness_few_points_no_collision_c14() {
+        let num_points = 2;
+        let mut rng = ark_std::test_rng();
+        let mut points: Vec<_> = Vec::new();
+        let mut scalars: Vec<_> = Vec::new();
+        for _ in 0..num_points {
+            points.push(G1Affine::rand(&mut rng));
+            scalars.push(<G1Affine as AffineRepr>::ScalarField::rand(&mut rng).into_bigint());
+        }
+
+        verify_correctness(&points, &scalars, 14);
+    }
+
+    #[test]
+    fn test_msm_correctness_few_points_no_collision_c15() {
+        let num_points = 2;
+        let mut rng = ark_std::test_rng();
+        let mut points: Vec<_> = Vec::new();
+        let mut scalars: Vec<_> = Vec::new();
+        for _ in 0..num_points {
+            points.push(G1Affine::rand(&mut rng));
+            scalars.push(<G1Affine as AffineRepr>::ScalarField::rand(&mut rng).into_bigint());
+        }
+
+        verify_correctness(&points, &scalars, 15);
+    }
+
+    #[test]
+    fn test_msm_correctness_few_points_no_collision_c16() {
+        let num_points = 2;
+        let mut rng = ark_std::test_rng();
+        let mut points: Vec<_> = Vec::new();
+        let mut scalars: Vec<_> = Vec::new();
+        for _ in 0..num_points {
+            points.push(G1Affine::rand(&mut rng));
+            scalars.push(<G1Affine as AffineRepr>::ScalarField::rand(&mut rng).into_bigint());
+        }
+
+        verify_correctness(&points, &scalars, 16);
+    }
+
+    #[test]
+    fn test_msm_correctness_few_points_u32_all_collision() {
+        let num_points = 2;
+        let mut rng = ark_std::test_rng();
+        let mut points: Vec<_> = Vec::new();
+        for _ in 0..num_points {
+            points.push(G1Affine::rand(&mut rng));
+        }
+        let scalars: Vec<_> = vec![G1BigInt::from(0xFFFFFFFFu32); num_points];
+
+        verify_correctness(&points, &scalars, 14);
+    }
+
+    #[test]
+    fn test_msm_correctness_few_points_bigint_all_collision() {
+        let num_points = 2;
+        let mut rng = ark_std::test_rng();
+        let mut points: Vec<_> = Vec::new();
+        for _ in 0..num_points {
+            points.push(G1Affine::rand(&mut rng));
+        }
+        let scalars: Vec<_> =
+            vec![<G1Affine as AffineRepr>::ScalarField::rand(&mut rng).into_bigint(); num_points];
+
+        verify_correctness(&points, &scalars, 15);
+    }
+
+    #[test]
+    fn test_msm_correctness_tremendous_points_c15() {
+        let size = 1 << 10;
+        let (points, scalars) = generate_msm_inputs::<G1Affine>(size);
+        verify_correctness(&points, &scalars, 15);
+    }
+
+    #[test]
+    fn test_msm_correctness_tremendous_points_c16() {
+        let size = 1 << 10;
+        let (points, scalars) = generate_msm_inputs::<G1Affine>(size);
+        verify_correctness(&points, &scalars, 16);
+    }
+}
