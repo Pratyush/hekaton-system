@@ -55,3 +55,6 @@ features = ["derive"]
 name = "microbenchmarks"
 harness = false
 required-features = ["asm", "parallel"]
+
+[profile.release]
+debug = true
