@@ -42,6 +42,7 @@ pub struct SetupPortalManager<F: PrimeField> {
 }
 
 impl<F: PrimeField> SetupPortalManager<F> {
+    // TODO: Remove the cs input here. It's not needed bc it's given in the start_subtrace method
     pub fn new(cs: ConstraintSystemRef<F>) -> Self {
         SetupPortalManager {
             cs,
@@ -51,8 +52,11 @@ impl<F: PrimeField> SetupPortalManager<F> {
         }
     }
 
-    pub(crate) fn start_subtrace(&mut self) {
+    /// Makes a subtrace and updates the constraint system. The constraint system needs to be
+    /// updated with an empty one otherwise it gets too big and we run out of memory
+    pub(crate) fn start_subtrace(&mut self, cs: ConstraintSystemRef<F>) {
         self.subtraces.push(VecDeque::new());
+        self.cs = cs;
     }
 }
 

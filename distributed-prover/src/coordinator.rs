@@ -31,7 +31,7 @@ use rand::RngCore;
 /// records the time-ordered subtraces. This will also `assert!` that the constraints are satisfied
 /// if `check_satisfied` is set. This should always be set unless you're generating a proving key
 /// with a dummy circuit.
-fn get_subtraces<C, F, P>(circ: &P, check_satisfied: bool) -> Vec<VecDeque<RomTranscriptEntry<F>>>
+fn get_subtraces<C, F, P>(circ: &P) -> Vec<VecDeque<RomTranscriptEntry<F>>>
 where
     C: TreeConfig,
     F: PrimeField,
@@ -44,8 +44,11 @@ where
     let circ_params = circ.get_params();
 
     for subcircuit_idx in 0..num_subcircuits {
+        // Make a fresh constraint system. Otherwise it gets too big
+        let cs = ConstraintSystemRef::<F>::new(ConstraintSystem::default());
+
         // Start a new subtrace and then run the subcircuit
-        pm.start_subtrace();
+        pm.start_subtrace(cs.clone());
 
         // To make sure errors are caught early, only set the witnesses that are earmarked for this
         // subcircuit. Make the rest empty
@@ -57,10 +60,6 @@ where
         circ_copy
             .generate_constraints(cs.clone(), subcircuit_idx, &mut pm)
             .unwrap();
-    }
-
-    if check_satisfied {
-        assert!(cs.is_satisfied().unwrap());
     }
 
     pm.subtraces
@@ -90,7 +89,7 @@ where
     pub fn new(circ: P, tree_params: ExecTreeParams<C>) -> Self {
         // Generate the traces. Do not bother to check whether the constraints are satisfied. This
         // circuit's contents might be placeholder values.
-        let time_ordered_subtraces = get_subtraces::<C, _, _>(&circ, false);
+        let time_ordered_subtraces = get_subtraces::<C, _, _>(&circ);
 
         G16ProvingKeyGenerator {
             tree_params,
@@ -348,7 +347,7 @@ where
             .collect();
 
         // Run the circuit and collect the execution trace. Check that constraints are satisfied.
-        let time_ordered_subtraces = get_subtraces::<C, E::ScalarField, _>(&circ, true);
+        let time_ordered_subtraces = get_subtraces::<C, E::ScalarField, _>(&circ);
         let addr_ordered_subtraces = sort_subtraces_by_addr(&time_ordered_subtraces);
 
         CoordinatorStage0State {

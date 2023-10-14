@@ -473,7 +473,7 @@ mod test {
         let cs = ConstraintSystemRef::<Fr>::new(ConstraintSystem::default());
         let mut pm = SetupPortalManager::new(cs.clone());
         // Make it all one subtrace. We're not really testing this part
-        pm.start_subtrace();
+        pm.start_subtrace(cs.clone());
 
         let num_subcircuits = <MerkleTreeCircuit as CircuitWithPortals<Fr>>::num_subcircuits(&circ);
         for subcircuit_idx in 0..num_subcircuits {
