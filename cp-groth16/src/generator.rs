@@ -127,10 +127,12 @@ where
     // Compute B window table
     let g2_time = start_timer!(|| "Compute G2 table");
     let g2_window = FixedBase::get_mul_window_size(non_zero_b);
+    dbg!(non_zero_a);
+    dbg!(non_zero_b);
     let g2_table = FixedBase::get_window_table::<E::G2>(scalar_bits, g2_window, g2_generator);
     end_timer!(g2_time);
     // Compute the B-query in G2
-    let b_g2_time = start_timer!(|| "Calculate B G2");
+    let b_g2_time = start_timer!(|| format!("Calculate B G2 of size {}", b.len()));
     let b_h = FixedBase::msm::<E::G2>(scalar_bits, g2_window, &g2_table, &b);
     end_timer!(b_g2_time);
 
@@ -172,13 +174,13 @@ where
     end_timer!(a_time);
 
     // Compute the B-query in G1
-    let b_g1_time = start_timer!(|| "Calculate B G1");
+    let b_g1_time = start_timer!(|| format!("Calculate B G1 of size {}", b.len()));
     let b_g = FixedBase::msm::<E::G1>(scalar_bits, g1_window, &g1_table, &b);
     drop(b);
     end_timer!(b_g1_time);
 
     // Compute the H-query
-    let h_time = start_timer!(|| "Calculate H");
+    let h_time = start_timer!(|| format!("Calculate H of size {m_raw}"));
     let h = QAP::h_query_scalars::<_, D<E::ScalarField>>(m_raw - 1, t, zt, last_delta_inv)?;
     let h_g = FixedBase::msm::<E::G1>(scalar_bits, g1_window, &g1_table, &h);
 
@@ -190,10 +192,9 @@ where
     let deltas_abc_g = deltas_abc
         .into_iter()
         .map(|v| {
-            FixedBase::msm::<E::G1>(scalar_bits, g1_window, &g1_table, &v)
-                .into_iter()
-                .map(E::G1::into_affine)
-                .collect()
+            dbg!(v.len());
+            let v = FixedBase::msm::<E::G1>(scalar_bits, g1_window, &g1_table, &v);
+            E::G1::normalize_batch(&v)
         })
         .collect::<Vec<_>>();
     end_timer!(ck_time);

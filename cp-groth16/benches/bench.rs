@@ -2,147 +2,171 @@
 //     RAYON_NUM_THREADS=N cargo bench --no-default-features --features "std parallel" -- --nocapture
 // where N is the number of threads you want to use (N = 1 for single-thread).
 
-use ark_bls12_381::{Bls12_381, Fr as BlsFr};
-use ark_crypto_primitives::snark::SNARK;
-use ark_ff::{PrimeField, UniformRand};
-use ark_groth16::Groth16;
-use ark_mnt4_298::{Fr as MNT4Fr, MNT4_298};
-use ark_mnt4_753::{Fr as MNT4BigFr, MNT4_753};
-use ark_mnt6_298::{Fr as MNT6Fr, MNT6_298};
-use ark_mnt6_753::{Fr as MNT6BigFr, MNT6_753};
-use ark_relations::{
-    lc,
-    r1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError},
+use ark_bls12_381::{Bls12_381 as E, Fr as F};
+use ark_ff::{UniformRand, One, Field};
+use ark_cp_groth16::{        
+    committer::CommitmentBuilder,
+    generator::generate_parameters,
+    verifier::{prepare_verifying_key, verify_proof},
+    MultiStageConstraintSynthesizer, MultiStageConstraintSystem,
 };
-use ark_std::ops::Mul;
+use ark_r1cs_std::{
+    fields::fp::FpVar, prelude::{AllocVar, FieldVar}, eq::EqGadget
+};
+use ark_relations::{
+    r1cs::{ConstraintSystemRef, SynthesisError}, ns,
+};
+use ark_groth16::r1cs_to_qap::LibsnarkReduction as QAP;
+use ark_std::rand::Rng;
 
 const NUM_PROVE_REPETITIONS: usize = 1;
-const NUM_VERIFY_REPETITIONS: usize = 50;
-const NUM_CONSTRAINTS: usize = (1 << 20) - 100;
+const NUM_CONSTRAINTS: usize = (1 << 20)/3 - 100;
 
-#[derive(Copy)]
-struct DummyCircuit<F: PrimeField> {
-    pub a: Option<F>,
-    pub b: Option<F>,
-    pub num_variables: usize,
-    pub num_constraints: usize,
+/// A multistage circuit
+/// Stage 1. Witness a var and ensure it's 0
+/// Stage 2. Input a monic polynomial and prove knowledge of a root
+#[derive(Clone)]
+struct PolyEvalCircuit {
+    // A polynomial that is committed in stage 0.
+    pub polynomial: Vec<F>,
+
+    // The variable corresponding to `polynomial` that is generated after stage 0.
+    pub polynomial_var: Option<Vec<FpVar<F>>>,
+
+    // The evaluation point for the polynomial.
+    pub point: Option<F>,
+
+    // The evaluation of `self.polynomial` at `self.root`.
+    pub evaluation: Option<F>,
 }
 
-impl<F: PrimeField> Clone for DummyCircuit<F> {
-    fn clone(&self) -> Self {
-        DummyCircuit {
-            a: self.a.clone(),
-            b: self.b.clone(),
-            num_variables: self.num_variables.clone(),
-            num_constraints: self.num_constraints.clone(),
+impl PolyEvalCircuit {
+    fn new(polynomial: Vec<F>) -> Self {
+        Self {
+            polynomial,
+            polynomial_var: None,
+            point: None,
+            evaluation: None,
         }
     }
-}
 
-impl<F: PrimeField> ConstraintSynthesizer<F> for DummyCircuit<F> {
-    fn generate_constraints(self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
-        let a = cs.new_witness_variable(|| self.a.ok_or(SynthesisError::AssignmentMissing))?;
-        let b = cs.new_witness_variable(|| self.b.ok_or(SynthesisError::AssignmentMissing))?;
-        let c = cs.new_input_variable(|| {
-            let a = self.a.ok_or(SynthesisError::AssignmentMissing)?;
-            let b = self.b.ok_or(SynthesisError::AssignmentMissing)?;
+    fn rand(mut rng: impl Rng) -> Self {
+        // Sample a random monic polynomial of degree NUM_CONSTRAINTS - 1
+        let degree = NUM_CONSTRAINTS - 1;
+        let mut polynomial = (0..degree).map(|_| F::rand(&mut rng)).collect::<Vec<_>>();
+        polynomial.push(F::one());
+        Self::new(polynomial)
+    }
 
-            Ok(a * b)
-        })?;
+    fn add_point(&mut self, point: F) {
+        use ark_std::Zero;
+        self.point = Some(point);
+        self.evaluation = Some(
+            self.polynomial
+                .iter()
+                .enumerate()
+                .fold(F::zero(), |acc, (i, c)| acc + c * &point.pow(&[i as u64])),
+        );
+    }
 
-        for _ in 0..(self.num_variables - 3) {
-            let _ = cs.new_witness_variable(|| self.a.ok_or(SynthesisError::AssignmentMissing))?;
-        }
+    fn stage_0(&mut self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
+        let polynomial_var = self
+            .polynomial
+            .iter()
+            .map(|c| FpVar::new_witness(ns!(cs, "coeff"), || Ok(c)))
+            .collect::<Result<Vec<_>, _>>()?;
+        polynomial_var
+            .last()
+            .unwrap()
+            .enforce_equal(&FpVar::one())?;
+        self.polynomial_var = Some(polynomial_var);
+        
+        Ok(())
+    }
+    
+    fn stage_1(&mut self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
+        let point = FpVar::new_input(ns!(cs, "point"), || Ok(self.point.unwrap()))?;
+        let evaluation =
+        FpVar::new_input(ns!(cs, "point"), || Ok(self.evaluation.unwrap()))?;
+        let mut cur_pow = FpVar::one();
+        let claimed_eval = self.polynomial_var.as_ref().unwrap().iter().map(|coeff| {
+            let result =  coeff * &cur_pow;
+            cur_pow *= &point;
+            result
+        }).sum::<FpVar<F>>();
 
-        for _ in 0..self.num_constraints - 1 {
-            cs.enforce_constraint(lc!() + a, lc!() + b, lc!() + c)?;
-        }
-
-        cs.enforce_constraint(lc!(), lc!(), lc!())?;
-
+        // Assert that it's a root
+        claimed_eval.enforce_equal(&evaluation)?;
         Ok(())
     }
 }
 
-macro_rules! groth16_prove_bench {
-    ($bench_name:ident, $bench_field:ty, $bench_pairing_engine:ty) => {
-        let rng = &mut ark_std::rand::rngs::StdRng::seed_from_u64(0u64);
-        let c = DummyCircuit::<$bench_field> {
-            a: Some(<$bench_field>::rand(rng)),
-            b: Some(<$bench_field>::rand(rng)),
-            num_variables: 10,
-            num_constraints: NUM_CONSTRAINTS,
+impl MultiStageConstraintSynthesizer<F> for PolyEvalCircuit {
+    fn total_num_stages(&self) -> usize {
+        2
+    }
+    
+    fn generate_constraints(
+        &mut self,
+        stage: usize,
+        cs: &mut MultiStageConstraintSystem<F>,
+    ) -> Result<(), SynthesisError> {
+        let out = match stage {
+            0 => cs.synthesize_with(|c| self.stage_0(c)),
+            1 => cs.synthesize_with(|c| self.stage_1(c)),
+            _ => panic!("unexpected stage stage {}", stage),
         };
-
-        let (pk, _) = Groth16::<$bench_pairing_engine>::circuit_specific_setup(c, rng).unwrap();
-
-        let start = ark_std::time::Instant::now();
-
-        for _ in 0..NUM_PROVE_REPETITIONS {
-            let _ = Groth16::<$bench_pairing_engine>::prove(&pk, c.clone(), rng).unwrap();
-        }
-
-        println!(
-            "per-constraint proving time for {}: {} ns/constraint",
-            stringify!($bench_pairing_engine),
-            start.elapsed().as_nanos() / (NUM_PROVE_REPETITIONS as u128 * NUM_CONSTRAINTS as u128)
-        );
-        println!(
-            "wall-clock proving time for {}: {} s",
-            stringify!($bench_pairing_engine),
-            start.elapsed().as_secs_f64() / NUM_PROVE_REPETITIONS as f64
-        );
-    };
-}
-
-macro_rules! groth16_verify_bench {
-    ($bench_name:ident, $bench_field:ty, $bench_pairing_engine:ty) => {
-        let rng = &mut ark_std::rand::rngs::StdRng::seed_from_u64(0u64);
-        let c = DummyCircuit::<$bench_field> {
-            a: Some(<$bench_field>::rand(rng)),
-            b: Some(<$bench_field>::rand(rng)),
-            num_variables: 10,
-            num_constraints: NUM_CONSTRAINTS,
-        };
-
-        let (pk, vk) = Groth16::<$bench_pairing_engine>::circuit_specific_setup(c, rng).unwrap();
-        let proof = Groth16::<$bench_pairing_engine>::prove(&pk, c.clone(), rng).unwrap();
-
-        let v = c.a.unwrap().mul(c.b.unwrap());
-
-        let start = ark_std::time::Instant::now();
-
-        for _ in 0..NUM_VERIFY_REPETITIONS {
-            let _ = Groth16::<$bench_pairing_engine>::verify(&vk, &vec![v], &proof).unwrap();
-        }
-
-        println!(
-            "verifying time for {}: {} ns",
-            stringify!($bench_pairing_engine),
-            start.elapsed().as_nanos() / NUM_VERIFY_REPETITIONS as u128
-        );
-    };
-}
-
-fn bench_prove() {
-    use ark_std::rand::SeedableRng;
-    groth16_prove_bench!(bls, BlsFr, Bls12_381);
-    groth16_prove_bench!(mnt4, MNT4Fr, MNT4_298);
-    groth16_prove_bench!(mnt6, MNT6Fr, MNT6_298);
-    groth16_prove_bench!(mnt4big, MNT4BigFr, MNT4_753);
-    groth16_prove_bench!(mnt6big, MNT6BigFr, MNT6_753);
-}
-
-fn bench_verify() {
-    use ark_std::rand::SeedableRng;
-    groth16_verify_bench!(bls, BlsFr, Bls12_381);
-    groth16_verify_bench!(mnt4, MNT4Fr, MNT4_298);
-    groth16_verify_bench!(mnt6, MNT6Fr, MNT6_298);
-    groth16_verify_bench!(mnt4big, MNT4BigFr, MNT4_753);
-    groth16_verify_bench!(mnt6big, MNT6BigFr, MNT6_753);
+        
+        out
+    }
 }
 
 fn main() {
-    bench_prove();
-    bench_verify();
+    let mut rng = ark_std::test_rng();
+    let circuit = PolyEvalCircuit::rand(&mut rng);
+
+    // Run the circuit and make sure it succeeds
+    {
+        let mut circuit = circuit.clone();
+        let mut cs = MultiStageConstraintSystem::default();
+        circuit.generate_constraints(0, &mut cs).unwrap();
+        let point = F::rand(&mut rng);
+        circuit.add_point(point);
+        circuit.generate_constraints(1, &mut cs).unwrap();
+        // assert!(cs.is_satisfied().unwrap());
+        println!("Hello");
+    }
+
+    // Proof check
+    //
+
+    // Generate the proving key
+    let start = ark_std::time::Instant::now();
+    let pk = generate_parameters::<_, E, QAP>(circuit.clone(), &mut rng).unwrap();
+    println!(
+        "setup time for BLS12-381: {} s",
+        start.elapsed().as_secs_f64() / NUM_PROVE_REPETITIONS as f64
+    );
+
+    let mut rng = ark_std::test_rng();
+    let mut cb = CommitmentBuilder::<_, E, QAP>::new(circuit, &pk);
+    let start = ark_std::time::Instant::now();
+    let (comm, rand) = cb.commit(&mut rng).unwrap();
+    println!(
+        "commitment time for BLS12-381: {} s",
+        start.elapsed().as_secs_f64() / NUM_PROVE_REPETITIONS as f64
+    );
+
+    let point = F::rand(&mut rng);
+    cb.circuit.add_point(point);
+    let start = ark_std::time::Instant::now();
+    let proof = cb.prove(&[comm], &[rand], &mut rng).unwrap();
+    println!(
+        "proving time for BLS12-381: {} s",
+        start.elapsed().as_secs_f64() / NUM_PROVE_REPETITIONS as f64
+    );
+    // Verify
+    let pvk = prepare_verifying_key(&pk.vk());
+    let inputs = [point, cb.circuit.evaluation.unwrap()];
+    assert!(verify_proof(&pvk, &proof, &inputs).unwrap());
 }

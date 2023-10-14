@@ -91,11 +91,11 @@ impl<E: Pairing> MMT<E> {
         transcript: &mut impl Transcript,
     ) -> Result<(GipaProof<E>, Vec<E::ScalarField>, Vec<E::ScalarField>), Error> {
         let mut r = structured_scalar_power(instance.size, instance.random_challenge);
-        // the values of vectors A and B rescaled at each step of the loop
+        // the vectors A and B, to be rescaled at each step of the loop
         let (mut a, mut b) = (witness.a.to_vec(), witness.b.to_vec());
-        // the values of vectors C and r rescaled at each step of the loop
+        // the vectors C and r, to be rescaled at each step of the loop
         let mut c = witness.c.to_vec();
-        // the values of the commitment keys rescaled at each step of the loop
+        // the commitment keys, to be rescaled at each step of the loop
         let (mut vkey, mut wkey) = (vkey.clone(), wkey.clone());
 
         // storing the values for including in the proof
@@ -120,11 +120,11 @@ impl<E: Pairing> MMT<E> {
             // Recurse with problem of half size
             let split = a.len() / 2;
 
-            // TIPP ///
+            // TIPP //
             let (a_left, a_right) = a.split_at_mut(split);
             let (b_left, b_right) = b.split_at_mut(split);
-            // MIPP ///
-            // c[:n']   c[n':]
+            // MIPP //
+            //   c[:n']  c[n':]
             let (c_left, c_right) = c.split_at_mut(split);
             // r[:n']   r[:n']
             let (r_left, r_right) = r.split_at_mut(split);
@@ -132,14 +132,6 @@ impl<E: Pairing> MMT<E> {
             let (vk_left, vk_right) = vkey.split(split);
             let (wk_left, wk_right) = wkey.split(split);
 
-            // since we do this in parallel we take reference first so it can be
-            // moved within the macro's rayon scope.
-            let (rvk_left, rvk_right) = (&vk_left, &vk_right);
-            let (rwk_left, rwk_right) = (&wk_left, &wk_right);
-            let (ra_left, ra_right) = (&a_left, &a_right);
-            let (rb_left, rb_right) = (&b_left, &b_right);
-            let (rc_left, rc_right) = (&c_left, &c_right);
-            let (rr_left, rr_right) = (&r_left, &r_right);
             // See section 3.3 for paper version with equivalent names
             try_par! {
                 /********************************************************/
@@ -147,25 +139,25 @@ impl<E: Pairing> MMT<E> {
                 //
                 // For TIPP (i.e. A and B):
                 // \prod e(A_right,B_left)
-                let l_ab = inner_product::pairing::<E>(&ra_right, &rb_left),
-                let r_ab = inner_product::pairing::<E>(&ra_left, &rb_right),
+                let l_ab = inner_product::pairing::<E>(&a_right, &b_left),
+                let r_ab = inner_product::pairing::<E>(&a_left, &b_right),
 
                 // For MIPP (i.e. C and r):
                 // z_l = c[n':] ^ r[:n']
-                let l_c = inner_product::msm(rc_right, rr_left),
+                let l_c = inner_product::msm(&c_right, &r_left),
                 // Z_r = c[:n'] ^ r[n':]
-                let r_c = inner_product::msm(rc_left, rr_right),
+                let r_c = inner_product::msm(&c_left, &r_right),
                 /********************************************************/
 
                 /********************************************************/
                 // Compute left cross commitments
                 //
                 // For TIPP:
-                let cm_l_ab = commitment::commit_double::<E>(&rvk_left, &rwk_right, &ra_right, &rb_left),
+                let cm_l_ab = commitment::commit_double::<E>(&vk_left, &wk_right, &a_right, &b_left),
 
                 // For MIPP:
                 // u_l = c[n':] * v[:n']
-                let cm_l_c = commitment::commit_single::<E>(&rvk_left, rc_right),
+                let cm_l_c = commitment::commit_single::<E>(&vk_left, &c_right),
                 /********************************************************/
 
                 /********************************************************/
@@ -173,11 +165,11 @@ impl<E: Pairing> MMT<E> {
                 //
                 // For TIPP:
                 // T_ab_r = e(A_left,B_right)
-                let cm_r_ab = commitment::commit_double::<E>(&rvk_right, &rwk_left, &ra_left, &rb_right),
+                let cm_r_ab = commitment::commit_double::<E>(&vk_right, &wk_left, &a_left, &b_right),
 
                 // For MIPP
                 // u_r = c[:n'] * v[n':]
-                let cm_r_c = commitment::commit_single::<E>(&rvk_right, rc_left)
+                let cm_r_c = commitment::commit_single::<E>(&vk_right, &c_left)
                 /********************************************************/
             };
 

@@ -13,6 +13,7 @@ ark-poly = { version = "0.4", default-features = false }
 ark-relations = { version = "0.4.0", default-features = false }
 ark-serialize = { version = "0.4.0", default-features = false }
 ark-std = { version = "0.4.0", default-features = false }
+ark-crypto-primitives = { version = "0.4.0", default-features = false }
 rayon = { version = "1.5.1", default-features = false, optional = true }
 
 [dev-dependencies]
@@ -23,6 +24,8 @@ ark-r1cs-std = "0.4"
 default = ["parallel"]
 std = ["ark-ff/std", "ark-ec/std", "ark-poly/std", "ark-relations/std", "ark-std/std", "ark-serialize/std" ]
 parallel = ["std", "ark-ff/parallel", "ark-poly/parallel", "ark-ec/parallel", "ark-std/parallel", "ark-serialize/std", "rayon"]
+print-trace = [ "ark-std/print-trace" ]
+
 
 [[bench]]
 name = "groth16-benches"

@@ -6,7 +6,7 @@ macro_rules! try_par {
             rayon::scope(|s| {
                 $(
                     let $name = &mut $name;
-                    s.spawn(move |_| {
+                    s.spawn(|_| {
                         *$name = Some($f);
                     });)+
             });

@@ -19,14 +19,11 @@ pub fn rng_from_seed_bytes(seed: impl CanonicalSerialize) -> impl Rng {
     ChaChaRng::from_seed(hash.into())
 }
 
-/// Returns the vector used for the linear combination fo the inner pairing product
-/// between A and B for the Groth16 aggregation: A^r * B. It is required as it
-/// is not enough to simply prove the ipp of A*B, we need a random linear
-/// combination of those.
-pub(crate) fn structured_scalar_power<F: Field>(num: usize, s: F) -> Vec<F> {
+/// Computes the powers `r^0, r^1, ..., r^{num-1}`.
+pub(crate) fn structured_scalar_power<F: Field>(num: usize, r: F) -> Vec<F> {
     let mut powers = vec![F::one()];
     for i in 1..num {
-        powers.push(powers[i - 1] * s);
+        powers.push(powers[i - 1] * r);
     }
     powers
 }
