@@ -126,7 +126,7 @@ impl VariableBaseMSM {
         bucket_msm.batch_reduce()
     }
 
-    fn multi_scalar_mul_general<P: Config>(
+    pub fn multi_scalar_mul_general<P: Config>(
         points: &[Affine<P>],
         scalars: &[BigInt<P>],
         window_bits: u32,

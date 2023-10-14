@@ -32,9 +32,6 @@ all_asserts = "2.3.1"
 [dev-dependencies]
 criterion = "0.5.1"
 
-[profile.test]
-opt-level = 3
-
 # [[bench]]
 # harness = false
 # name = "bench_window_size"
