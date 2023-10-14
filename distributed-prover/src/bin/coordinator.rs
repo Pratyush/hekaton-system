@@ -474,6 +474,8 @@ fn process_stage1_resps(coord_state_dir: &PathBuf, resp_dir: &PathBuf) {
 }
 
 fn main() {
+    println!("Rayon num threads: {}", rayon::current_num_threads());
+
     let args = Args::parse();
     let start = start_timer!(|| format!("Running coordinator"));
 

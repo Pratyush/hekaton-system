@@ -164,6 +164,8 @@ fn process_stage1_request(
 }
 
 fn main() {
+    println!("Rayon num threads: {}", rayon::current_num_threads());
+
     let args = Args::parse();
     let start = start_timer!(|| format!("Running worker"));
 

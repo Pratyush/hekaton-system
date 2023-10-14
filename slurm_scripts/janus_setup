@@ -4,9 +4,9 @@ set -euf
 
 # Parameters: $1 (first command line arg) is the number of tasks to be run labeled [1-$1].
 
-COORDBIN="/nfshomes/micro/horizontally-scalable-snarks-system/target/release/coordinator"
-TOPSCRATCHDIR="/fs/nexus-scratch/micro"
-#TOPSCRATCHDIR="/scratch/zt1/project/imiers-prj/shared/"
+COORDBIN="/home/micro/horizontally-scalable-snarks-system/target/release/coordinator"
+#TOPSCRATCHDIR="/fs/nexus-scratch/micro"
+TOPSCRATCHDIR="/scratch/zt1/project/imiers-prj/shared/"
 
 HELPSTR="\
 Usage:\n\
