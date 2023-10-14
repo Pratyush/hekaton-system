@@ -76,7 +76,7 @@ impl<E: Pairing, QAP: R1CSToQAP> CPGroth16<E, QAP> {
         end_timer!(lc_time);
 
         let witness_map_time = start_timer!(|| "R1CS to QAP witness map");
-        let h = QAP::witness_map::<E::ScalarField, D<E::ScalarField>>(&cs.cs)?;
+        let h = QAP::witness_map::<E::ScalarField, D<E::ScalarField>>(cs.cs.clone())?;
         end_timer!(witness_map_time);
 
         let c_acc_time = start_timer!(|| "Compute C");

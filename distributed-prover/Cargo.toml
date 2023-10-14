@@ -1,0 +1,60 @@
+[package]
+name = "distributed-prover"
+authors = ["Michael Rosenberg <michael@mrosenberg.pub>"]
+edition = "2021"
+readme = "README.md"
+version = "0.1.0"
+license = "MIT/Apache-2.0"
+keywords = ["cryptography", "crypto", "zero-knowledge", "snark"]
+categories = ["cryptography", "no-std"]
+
+[dependencies]
+ark-bls12-381 = "0.4"
+ark-ed-on-bls12-381 = { version = "0.4", features = ["r1cs"] }
+ark-ff = {version = "0.4", default-features = false }
+ark-poly = { version = "0.4.0" }
+ark-r1cs-std = { version = "0.4", default-features = false }
+ark-relations = { version = "0.4", default-features = false, features = ["std"] }
+#ark-serialize = { version = "0.4", default-features = false, features = ["derive"] }
+clap = { version = "4.4", features = ["derive"] }
+rand = "0.8"
+tinyram-emu = { path = "../tinyram-emu" }
+ark-cp-groth16 = { path = "../cp-groth16" }
+ark-std = "0.4.0"
+derivative = "2.2.0"
+xxhash-rust = { version = "0.8.7", features = ["xxh3"] }
+ark-crypto-primitives = { version = "0.4", features = ["merkle_tree", "r1cs"] }
+ark-ec = "0.4.2"
+rand_chacha = "0.3.1"
+rayon = "1.8.0"
+merlin = "3.0.0"
+
+[dev-dependencies]
+criterion = "0.5.1"
+sha2 = "0.10"
+tracing = "0.1"
+tracing-subscriber = "0.2"
+
+[features]
+default = ["asm", "parallel"]
+print-trace = ["ark-std/print-trace"]
+std = ["ark-ff/std", "ark-poly/std", "ark-r1cs-std/std", "ark-serialize/std", "ark-relations/std"]
+asm = ["ark-ff/asm"]
+parallel = ["ark-ff/parallel", "ark-ff/rayon", "ark-poly/parallel", "ark-poly/rayon", "ark-r1cs-std/parallel"]
+
+[patch.crates-io.ark-r1cs-std]
+git = "ssh://git@github.com/arkworks-rs/r1cs-std.git"
+branch = "refactor-uints"
+
+[dependencies.ark-serialize]
+git = "https://github.com/rozbb/algebra.git"
+branch = "canonicalserialize-vecdeque"
+features = ["derive"]
+
+[[bench]]
+name = "microbenchmarks"
+harness = false
+required-features = ["asm", "parallel"]
+
+[profile.release]
+debug = true

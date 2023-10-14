@@ -3,6 +3,7 @@
 members = [
     "cp-groth16",
     "snarkpack",
+    "distributed-prover",
 
     "tinyram-emu",
     "tinyram-constraints",
@@ -32,3 +33,7 @@ lto = "thin"
 incremental = true
 debug-assertions = true
 debug = true
+
+[patch.crates-io.ark-serialize]
+git = "https://github.com/rozbb/algebra.git"
+branch = "canonicalserialize-vecdeque"
