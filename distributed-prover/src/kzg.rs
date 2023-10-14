@@ -26,7 +26,7 @@ impl<G: AffineRepr> KzgEvalProof<G> {
     }
 }
 
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
+#[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct KzgComKey<E: Pairing> {
     /// $\{g^a^i\}_{i=0}^{2n-1}$ where n is the number of proofs to be aggregated
     /// We take all powers instead of only ones from n -> 2n-1 (w commitment key

@@ -196,7 +196,7 @@ pub struct IppComRightKey<E: Pairing> {
     w2: Vec<E::G1Affine>,
 }
 
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
+#[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct AggProvingKey<E: Pairing> {
     /// This is the key used to produce ALL inner-pairing commitments
     pub ipp_ck: IppComKey<E>,
@@ -394,7 +394,7 @@ impl<E: Pairing> AggProvingKey<E> {
         }
         // Check each individual equation holds with the r coeffs
         for i in 0..num_proofs {
-            assert_eq!(
+            debug_assert_eq!(
                 E::pairing(&a_r[i], &b_vals[i]),
                 E::pairing(&alpha_r[i], &self.beta[i])
                     + E::pairing(&prepared_input_r[i], &self.h[i])
@@ -412,7 +412,7 @@ impl<E: Pairing> AggProvingKey<E> {
         // Start the MT protocol
 
         let rescaled_ck = self.ipp_ck.rescale_left(&r_inv);
-        assert_eq!(rescaled_ck.commit_ambi(&a_r, &ref_b_vals), com_ab);
+        debug_assert_eq!(rescaled_ck.commit_ambi(&a_r, &ref_b_vals), com_ab);
 
         // Multiply every LHS with every RHS
         let cross_terms = [ref_a_r, ref_prepared_input_r, &d_r, &c_r]
@@ -430,7 +430,7 @@ impl<E: Pairing> AggProvingKey<E> {
         let z_sh = cross_terms[1][1];
         let z_ddelta0 = cross_terms[2][2];
         let z_cdelta1 = cross_terms[3][3];
-        assert_eq!(
+        debug_assert_eq!(
             z_ab,
             pairing::<E>(&alpha_r, &self.beta) + z_sh + z_ddelta0 + z_cdelta1
         );

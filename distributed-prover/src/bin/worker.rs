@@ -148,7 +148,7 @@ fn process_stage1_request(
         tree_params,
         &g16_pk,
         stage0_req,
-        stage0_resp,
+        &stage0_resp,
         stage1_req,
     );
     end_timer!(start);

@@ -31,7 +31,7 @@ use rand::RngCore;
 /// records the time-ordered subtraces. This will also `assert!` that the constraints are satisfied
 /// if `check_satisfied` is set. This should always be set unless you're generating a proving key
 /// with a dummy circuit.
-fn get_subtraces<C, F, P>(circ: P, check_satisfied: bool) -> Vec<VecDeque<RomTranscriptEntry<F>>>
+fn get_subtraces<C, F, P>(circ: &P, check_satisfied: bool) -> Vec<VecDeque<RomTranscriptEntry<F>>>
 where
     C: TreeConfig,
     F: PrimeField,
@@ -90,7 +90,7 @@ where
     pub fn new(circ: P, tree_params: ExecTreeParams<C>) -> Self {
         // Generate the traces. Do not bother to check whether the constraints are satisfied. This
         // circuit's contents might be placeholder values.
-        let time_ordered_subtraces = get_subtraces::<C, _, _>(circ.clone(), false);
+        let time_ordered_subtraces = get_subtraces::<C, _, _>(&circ, false);
 
         G16ProvingKeyGenerator {
             tree_params,
@@ -268,7 +268,7 @@ where
 /// A struct that has all the info necessary to construct a request from server to worker to
 /// perform stage 0 of their subcircuit (i.e., the committing stage). This also includes the
 /// circuit with all witness values filled in.
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
+#[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct CoordinatorStage0State<E, P>
 where
     E: Pairing,
@@ -348,7 +348,7 @@ where
             .collect();
 
         // Run the circuit and collect the execution trace. Check that constraints are satisfied.
-        let time_ordered_subtraces = get_subtraces::<C, E::ScalarField, _>(circ, true);
+        let time_ordered_subtraces = get_subtraces::<C, E::ScalarField, _>(&circ, true);
         let addr_ordered_subtraces = sort_subtraces_by_addr(&time_ordered_subtraces);
 
         CoordinatorStage0State {
@@ -581,7 +581,7 @@ where
     }
 }
 
-#[derive(CanonicalDeserialize)]
+#[derive(Clone, CanonicalDeserialize)]
 pub struct Stage1Request<C, F, P>
 where
     C: TreeConfig,

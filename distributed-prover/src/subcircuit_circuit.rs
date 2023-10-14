@@ -282,12 +282,12 @@ mod test {
         },
         tree_hash_circuit::*,
         util::{G16Com, G16ComSeed},
-        worker::{process_stage0_request, process_stage1_request, Stage0Response, Stage1Response},
+        worker::{process_stage0_request, process_stage1_request, Stage0Response},
     };
 
     use ark_bls12_381::{Bls12_381 as E, Fr};
     use ark_cp_groth16::verifier::{prepare_verifying_key, verify_proof};
-    use ark_ff::{ToConstraintField, UniformRand};
+    use ark_ff::UniformRand;
     use ark_std::test_rng;
 
     // Checks that the SubcircuitWithPortalsProver is satisfied when the correct inputs are given
@@ -468,7 +468,7 @@ mod test {
                     tree_params.clone(),
                     &pk,
                     stage0_req,
-                    stage0_resp,
+                    &stage0_resp,
                     stage1_req,
                 );
 

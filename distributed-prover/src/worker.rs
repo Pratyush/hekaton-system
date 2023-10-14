@@ -117,7 +117,7 @@ pub fn process_stage1_request<C, CG, E, P, R>(
     tree_params: ExecTreeParams<C>,
     pk: &G16ProvingKey<E>,
     stage0_req: Stage0Request<E::ScalarField>,
-    stage0_resp: Stage0Response<E>,
+    stage0_resp: &Stage0Response<E>,
     stage1_req: Stage1Request<C, E::ScalarField, P>,
 ) -> Stage1Response<E>
 where
@@ -144,12 +144,18 @@ where
 
     partial_circ.set_serialized_witnesses(subcircuit_idx, &serialized_witnesses);
 
+    let Stage0Request {
+        time_ordered_subtrace,
+        addr_ordered_subtrace,
+        ..
+    } = stage0_req;
+
     let real_circ = SubcircuitWithPortalsProver {
         subcircuit_idx,
         circ: Some(partial_circ),
         tree_params: tree_params.clone(),
-        time_ordered_subtrace: stage0_req.time_ordered_subtrace.clone(),
-        addr_ordered_subtrace: stage0_req.addr_ordered_subtrace.clone(),
+        time_ordered_subtrace,
+        addr_ordered_subtrace,
         time_ordered_subtrace_var: VecDeque::new(),
         addr_ordered_subtrace_var: VecDeque::new(),
         cur_leaf,
