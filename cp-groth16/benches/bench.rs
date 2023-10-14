@@ -3,24 +3,27 @@
 // where N is the number of threads you want to use (N = 1 for single-thread).
 
 use ark_bls12_381::{Bls12_381 as E, Fr as F};
-use ark_ff::{UniformRand, One, Field};
-use ark_cp_groth16::{        
+use ark_cp_groth16::{
     committer::CommitmentBuilder,
     generator::generate_parameters,
     verifier::{prepare_verifying_key, verify_proof},
     MultiStageConstraintSynthesizer, MultiStageConstraintSystem,
 };
+use ark_ff::{Field, One, UniformRand};
+use ark_groth16::r1cs_to_qap::LibsnarkReduction as QAP;
 use ark_r1cs_std::{
-    fields::fp::FpVar, prelude::{AllocVar, FieldVar}, eq::EqGadget
+    eq::EqGadget,
+    fields::fp::FpVar,
+    prelude::{AllocVar, FieldVar},
 };
 use ark_relations::{
-    r1cs::{ConstraintSystemRef, SynthesisError}, ns,
+    ns,
+    r1cs::{ConstraintSystemRef, SynthesisError},
 };
-use ark_groth16::r1cs_to_qap::LibsnarkReduction as QAP;
 use ark_std::rand::Rng;
 
 const NUM_PROVE_REPETITIONS: usize = 1;
-const NUM_CONSTRAINTS: usize = (1 << 20)/3 - 100;
+const NUM_CONSTRAINTS: usize = (1 << 20) / 3 - 100;
 
 /// A multistage circuit
 /// Stage 1. Witness a var and ensure it's 0
@@ -80,20 +83,25 @@ impl PolyEvalCircuit {
             .unwrap()
             .enforce_equal(&FpVar::one())?;
         self.polynomial_var = Some(polynomial_var);
-        
+
         Ok(())
     }
-    
+
     fn stage_1(&mut self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
         let point = FpVar::new_input(ns!(cs, "point"), || Ok(self.point.unwrap()))?;
-        let evaluation =
-        FpVar::new_input(ns!(cs, "point"), || Ok(self.evaluation.unwrap()))?;
+        let evaluation = FpVar::new_input(ns!(cs, "point"), || Ok(self.evaluation.unwrap()))?;
         let mut cur_pow = FpVar::one();
-        let claimed_eval = self.polynomial_var.as_ref().unwrap().iter().map(|coeff| {
-            let result =  coeff * &cur_pow;
-            cur_pow *= &point;
-            result
-        }).sum::<FpVar<F>>();
+        let claimed_eval = self
+            .polynomial_var
+            .as_ref()
+            .unwrap()
+            .iter()
+            .map(|coeff| {
+                let result = coeff * &cur_pow;
+                cur_pow *= &point;
+                result
+            })
+            .sum::<FpVar<F>>();
 
         // Assert that it's a root
         claimed_eval.enforce_equal(&evaluation)?;
@@ -105,7 +113,7 @@ impl MultiStageConstraintSynthesizer<F> for PolyEvalCircuit {
     fn total_num_stages(&self) -> usize {
         2
     }
-    
+
     fn generate_constraints(
         &mut self,
         stage: usize,
@@ -116,7 +124,7 @@ impl MultiStageConstraintSynthesizer<F> for PolyEvalCircuit {
             1 => cs.synthesize_with(|c| self.stage_1(c)),
             _ => panic!("unexpected stage stage {}", stage),
         };
-        
+
         out
     }
 }
