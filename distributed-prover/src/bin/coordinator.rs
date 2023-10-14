@@ -6,7 +6,7 @@ use distributed_prover::{
         gen_merkle_params, PoseidonTreeConfig as TreeConfig, PoseidonTreeConfigVar as TreeConfigVar,
     },
     tree_hash_circuit::{MerkleTreeCircuit, MerkleTreeCircuitParams},
-    util::{cli_filenames::*, deserialize_from_path, serialize_to_path},
+    util::{cli_filenames::*, deserialize_from_path, serialize_to_path, serialize_to_paths},
     worker::{Stage0Response, Stage1Response},
     CircuitWithPortals,
 };
@@ -199,42 +199,40 @@ fn generate_g16_pks(circ_params: MerkleTreeCircuitParams, g16_pk_dir: &PathBuf) 
     .unwrap();
 
     // Save all the rest of the leaves
-    for subcircuit_idx in 1..(num_subcircuits / 2) {
-        println!("Writing leaf {subcircuit_idx}");
-        serialize_to_path(
-            &second_leaf_pk,
-            g16_pk_dir,
-            G16_PK_FILENAME_PREFIX,
-            Some(subcircuit_idx),
-        )
-        .unwrap();
-        serialize_to_path(
-            &second_leaf_pk.ck,
-            g16_pk_dir,
-            G16_CK_FILENAME_PREFIX,
-            Some(subcircuit_idx),
-        )
-        .unwrap();
-    }
+    println!("Writing leaves");
+    let leaf_idxs = 1..(num_subcircuits / 2);
+    serialize_to_paths(
+        &second_leaf_pk,
+        g16_pk_dir,
+        G16_PK_FILENAME_PREFIX,
+        leaf_idxs.clone(),
+    )
+    .unwrap();
+    serialize_to_paths(
+        &second_leaf_pk.ck,
+        g16_pk_dir,
+        G16_CK_FILENAME_PREFIX,
+        leaf_idxs,
+    )
+    .unwrap();
 
     // Save all the parents
-    for subcircuit_idx in (num_subcircuits / 2)..(num_subcircuits - 2) {
-        println!("Writing parent {subcircuit_idx}");
-        serialize_to_path(
-            &parent_pk,
-            g16_pk_dir,
-            G16_PK_FILENAME_PREFIX,
-            Some(subcircuit_idx),
-        )
-        .unwrap();
-        serialize_to_path(
-            &parent_pk.ck,
-            g16_pk_dir,
-            G16_CK_FILENAME_PREFIX,
-            Some(subcircuit_idx),
-        )
-        .unwrap();
-    }
+    println!("Writing parents");
+    let parent_idxs = (num_subcircuits / 2)..(num_subcircuits - 2);
+    serialize_to_paths(
+        &parent_pk,
+        g16_pk_dir,
+        G16_PK_FILENAME_PREFIX,
+        parent_idxs.clone(),
+    )
+    .unwrap();
+    serialize_to_paths(
+        &parent_pk.ck,
+        g16_pk_dir,
+        G16_CK_FILENAME_PREFIX,
+        parent_idxs,
+    )
+    .unwrap();
 
     // Save the root
     println!("Writing root");

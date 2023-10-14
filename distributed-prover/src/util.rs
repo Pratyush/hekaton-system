@@ -3,12 +3,18 @@ use crate::eval_tree::{
     TwoToOneParam,
 };
 
+use std::{
+    fs::File,
+    io::{self, Write},
+    path::PathBuf,
+};
+
 use ark_crypto_primitives::crh::{CRHScheme, TwoToOneCRHScheme};
 use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rand::SeedableRng;
 use rand_chacha::ChaCha12Rng;
-use std::{fs::File, io, path::PathBuf};
+use rayon::prelude::*;
 
 pub use ark_cp_groth16::data_structures::{
     Comm as G16Com, CommitterKey as G16ComKey, Proof as G16Proof, ProvingKey as G16ProvingKey,
@@ -107,6 +113,31 @@ pub fn serialize_to_path<T: CanonicalSerialize>(
     val.serialize_uncompressed(&mut f).unwrap();
 
     Ok(())
+}
+
+/// Serializes the given value to "DIR/FILENAMEPREFIX_INDEX1", "DIR/FILENAMEPREFIX_INDEX2", etc..
+/// The "_INDEX" part is ommitted if no index is given.
+pub fn serialize_to_paths<T: CanonicalSerialize, I: IntoParallelIterator<Item = usize>>(
+    val: &T,
+    dir: &PathBuf,
+    filename_prefix: &str,
+    indices: I,
+) -> io::Result<()> {
+    let mut buf = Vec::new();
+    val.serialize_uncompressed(&mut buf).unwrap();
+
+    // End the filename with "_i" for every i
+    indices
+        .into_par_iter()
+        .map(|i| {
+            let filename = format!("{filename_prefix}_{i}.bin");
+            let file_path = dir.join(filename);
+
+            let mut f = File::create(file_path)?;
+            f.write_all(&buf)?;
+            Ok(())
+        })
+        .collect::<io::Result<()>>()
 }
 
 /// Deserializes "DIR/FILENAMEPREFIX_INDEX" to the given type. The "_INDEX" part is ommitted if no
