@@ -27,44 +27,6 @@ use ark_serialize::{
 };
 use rand::RngCore;
 
-/// Runs the full circuit (going through subcircuit 0..N in order) with a SetupPortalManager and
-/// records the time-ordered subtraces. This will also `assert!` that the constraints are satisfied
-/// if `check_satisfied` is set. This should always be set unless you're generating a proving key
-/// with a dummy circuit.
-fn get_subtraces<C, F, P>(circ: &P) -> Vec<VecDeque<RomTranscriptEntry<F>>>
-where
-    C: TreeConfig,
-    F: PrimeField,
-    P: CircuitWithPortals<F>,
-{
-    let cs = ConstraintSystemRef::<F>::new(ConstraintSystem::default());
-    let mut pm = SetupPortalManager::new(cs.clone());
-
-    let num_subcircuits = circ.num_subcircuits();
-    let circ_params = circ.get_params();
-
-    for subcircuit_idx in 0..num_subcircuits {
-        // Make a fresh constraint system. Otherwise it gets too big
-        let cs = ConstraintSystemRef::<F>::new(ConstraintSystem::default());
-
-        // Start a new subtrace and then run the subcircuit
-        pm.start_subtrace(cs.clone());
-
-        // To make sure errors are caught early, only set the witnesses that are earmarked for this
-        // subcircuit. Make the rest empty
-        let mut circ_copy = P::new(&circ_params);
-        let wits = circ.get_serialized_witnesses(subcircuit_idx);
-        circ_copy.set_serialized_witnesses(subcircuit_idx, &wits);
-
-        // Now generate constraints on that pared down copy
-        circ_copy
-            .generate_constraints(cs.clone(), subcircuit_idx, &mut pm)
-            .unwrap();
-    }
-
-    pm.subtraces
-}
-
 /// Generates Groth16 proving keys
 pub struct G16ProvingKeyGenerator<C, CG, E, P>
 where
@@ -89,7 +51,7 @@ where
     pub fn new(circ: P, tree_params: ExecTreeParams<C>) -> Self {
         // Generate the traces. Do not bother to check whether the constraints are satisfied. This
         // circuit's contents might be placeholder values.
-        let time_ordered_subtraces = get_subtraces::<C, _, _>(&circ);
+        let time_ordered_subtraces = circ.get_portal_subtraces();
 
         G16ProvingKeyGenerator {
             tree_params,
@@ -347,7 +309,7 @@ where
             .collect();
 
         // Run the circuit and collect the execution trace. Check that constraints are satisfied.
-        let time_ordered_subtraces = get_subtraces::<C, E::ScalarField, _>(&circ);
+        let time_ordered_subtraces = circ.get_portal_subtraces();
         let addr_ordered_subtraces = sort_subtraces_by_addr(&time_ordered_subtraces);
 
         CoordinatorStage0State {

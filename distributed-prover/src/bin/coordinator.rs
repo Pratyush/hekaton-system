@@ -307,9 +307,11 @@ fn begin_stage0(worker_req_dir: &PathBuf, coord_state_dir: &PathBuf) -> io::Resu
     let num_subcircuits = 2 * circ_params.num_leaves;
 
     // Make a random circuit with the given parameters
+    println!("Making a random circuit");
     let circ = MerkleTreeCircuit::rand(&mut rng, &circ_params);
 
     // Make the stage0 coordinator state
+    println!("Building stage0 state");
     let stage0_state = CoordinatorStage0State::<E, _>::new::<TreeConfig>(circ);
 
     // Sender sends stage0 requests containing the subtraces. Workers will commit to these
