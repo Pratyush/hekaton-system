@@ -310,7 +310,9 @@ fn generate_g16_pks(
 
 fn begin_stage0(worker_req_dir: &PathBuf, coord_state_dir: &PathBuf) -> io::Result<()> {
     let mut rng = rand::thread_rng();
+    let stage0_timer = start_timer!(|| "Begin Stage0");
 
+    let circ_params_timer = start_timer!(|| "Deserializing circuit parameters");
     // Get the circuit parameters determined at Groth16 PK generation
     let circ_params = deserialize_from_path::<MerkleTreeCircuitParams>(
         &coord_state_dir,
@@ -318,12 +320,15 @@ fn begin_stage0(worker_req_dir: &PathBuf, coord_state_dir: &PathBuf) -> io::Resu
         None,
     )
     .unwrap();
+    end_timer!(circ_params_timer);
     // Num subcircuits is 2× num leaves
     let num_subcircuits = 2 * circ_params.num_leaves;
 
+    let merkle_tree_timer = start_timer!(|| format!("Sampling a random MerkleTreeCircuit with parapms {circ_params}"));
     // Make a random circuit with the given parameters
     println!("Making a random circuit");
     let circ = MerkleTreeCircuit::rand(&mut rng, &circ_params);
+    end_timer!(merkle_tree_timer);
 
     // Make the stage0 coordinator state
     println!("Building stage0 state");
@@ -337,6 +342,7 @@ fn begin_stage0(worker_req_dir: &PathBuf, coord_state_dir: &PathBuf) -> io::Resu
         .collect::<Vec<_>>();
     end_timer!(start);
 
+    let write_timer = start_timer!(|| format!("Writing stage0 requests with params {circ_params}"));
     reqs.into_par_iter()
         .enumerate()
         .for_each(|(subcircuit_idx, req)| {
@@ -348,14 +354,17 @@ fn begin_stage0(worker_req_dir: &PathBuf, coord_state_dir: &PathBuf) -> io::Resu
             )
             .unwrap()
         });
+    end_timer!(write_timer);
 
     // Save the coordinator state
+    let write_timer = start_timer!(|| format!("Writing coordinator state"));
     serialize_to_path(
         &stage0_state,
         coord_state_dir,
         STAGE0_COORD_STATE_FILENAME_PREFIX,
         None,
     )?;
+    end_timer!(write_timer);
 
     Ok(())
 }

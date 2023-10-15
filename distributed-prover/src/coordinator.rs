@@ -25,6 +25,7 @@ use ark_relations::r1cs::{ConstraintSystem, ConstraintSystemRef};
 use ark_serialize::{
     CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Write,
 };
+use ark_std::{start_timer, end_timer};
 use rand::RngCore;
 
 /// Generates Groth16 proving keys
@@ -301,16 +302,25 @@ where
     P: CircuitWithPortals<E::ScalarField>,
 {
     pub fn new<C: TreeConfig>(circ: P) -> Self {
+        let timer = start_timer!(|| "CoordinatorStage0State::new");
         // Extract everything we need to know from the circuit
         let circ_params = circ.get_params();
+
+        let witness_timer = start_timer!(|| "Get serialized witnesses");
         // Serialize the circuit's witnesses
         let all_serialized_witnesses = (0..circ.num_subcircuits())
             .map(|idx| circ.get_serialized_witnesses(idx))
             .collect();
+        end_timer!(witness_timer);
 
+        let subtrace_timer = start_timer!(|| "Get subtraces");
         // Run the circuit and collect the execution trace. Check that constraints are satisfied.
         let time_ordered_subtraces = circ.get_portal_subtraces();
         let addr_ordered_subtraces = sort_subtraces_by_addr(&time_ordered_subtraces);
+        end_timer!(subtrace_timer);
+
+        end_timer!(timer);
+
 
         CoordinatorStage0State {
             time_ordered_subtraces,
