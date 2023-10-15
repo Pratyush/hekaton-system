@@ -4,8 +4,9 @@ use crate::eval_tree::{
 };
 
 use std::{
-    fs::{self, File},
+    fs::File,
     io::{self, Write},
+    os,
     path::PathBuf,
 };
 
@@ -135,7 +136,7 @@ pub fn serialize_to_paths<T: CanonicalSerialize>(
     let mut f = File::create(&first_file_path)?;
     f.write_all(&buf)?;
 
-    // For all the remaining files, just make hardlinks to the first file
+    // For all the remaining files, just make symlinks to the first file
     indices
         .into_par_iter()
         .skip(1)
@@ -143,7 +144,7 @@ pub fn serialize_to_paths<T: CanonicalSerialize>(
             let filename = format!("{filename_prefix}_{i}.bin");
             let new_file_path = dir.join(filename);
 
-            fs::hard_link(&first_file_path, &new_file_path)
+            os::unix::fs::symlink(&first_file_path, &new_file_path)
         })
         .collect::<io::Result<()>>()
 }
