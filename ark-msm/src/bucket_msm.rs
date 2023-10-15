@@ -16,6 +16,9 @@ use crate::{
     types::{GROUP_SIZE, GROUP_SIZE_IN_BITS},
 };
 
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
+
 pub struct BucketMSM<P: Config> {
     num_windows: u32,
     window_bits: u32,
@@ -267,7 +270,8 @@ impl<P: Config> BucketMSM<P> {
             self.batch_adder.batch_add(&mut sum_of_sums, &running_sums);
         }
 
-        let sum_by_window: Vec<Projective<P>> = ark_std::cfg_into_iter!(window_starts)
+        let sum_by_window: Vec<Projective<P>> = window_starts
+            .into_iter()
             .map(|w_start| {
                 let group_start = w_start << (self.bucket_bits as usize - GROUP_SIZE_IN_BITS);
                 let group_end = (w_start + 1) << (self.bucket_bits as usize - GROUP_SIZE_IN_BITS);

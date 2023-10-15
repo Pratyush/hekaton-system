@@ -13,7 +13,7 @@ ark-poly = { version = "0.4", default-features = false }
 ark-relations = { version = "0.4.0", default-features = false }
 ark-serialize = { version = "0.4.0", default-features = false }
 ark-std = { version = "0.4.0", default-features = false }
-ark-crypto-primitives = { version = "0.4.0", default-features = false }
+# ark-crypto-primitives = { version = "0.4.0", default-features = false }
 rayon = { version = "1.5.1", default-features = false, optional = true }
 ark-msm = { path = "../ark-msm", default-features = false }
 
