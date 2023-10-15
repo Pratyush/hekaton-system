@@ -41,7 +41,7 @@ default = ["asm", "parallel"]
 print-trace = ["ark-std/print-trace"]
 std = ["ark-ff/std", "ark-poly/std", "ark-r1cs-std/std", "ark-serialize/std", "ark-relations/std"]
 asm = ["ark-ff/asm"]
-parallel = ["ark-ff/parallel", "ark-ff/rayon", "ark-poly/parallel", "ark-poly/rayon", "ark-r1cs-std/parallel"]
+parallel = ["ark-ff/parallel", "ark-ff/rayon", "ark-poly/parallel", "ark-poly/rayon", "ark-r1cs-std/parallel", "ark-msm/parallel" ]
 
 [[bench]]
 name = "microbenchmarks"
