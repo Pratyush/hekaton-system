@@ -16,7 +16,7 @@ CMD=$1
 WORKERBIN=$2
 SCRATCHDIR=$3
 
-set -x RAYON_NUM_THREADS=1
+export RAYON_NUM_THREADS=1
 
 REQDIR="$SCRATCHDIR/reqs"
 RESPDIR="$SCRATCHDIR/resps"
@@ -37,10 +37,10 @@ LOCALSCRATCHDIR="/tmp/${USER}-${BENCH_DESC}"
 
 if [ $CMD = "stage0" ]; then
 	PKDIR="$LOCALSCRATCHDIR/g16_cks"
-	/usr/bin/time ./janus_cache_g16_keys ck $BENCH_DESC
+	/usr/bin/time ./janus_cache_g16_keys.sh ck $BENCH_DESC
 elif [ $CMD = "stage1" ]; then
 	PKDIR="$LOCALSCRATCHDIR/g16_pks"
-	/usr/bin/time ./janus_cache_g16_keys pk $BENCH_DESC
+	/usr/bin/time ./janus_cache_g16_keys.sh pk $BENCH_DESC
 else
 	echo "invalid command $CMD"
 	exit 1

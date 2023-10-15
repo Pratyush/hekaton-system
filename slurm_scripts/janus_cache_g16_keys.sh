@@ -42,7 +42,7 @@ if [[ ! -d "$KEYDIR" ]]; then
 	TEMPFILE=$(mktemp ./tmplockfile.XXXX --tmpdir=$LOCALSCRATCHDIR)
 	LOCKFILE="$LOCALSCRATCHDIR/transfer.lock"
 	echo "Linking $LOCKFILE -> $TEMPFILE"
-	if ln "$TEMPFILE" "$LOCKFILE" ; then
+	if ln "$TEMPFILE" "$LOCKFILE" 2> /dev/null ; then
 		# On success, do the transfer
 		echo "Transferring Groth16 keys..."
 
@@ -93,5 +93,3 @@ fi
 # By this point, we're guaranteed that $LOCALSCRATCHDIR/g16_[pk|ck]s is populated
 
 echo "Done"
-
-ls -alh "$KEYDIR"

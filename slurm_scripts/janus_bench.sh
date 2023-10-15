@@ -110,7 +110,7 @@ sbatch --wait \
 	--mem-per-cpu=3800M \
 	--output="$BENCHDIR/stage1_out_%a.txt" \
 	--error="$BENCHDIR/stage1_err_%a.txt" \
-	janus_worker_job stage1 "$WORKERBIN" "$SCRATCHDIR" \
+	janus_worker_job.sh stage1 "$WORKERBIN" "$SCRATCHDIR" \
 ) || { echo "FAILED"; exit 1; }
 JOB_ID=$(echo ${SBATCH_STDOUT} | grep -Po "\\d+")
 sacct -j $JOB_ID $SACCT_EXTRA_ARGS > "$BENCHDIR/stage1_metrics.txt"

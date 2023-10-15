@@ -6,7 +6,7 @@ SACCT_EXTRA_ARGS="-P --delimiter=, --format=jobid,jobname,account,state,elapsedr
 
 HELPSTR="\
 Usage:\n\
-srun_setup <num_circuits> <num_sha2_iters_per_subcircuit> <num_portals_per_subcircuit>\
+srun_janus_setup.sh <num_circuits> <num_sha2_iters_per_subcircuit> <num_portals_per_subcircuit>\
 "
 
 if [ -z ${1+x} ] || [ -z ${2+x} ] || [ -z ${3+x} ]; then
@@ -20,7 +20,7 @@ NUM_PORTALS=$3
 
 SBATCH_STDOUT=$(\
 srun --partition=standard --time 1:00:00 --cpus-per-task=32 --ntasks=1 --account=imiers-prj-cmsc \
-       	/usr/bin/time -vo "setup_timing.txt" ./janus_setup $NUM_SUBCIRCUITS $NUM_SHA2_ITERS $NUM_PORTALS \
+       	/usr/bin/time -vo "setup_timing.txt" ./janus_setup.sh $NUM_SUBCIRCUITS $NUM_SHA2_ITERS $NUM_PORTALS \
 	> "setup_out.txt" \
 )
 JOB_ID=$(echo ${SBATCH_STDOUT} | grep -Po "\\d+")
