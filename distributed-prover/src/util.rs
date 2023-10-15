@@ -1,18 +1,13 @@
-use crate::eval_tree::{
-    ExecTreeLeaf, LeafParam, MerkleRoot, SerializedLeaf, SerializedLeafVar, TreeConfig,
-    TwoToOneParam,
-};
-
 use std::{
     fs::File,
-    io::{self, Write},
+    io::{self, Read, Write},
     os,
     path::PathBuf,
 };
 
-use ark_crypto_primitives::crh::{CRHScheme, TwoToOneCRHScheme};
 use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use ark_std::{end_timer, start_timer};
 use rand::SeedableRng;
 use rand_chacha::ChaCha12Rng;
 use rayon::prelude::*;
@@ -25,8 +20,6 @@ pub use merlin::Transcript as ProtoTranscript;
 /// A seed used for the RNG in stage 0 commitments. Each worker saves this and redoes the
 /// commitment once it's asked to do stage 1
 pub type G16ComSeed = [u8; 32];
-
-const MERKLE_HASH_PARAMS_SEED: &'static [u8; 32] = b"horizontal-snark-hash-param-seed";
 
 pub(crate) fn log2(x: usize) -> usize {
     // We set log2(0) == 0
@@ -110,8 +103,15 @@ pub fn serialize_to_path<T: CanonicalSerialize>(
 
     let file_path = dir.join(filename);
 
+    let start0 = start_timer!(|| "Serializing value");
+    let mut buf = Vec::new();
+    val.serialize_uncompressed(&mut buf).unwrap();
+    end_timer!(start0);
+
+    let start1 = start_timer!(|| format!("Writing to file {:?}", file_path));
     let mut f = File::create(file_path)?;
-    val.serialize_uncompressed(&mut f).unwrap();
+    f.write_all(&buf)?;
+    end_timer!(start1);
 
     Ok(())
 }
@@ -124,8 +124,10 @@ pub fn serialize_to_paths<T: CanonicalSerialize>(
     filename_prefix: &str,
     indices: core::ops::Range<usize>,
 ) -> io::Result<()> {
+    let start0 = start_timer!(|| "Serializing value");
     let mut buf = Vec::new();
     val.serialize_uncompressed(&mut buf).unwrap();
+    end_timer!(start0);
 
     // Write the first file for real
     let first_file_path = {
@@ -133,10 +135,13 @@ pub fn serialize_to_paths<T: CanonicalSerialize>(
         let filename = format!("{filename_prefix}_{first_idx}.bin");
         dir.join(filename)
     };
+    let start1 = start_timer!(|| format!("Writing to file {:?}", first_file_path));
     let mut f = File::create(&first_file_path)?;
     f.write_all(&buf)?;
+    end_timer!(start1);
 
     // For all the remaining files, just make symlinks to the first file
+    let start2 = start_timer!(|| format!("Symlinking {} times", indices.len()));
     indices
         .into_par_iter()
         .skip(1)
@@ -146,7 +151,10 @@ pub fn serialize_to_paths<T: CanonicalSerialize>(
 
             os::unix::fs::symlink(&first_file_path, &new_file_path)
         })
-        .collect::<io::Result<()>>()
+        .collect::<io::Result<()>>()?;
+    end_timer!(start2);
+
+    Ok(())
 }
 
 /// Deserializes "DIR/FILENAMEPREFIX_INDEX" to the given type. The "_INDEX" part is ommitted if no
@@ -164,6 +172,15 @@ pub fn deserialize_from_path<T: CanonicalDeserialize>(
     let filename = format!("{}{}.bin", filename_prefix, idx_str);
 
     let file_path = dir.join(filename);
+    let mut buf = Vec::new();
+    let start0 = start_timer!(|| format!("Reading from file {:?}", file_path));
     let mut f = File::open(&file_path).expect(&format!("couldn't open file {:?}", file_path));
-    Ok(T::deserialize_uncompressed_unchecked(&mut f).unwrap())
+    let _ = f.read_to_end(&mut buf)?;
+    end_timer!(start0);
+
+    let start1 = start_timer!(|| "Deserializing value");
+    let val = T::deserialize_uncompressed_unchecked(&mut f).unwrap();
+    end_timer!(start1);
+
+    Ok(val)
 }
