@@ -27,15 +27,15 @@ DATETIME=$(printf '%(%Y%m%d.%H%M%S)T\n' -1)
 # nc=num subcircuits, ni=num sha2 iters, np=num portals
 BENCHDIR="bench_nc${NUM_SUBCIRCUITS}_ni${NUM_SHA2_ITERS}_np${NUM_PORTALS}-$DATETIME"
 
-# Get a version without a date (ie cutting everything before '-') so we can reuse
-# a setup for multiple bench runs of the same parameters
-BENCHDIR_NODATE=$(echo -n "$BENCHDIR" | cut -d'-' -f1)
+# Get the bench descriptor by cutting everything in the benchname before '-'. Now
+# we can reuse a setup for multiple bench runs of the same parameters
+BENCH_DESC=$(basename "$BENCHDIR" | cut -d'-' -f1)
 
 echo "Creating bench directory $BENCHDIR. Give this to janus_bench when you call it"
 mkdir $BENCHDIR
 
 # Make a directory in scratch space specifically for this parameter set
-SCRATCHDIR="$TOPSCRATCHDIR/$BENCHDIR_NODATE"
+SCRATCHDIR="$TOPSCRATCHDIR/$BENCH_DESC"
 mkdir -p "$SCRATCHDIR"
 
 # Now make subdirectories for different items
@@ -45,13 +45,10 @@ STATEDIR="$SCRATCHDIR/coord_state"
 mkdir -p "$PKDIR"
 mkdir -p "$STATEDIR"
 
-"$COORDBIN" gen-groth16-keys \
+echo "Generating keys..."
+"$COORDBIN" gen-keys \
 	--g16-pk-dir "$PKDIR" \
 	--coord-state-dir "$STATEDIR" \
 	--num-subcircuits $NUM_SUBCIRCUITS \
 	--num-sha2-iters $NUM_SHA2_ITERS \
 	--num-portals $NUM_PORTALS
-
-"$COORDBIN" gen-agg-key \
-       	--g16-pk-dir "$PKDIR" \
-       	--coord-state-dir "$STATEDIR"

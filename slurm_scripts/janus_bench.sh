@@ -9,7 +9,7 @@ WORKERBIN="/home/micro/horizontally-scalable-snarks-system/target/release/worker
 #TOPSCRATCHDIR="/fs/nexus-scratch/micro"
 TOPSCRATCHDIR="/scratch/zt1/project/imiers-prj/shared/"
 
-SACCT_EXTRA_ARGS="-P --delimiter=, --format=jobid,jobname,state,elapsedraw,cputimeraw,totalcpu,maxvm,maxdiskread"
+SACCT_EXTRA_ARGS="-P --delimiter=, --format=jobid,jobname,account,state,elapsedraw,cputimeraw,totalcpu,maxvm,maxrss,maxdiskread,maxdiskwrite"
 
 HELPSTR="\
 Usage:\n\
@@ -24,11 +24,11 @@ fi
 BENCHDIR=$1
 NUMCORES=$2
 
-# Get a version without a date (ie cutting everything before '-') so we can reuse a setup for multiple bench runs
-BENCHDIR_NODATE=$(echo -n "$BENCHDIR" | cut -d'-' -f1)
+# Get the bench descriptor by cutting everything in the benchname before '-'
+BENCH_DESC=$(basename "$BENCHDIR" | cut -d'-' -f1)
 
 # Make a directory in scratch space specifically for this parameter set
-SCRATCHDIR="$TOPSCRATCHDIR/$BENCHDIR_NODATE"
+SCRATCHDIR="$TOPSCRATCHDIR/$BENCH_DESC"
 
 PKDIR="$SCRATCHDIR/g16_pks"
 STATEDIR="$SCRATCHDIR/coord_state"
@@ -70,13 +70,14 @@ echo "Waiting for stage0 responses..."
 
 SBATCH_STDOUT=$(\
 sbatch --wait \
+	--account=imiers-prj-cmsc \
 	--array="1-$NUM_SUBCIRCUITS%$NUMCORES" \
 	--output="$BENCHDIR/stage0_out_%a.txt" \
 	--error="$BENCHDIR/stage0_err_%a.txt" \
-       	janus_worker_job stage0 "$WORKERBIN" "$SCRATCHDIR" \
+       	janus_worker_job.sh stage0 "$WORKERBIN" "$SCRATCHDIR" \
 ) || { echo "FAILED"; exit 1; }
 JOB_ID=$(echo ${SBATCH_STDOUT} | grep -Po "\\d+")
-sacct -j $JOB_ID $SACCT_EXTRA_ARGS > "$BENCHDIR/metrics_stage0.txt"
+sacct -j $JOB_ID $SACCT_EXTRA_ARGS > "$BENCHDIR/stage0_metrics.txt"
 
 echo "Building stage1 requests..."
 
@@ -103,15 +104,16 @@ date +%s >> "$BENCHDIR/start_stage1.txt"
 echo "Waiting for stage1 responses (this may take a while)..."
 SBATCH_STDOUT=$(\
 sbatch --wait \
+	--account=imiers-prj-cmsc \
 	--array="1-$NUM_SUBCIRCUITS%$NUMCORES" \
-	--time=01:00 \
-	--mem-per-cpu=3M \
+	--time=03:00 \
+	--mem-per-cpu=3800M \
 	--output="$BENCHDIR/stage1_out_%a.txt" \
 	--error="$BENCHDIR/stage1_err_%a.txt" \
 	janus_worker_job stage1 "$WORKERBIN" "$SCRATCHDIR" \
 ) || { echo "FAILED"; exit 1; }
 JOB_ID=$(echo ${SBATCH_STDOUT} | grep -Po "\\d+")
-sacct -j $JOB_ID $SACCT_EXTRA_ARGS > "$BENCHDIR/metrics_stage1.txt"
+sacct -j $JOB_ID $SACCT_EXTRA_ARGS > "$BENCHDIR/stage1_metrics.txt"
 
 echo -n "BEGINTIME " > "$BENCHDIR/end_proof.txt"
 date +%s >> "$BENCHDIR/end_proof.txt"

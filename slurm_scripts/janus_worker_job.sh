@@ -5,7 +5,7 @@
 #
 #SBATCH --cpus-per-task=1
 
-set -euf
+set -eu
 
 if [ -z ${1+x} ] || [ -z ${2+x} ]; then
     echo "Invalid number of args"
@@ -18,7 +18,6 @@ SCRATCHDIR=$3
 
 set -x RAYON_NUM_THREADS=1
 
-PKDIR="$SCRATCHDIR/g16_pks"
 REQDIR="$SCRATCHDIR/reqs"
 RESPDIR="$SCRATCHDIR/resps"
 
@@ -30,6 +29,22 @@ SUBCIRCUIT_IDX="$((SLURM_ARRAY_TASK_ID-1))"
 
 echo -n "BEGINTIME "
 date +%s
+
+# Cache all the Groth16 keys before doing anything
+# PKDIR/CKDIR resides in the local scratch space, not the global
+BENCH_DESC=$(basename "$SCRATCHDIR")
+LOCALSCRATCHDIR="/tmp/${USER}-${BENCH_DESC}"
+
+if [ $CMD = "stage0" ]; then
+	PKDIR="$LOCALSCRATCHDIR/g16_cks"
+	/usr/bin/time ./janus_cache_g16_keys ck $BENCH_DESC
+elif [ $CMD = "stage1" ]; then
+	PKDIR="$LOCALSCRATCHDIR/g16_pks"
+	/usr/bin/time ./janus_cache_g16_keys pk $BENCH_DESC
+else
+	echo "invalid command $CMD"
+	exit 1
+fi
 
 # If the command is "stage0" then process the corresponding stage0 request
 if [ $CMD = "stage0" ]; then
