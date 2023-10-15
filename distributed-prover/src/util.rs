@@ -179,7 +179,7 @@ pub fn deserialize_from_path<T: CanonicalDeserialize>(
     end_timer!(start0);
 
     let start1 = start_timer!(|| "Deserializing value");
-    let val = T::deserialize_uncompressed_unchecked(&mut f).unwrap();
+    let val = T::deserialize_uncompressed_unchecked(buf.as_slice()).unwrap();
     end_timer!(start1);
 
     Ok(val)
