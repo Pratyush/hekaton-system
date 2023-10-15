@@ -4,7 +4,7 @@ use crate::eval_tree::{
 };
 
 use std::{
-    fs::File,
+    fs::{self, File},
     io::{self, Write},
     path::PathBuf,
 };
@@ -117,25 +117,33 @@ pub fn serialize_to_path<T: CanonicalSerialize>(
 
 /// Serializes the given value to "DIR/FILENAMEPREFIX_INDEX1", "DIR/FILENAMEPREFIX_INDEX2", etc..
 /// The "_INDEX" part is ommitted if no index is given.
-pub fn serialize_to_paths<T: CanonicalSerialize, I: IntoParallelIterator<Item = usize>>(
+pub fn serialize_to_paths<T: CanonicalSerialize>(
     val: &T,
     dir: &PathBuf,
     filename_prefix: &str,
-    indices: I,
+    indices: core::ops::Range<usize>,
 ) -> io::Result<()> {
     let mut buf = Vec::new();
     val.serialize_uncompressed(&mut buf).unwrap();
 
-    // End the filename with "_i" for every i
+    // Write the first file for real
+    let first_file_path = {
+        let first_idx = indices.start;
+        let filename = format!("{filename_prefix}_{first_idx}.bin");
+        dir.join(filename)
+    };
+    let mut f = File::create(&first_file_path)?;
+    f.write_all(&buf)?;
+
+    // For all the remaining files, just make hardlinks to the first file
     indices
         .into_par_iter()
+        .skip(1)
         .map(|i| {
             let filename = format!("{filename_prefix}_{i}.bin");
-            let file_path = dir.join(filename);
+            let new_file_path = dir.join(filename);
 
-            let mut f = File::create(file_path)?;
-            f.write_all(&buf)?;
-            Ok(())
+            fs::hard_link(&first_file_path, &new_file_path)
         })
         .collect::<io::Result<()>>()
 }
