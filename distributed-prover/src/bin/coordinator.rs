@@ -365,6 +365,7 @@ fn begin_stage0(worker_req_dir: &PathBuf, coord_state_dir: &PathBuf) -> io::Resu
         None,
     )?;
     end_timer!(write_timer);
+    end_timer!(stage0_timer);
 
     Ok(())
 }
