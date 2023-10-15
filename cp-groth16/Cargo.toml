@@ -18,7 +18,7 @@ ark-msm = { path = "../ark-msm", default-features = false }
 
 [dev-dependencies]
 ark-bls12-381 = "0.4"
-ark-r1cs-std = "0.4"
+ark-r1cs-std = {git = "https://github.com/arkworks-rs/r1cs-std", branch = "refactor-uints" }
 
 [features]
 default = ["parallel"]
