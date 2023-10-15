@@ -140,17 +140,15 @@ fn generate_g16_pks(
 
     // First a special case: if there's just 4 subcircuits, generate them all and be done with it
     if num_subcircuits <= 4 {
-        for subcircuit_idx in 0..num_subcircuits {
-            // Generate the subcircuit's G16 proving key
-            let pk = generator.gen_pk(&mut rng, subcircuit_idx);
-            // Save it
-            serialize_to_path(
-                &pk,
-                g16_pk_dir,
-                G16_PK_FILENAME_PREFIX,
-                Some(subcircuit_idx),
-            )
-            .unwrap();
+        // Generate the subcircuit's G16 proving keys
+        let pks = (0..num_subcircuits)
+            .map(|subcircuit_idx| generator.gen_pk(&mut rng, subcircuit_idx))
+            .collect::<Vec<_>>();
+
+        // Save them and the corresponding committing key
+        for (subcircuit_idx, pk) in pks.iter().enumerate() {
+            serialize_to_path(pk, g16_pk_dir, G16_PK_FILENAME_PREFIX, Some(subcircuit_idx))
+                .unwrap();
             // Save the corresponding committing key
             serialize_to_path(
                 &pk.ck,
@@ -160,6 +158,23 @@ fn generate_g16_pks(
             )
             .unwrap();
         }
+
+        let pk_fetcher = move |subcircuit_idx: usize| pks[subcircuit_idx].clone();
+
+        // Construct the aggregator commitment key
+        let start =
+            start_timer!(|| format!("Generating aggregation key with params {circ_params}"));
+        let agg_ck = {
+            // Need some intermediate keys
+            let super_com_key = SuperComCommittingKey::<E>::gen(&mut rng, num_subcircuits);
+            let kzg_ck = KzgComKey::gen(&mut rng, num_subcircuits);
+            AggProvingKey::new(super_com_key, kzg_ck, pk_fetcher)
+        };
+        end_timer!(start);
+
+        // Save the aggregator key
+        println!("Writing aggregation key");
+        serialize_to_path(&agg_ck, coord_state_dir, AGG_CK_FILENAME_PREFIX, None).unwrap();
 
         return;
     }
