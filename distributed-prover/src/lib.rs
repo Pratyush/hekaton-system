@@ -88,7 +88,7 @@ impl<F: PrimeField> RunningEvals<F> {
 
         // The single-field-element representation of a transcript entry is val + entry_chal*addr,
         // where addr is the hash of the name
-        let entry_repr = entry.val + entry_chal * &entry.addr;
+        let entry_repr = entry.val + entry_chal * &F::from(entry.addr);
 
         // Now add the entry to the running polynomial eval. The polynomial is Π (X - entryᵢ)
         // evaluated at X=tr_chal
@@ -104,7 +104,7 @@ impl<F: PrimeField> RunningEvals<F> {
 
         // The single-field-element representation of a transcript entry is val + entry_chal*addr,
         // where addr is the hash of the name
-        let entry_repr = entry.val + entry_chal * &entry.addr;
+        let entry_repr = entry.val + entry_chal * &F::from(entry.addr);
 
         // Now add the entry to the running polynomial eval. The polynomial is Π (X - entryᵢ)
         // evaluated at X=tr_chal
@@ -220,14 +220,14 @@ impl<F: PrimeField> AllocVar<RunningEvals<F>, F> for RunningEvalsVar<F> {
 /// An entry in the transcript of portal wire reads
 #[derive(Copy, Clone, Default, Debug, PartialEq, Eq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct RomTranscriptEntry<F: PrimeField> {
-    addr: F,
+    addr: u64,
     val: F,
 }
 
 impl<F: PrimeField> RomTranscriptEntry<F> {
     fn to_bytes(&self) -> Vec<u8> {
         [
-            self.addr.into_bigint().to_bytes_le(),
+            self.addr.to_le_bytes().to_vec(),
             self.val.into_bigint().to_bytes_le(),
         ]
         .concat()
@@ -237,7 +237,7 @@ impl<F: PrimeField> RomTranscriptEntry<F> {
     /// address-sorted transcript
     fn padding() -> Self {
         RomTranscriptEntry {
-            addr: F::ZERO,
+            addr: 0,
             val: F::ZERO,
         }
     }
@@ -259,9 +259,18 @@ impl<F: PrimeField> R1CSVar<F> for RomTranscriptEntryVar<F> {
     }
 
     fn value(&self) -> Result<Self::Value, SynthesisError> {
+        let addr_bytes = self.addr.value()?.into_bigint().to_bytes_le();
+
+        // Check that the address fits into 64 bits
+        assert!(addr_bytes.iter().skip(8).all(|&b| b == 0));
+
+        // Copy addr into a fixed-size buffer
+        let mut addr_buf = [0u8; 8];
+        addr_buf.copy_from_slice(&addr_bytes);
+
         Ok(RomTranscriptEntry {
             val: self.val.value()?,
-            addr: self.addr.value()?,
+            addr: u64::from_le_bytes(addr_buf),
         })
     }
 }
@@ -330,13 +339,11 @@ pub trait CircuitWithPortals<F: PrimeField> {
 mod test {
     use super::*;
 
-    use ark_bls12_381::{Bls12_381 as E, Fr};
+    use ark_bls12_381::Fr;
     use ark_ff::UniformRand;
-    use ark_relations::{
-        ns,
-        r1cs::{ConstraintSystem, ConstraintSystemRef, Namespace, SynthesisError},
-    };
+    use ark_relations::r1cs::{ConstraintSystem, ConstraintSystemRef};
     use ark_std::test_rng;
+    use rand::Rng;
 
     #[test]
     fn running_eval_update_correctness() {
@@ -355,7 +362,7 @@ mod test {
         ));
 
         let entry = RomTranscriptEntry {
-            addr: Fr::rand(&mut rng),
+            addr: rng.gen(),
             val: Fr::rand(&mut rng),
         };
         let entry_var = RomTranscriptEntryVar::new_constant(cs.clone(), &entry).unwrap();
@@ -363,7 +370,7 @@ mod test {
         re_var.update_time_ordered(&entry_var);
 
         let entry = RomTranscriptEntry {
-            addr: Fr::rand(&mut rng),
+            addr: rng.gen(),
             val: Fr::rand(&mut rng),
         };
         let entry_var = RomTranscriptEntryVar::new_constant(cs.clone(), &entry).unwrap();

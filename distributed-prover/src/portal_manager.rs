@@ -33,7 +33,7 @@ pub struct SetupPortalManager<F: PrimeField> {
     pub subtraces: Vec<VecDeque<RomTranscriptEntry<F>>>,
 
     /// The address that this manager will assign to the next unseen variable name
-    next_var_addr: usize,
+    next_var_addr: u64,
 
     /// A map from variable names to their transcript entry
     var_map: HashMap<String, RomTranscriptEntry<F>>,
@@ -93,7 +93,7 @@ impl<F: PrimeField> PortalManager<F> for SetupPortalManager<F> {
         // Make a new transcript entry. Use a fresh address
         let entry = RomTranscriptEntry {
             val: val.value().unwrap(),
-            addr: F::from(self.next_var_addr as u128),
+            addr: self.next_var_addr,
         };
         // Increment to the next unused address
         self.next_var_addr += 1;

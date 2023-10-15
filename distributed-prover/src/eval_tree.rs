@@ -1,38 +1,20 @@
-use crate::{
-    portal_manager::{ProverPortalManager, SetupPortalManager},
-    util::log2,
-    CircuitWithPortals, RomTranscriptEntry, RomTranscriptEntryVar, RunningEvals, RunningEvalsVar,
-};
+use crate::{RomTranscriptEntry, RomTranscriptEntryVar, RunningEvals, RunningEvalsVar};
 
-use std::{borrow::Borrow, collections::VecDeque, marker::PhantomData};
+use std::borrow::Borrow;
 
-use ark_cp_groth16::{
-    committer::CommitmentBuilder as G16CommitmentBuilder,
-    data_structures::{Comm as G16Com, ProvingKey as G16ProvingKey},
-    r1cs_to_qap::LibsnarkReduction as QAP,
-    MultiStageConstraintSynthesizer, MultiStageConstraintSystem,
-};
-
-use ark_crypto_primitives::crh::{
-    constraints::{CRHSchemeGadget, TwoToOneCRHSchemeGadget},
-    sha256::{digest::Digest, Sha256},
-};
-use ark_ec::pairing::Pairing;
+use ark_crypto_primitives::crh::constraints::{CRHSchemeGadget, TwoToOneCRHSchemeGadget};
 use ark_ff::{PrimeField, ToConstraintField};
 use ark_r1cs_std::{
     alloc::{AllocVar, AllocationMode},
-    bits::{boolean::Boolean, uint8::UInt8, ToBytesGadget},
-    eq::EqGadget,
-    fields::{fp::FpVar, FieldVar},
+    bits::{uint8::UInt8, ToBytesGadget},
+    fields::fp::FpVar,
     R1CSVar, ToConstraintFieldGadget,
 };
 use ark_relations::{
     ns,
-    r1cs::{ConstraintSystem, ConstraintSystemRef, Namespace, SynthesisError},
+    r1cs::{ConstraintSystemRef, Namespace, SynthesisError},
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use rand::{Rng, SeedableRng};
-use rand_chacha::ChaCha12Rng;
 
 pub(crate) type MerkleRoot<C> = <C as TreeConfig>::InnerDigest;
 pub(crate) type MerkleRootVar<C, F, CG> = <CG as TreeConfigGadget<C, F>>::InnerDigest;
@@ -94,7 +76,7 @@ impl<F: PrimeField> ToConstraintField<F> for ExecTreeLeaf<F> {
         Some(vec![
             self.evals.time_ordered_eval,
             self.evals.addr_ordered_eval,
-            self.last_subtrace_entry.addr,
+            F::from(self.last_subtrace_entry.addr),
             self.last_subtrace_entry.val,
         ])
     }

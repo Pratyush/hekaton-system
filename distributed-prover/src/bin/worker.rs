@@ -69,18 +69,22 @@ fn process_stage0_request(
     let tree_params = gen_merkle_params();
 
     // Deserialize the appropriate committing key and request
+    let start = start_timer!(|| "Deserializing g16 com key");
     let g16_ck = deserialize_from_path::<G16ComKey<E>>(
         g16_pk_dir,
         G16_CK_FILENAME_PREFIX,
         Some(subcircuit_idx),
     )
     .unwrap();
+    end_timer!(start);
+    let start = start_timer!(|| "Deserializing req");
     let stage0_req = deserialize_from_path::<Stage0Request<Fr>>(
         req_dir,
         STAGE0_REQ_FILENAME_PREFIX,
         Some(subcircuit_idx),
     )
     .unwrap();
+    end_timer!(start);
 
     // Sanity check that the request index matches the expected index
     assert_eq!(stage0_req.subcircuit_idx, subcircuit_idx);
