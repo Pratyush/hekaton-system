@@ -40,10 +40,10 @@ git = "https://github.com/rozbb/algebra.git"
 branch = "canonicalserialize-vecdeque"
 
 
-[patch.crates-io.ark-r1cs-std]
-git = "https://github.com/arkworks-rs/r1cs-std.git"
-branch = "refactor-uints"
+# [patch.crates-io.ark-r1cs-std]
+# git = "https://github.com/arkworks-rs/r1cs-std.git"
+# branch = "refactor-uints"
 
-[patch.crates-io.ark-groth16]
-git = "https://github.com/arkworks-rs/groth16.git"
-branch = "bump-version-and-fixes"
+# [patch.crates-io.ark-groth16]
+# git = "https://github.com/arkworks-rs/groth16.git"
+# branch = "bump-version-and-fixes"

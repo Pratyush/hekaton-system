@@ -13,6 +13,7 @@ use ark_cp_groth16::{
     Proof as G16Proof,
 };
 use ark_ec::pairing::Pairing;
+use ark_msm::msm::VariableBaseMSMExt;
 use ark_r1cs_std::fields::fp::FpVar;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rand::RngCore;
@@ -45,6 +46,8 @@ where
     C: TreeConfig<Leaf = SerializedLeaf<E::ScalarField>>,
     CG: TreeConfigGadget<C, E::ScalarField, Leaf = SerializedLeafVar<E::ScalarField>>,
     E: Pairing,
+    E::G1: VariableBaseMSMExt,
+    E::G2: VariableBaseMSMExt,
     P: CircuitWithPortals<E::ScalarField> + Clone,
     R: RngCore,
 {
@@ -124,6 +127,8 @@ where
     C: TreeConfig<Leaf = SerializedLeaf<E::ScalarField>>,
     CG: TreeConfigGadget<C, E::ScalarField, Leaf = SerializedLeafVar<E::ScalarField>>,
     E: Pairing,
+    E::G1: VariableBaseMSMExt,
+    E::G2: VariableBaseMSMExt,
     P: CircuitWithPortals<E::ScalarField>,
     R: RngCore,
 {

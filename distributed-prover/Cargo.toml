@@ -16,6 +16,7 @@ ark-poly = { version = "0.4.0" }
 ark-r1cs-std = { version = "0.4", default-features = false }
 ark-relations = { version = "0.4", default-features = false, features = ["std"] }
 ark-serialize = { version = "0.4", default-features = false, features = ["derive"] }
+ark-msm = { path = "../ark-msm" }
 clap = { version = "4.4", features = ["derive"] }
 rand = "0.8"
 tinyram-emu = { path = "../tinyram-emu" }
