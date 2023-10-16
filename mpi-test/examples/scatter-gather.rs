@@ -2,34 +2,74 @@ use mpi::topology::Rank;
 use mpi::traits::*;
 
 fn main() {
-fn main() {
     let universe = mpi::initialize().unwrap();
     let world = universe.world();
     let root_rank = 0;
     let root_process = world.process_at_rank(root_rank);
+    let rank = world.rank();
 
-    let mut x;
-    if world.rank() == root_rank {
-        x = 2_u64.pow(10);
-        println!("Root broadcasting value: {}.", x);
+    let mut pk;
+    // If you are root, broadcast 1024.
+    if rank == root_rank {
+        pk = 2_u64.pow(10);
+        println!("Root broadcasting value: {}.", pk);
     } else {
-        x = 0_u64;
+        // Else, just initialize to nothing; you will receive
+        // below.
+        pk = 0_u64;
     }
-    root_process.broadcast_into(&mut x);
-    println!("Rank {} received value: {}.", world.rank(), x);
-    assert_eq!(x, 1024);
+    root_process.broadcast_into(&mut pk);
+    println!("Rank {rank} received value: {pk}.");
     println!();
 
-    let mut a;
-    let n = 4;
-    if world.rank() == root_rank {
-        a = (1..).map(|i| 2_u64.pow(i)).take(n).collect::<Vec<_>>();
-        println!("Root broadcasting value: {:?}.", &a[..]);
+    /***************************************************************/
+    /********************** Broadcast finished *********************/
+    /***************************************************************/
+
+    /***************************************************************/
+    /*********************** Scatter starting **********************/
+    /***************************************************************/
+
+    let now = std::time::Instant::now();
+    let size = world.size();
+    // Scatter of inputs
+    let mut x = 0 as Rank;
+    if rank == root_rank {
+        let v = (0..size).collect::<Vec<_>>();
+        std::thread::sleep(std::time::Duration::from_secs(5));
+        root_process.scatter_into_root(&v, &mut x);
     } else {
-        a = std::iter::repeat(0_u64).take(n).collect::<Vec<_>>();
+        root_process.scatter_into(&mut x);
+        println!("Rank {rank} waiting for 5 seconds? {}", now.elapsed().as_secs_f64());
     }
-    root_process.broadcast_into(&mut a);
-    println!("Rank {} received value: {:?}.", world.rank(), &a[..]);
-    assert_eq!(&a[..], &[2, 4, 8, 16]);
-}
+    assert_eq!(x, rank);
+    println!("Rank {} received value: {}.", rank, x);
+    /***************************************************************/
+    /*********************** Scatter finished **********************/
+    /***************************************************************/
+
+    let now = std::time::Instant::now();
+    
+    /***************************************************************/
+    /*********************** Gather started ************************/
+    /***************************************************************/
+    let i = 2_u64.pow(world.rank() as u32 + 1);
+
+    if rank == root_rank {
+        let mut a = vec![0u64; size.try_into().unwrap()];
+        root_process.gather_into_root(&i, &mut a[..]);
+        println!("Root waiting for 2 seconds? {}", now.elapsed().as_secs_f64());
+        println!("Root gathered sequence: {:?}.", a);
+        assert!(a
+            .iter()
+            .enumerate()
+            .all(|(a, &b)| b == 2u64.pow(a as u32 + 1)));
+    } else {
+        std::thread::sleep(std::time::Duration::from_secs(2));
+        root_process.gather_into(&i);
+        println!("Rank {rank} sent value: {i}.");
+    }
+    /***************************************************************/
+    /*********************** Gather finished ************************/
+    /***************************************************************/
 }
