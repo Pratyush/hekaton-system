@@ -18,8 +18,16 @@ SCRATCHDIR=$3
 
 export RAYON_NUM_THREADS=1
 
-REQDIR="$SCRATCHDIR/reqs"
+# Workers have a local scratch space that stores Groth16 keys and
+# coordinator requests
+BENCH_DESC=$(basename "$SCRATCHDIR")
+LOCAL_SCRATCHDIR="/tmp/${USER}-${BENCH_DESC}"
+
+# Responses are written to scratch
 RESPDIR="$SCRATCHDIR/resps"
+
+# Requests are stored locally and synced in ./janus_startup_cache
+REQDIR="$LOCAL_SCRATCHDIR/reqs"
 
 # Only RESPDIR might not exist already
 mkdir -p "$RESPDIR"
@@ -30,17 +38,12 @@ SUBCIRCUIT_IDX="$((SLURM_ARRAY_TASK_ID-1))"
 echo -n "BEGINTIME "
 date +%s
 
-# Cache all the Groth16 keys before doing anything
-# PKDIR/CKDIR resides in the local scratch space, not the global
-BENCH_DESC=$(basename "$SCRATCHDIR")
-LOCALSCRATCHDIR="/tmp/${USER}-${BENCH_DESC}"
-
 if [ $CMD = "stage0" ]; then
-	PKDIR="$LOCALSCRATCHDIR/g16_cks"
-	/usr/bin/time ./janus_cache_g16_keys.sh ck $BENCH_DESC
+	PKDIR="$LOCAL_SCRATCHDIR/g16_cks"
+	/usr/bin/time ./janus_startup_cache.sh ck $BENCH_DESC
 elif [ $CMD = "stage1" ]; then
-	PKDIR="$LOCALSCRATCHDIR/g16_pks"
-	/usr/bin/time ./janus_cache_g16_keys.sh pk $BENCH_DESC
+	PKDIR="$LOCAL_SCRATCHDIR/g16_pks"
+	/usr/bin/time ./janus_startup_cache.sh pk $BENCH_DESC
 else
 	echo "invalid command $CMD"
 	exit 1

@@ -20,15 +20,18 @@ BENCH_DESC=$2
 # Global scratch space
 SCRATCHDIR="$TOPSCRATCHDIR/$BENCH_DESC"
 # Local scratch space
-LOCALSCRATCHDIR="/tmp/${USER}-${BENCH_DESC}"
-mkdir -p $LOCALSCRATCHDIR
+LOCAL_SCRATCHDIR="/tmp/${USER}-${BENCH_DESC}"
+mkdir -p $LOCAL_SCRATCHDIR
 
 # Globally, everything is in g16_pks/. We differentiate locally though
 REMOTEKEYDIR="$SCRATCHDIR/g16_pks"
-KEYDIR="$LOCALSCRATCHDIR/g16_${KEYTYPE}s"
+KEYDIR="$LOCAL_SCRATCHDIR/g16_${KEYTYPE}s"
+
+REMOTE_REQDIR="$SCRATCHDIR/reqs"
+LOCAL_REQDIR="$LOCAL_SCRATCHDIR/reqs"
 
 # Make a temporary KEYDIR so that once KEYDIR exists, it's ready to be used
-TEMP_KEYDIR="$LOCALSCRATCHDIR/tmp_g16_${KEYTYPE}s"
+TEMP_KEYDIR="$LOCAL_SCRATCHDIR/tmp_g16_${KEYTYPE}s"
 
 # Before anything, we need to transfer over some files from global scratch
 # if they haven't already been transferred. Check if they have
@@ -39,14 +42,15 @@ if [[ ! -d "$KEYDIR" ]]; then
 
 	# Try to allocate a lockfile
 	echo "Allocating a lock file"
-	TEMPFILE=$(mktemp ./tmplockfile.XXXX --tmpdir=$LOCALSCRATCHDIR)
-	LOCKFILE="$LOCALSCRATCHDIR/transfer.lock"
+	TEMPFILE=$(mktemp ./tmplockfile.XXXX --tmpdir=$LOCAL_SCRATCHDIR)
+	LOCKFILE="$LOCAL_SCRATCHDIR/transfer.lock"
 	echo "Linking $LOCKFILE -> $TEMPFILE"
 	if ln "$TEMPFILE" "$LOCKFILE" 2> /dev/null ; then
 		# On success, do the transfer
 		echo "Transferring Groth16 keys..."
 
 		mkdir $TEMP_KEYDIR
+		mkdir -p $LOCAL_REQDIR
 
 		NUM_SUBCIRCUITS=$(echo -n "$BENCH_DESC" | cut -d_ -f2 | tr -d [:alpha:])
 		LAST_PARENT_IDX=$(($NUM_SUBCIRCUITS - 3))
@@ -73,6 +77,9 @@ if [[ ! -d "$KEYDIR" ]]; then
 			ln "$TEMP_KEYDIR/g16_${KEYTYPE}_$LAST_PARENT_IDX.bin" "$TEMP_KEYDIR/g16_${KEYTYPE}_$i.bin"
 		done
 
+		# Now sync the requests
+		rsync -aq "$REMOTE_REQDIR/" "$LOCAL_REQDIR/"
+
 		# All done. Rename the KEYDIR and remove the lockfile
 		mv $TEMP_KEYDIR $KEYDIR
 		rm $LOCKFILE
@@ -90,6 +97,6 @@ else
 	echo $KEYDIR exists
 fi
 
-# By this point, we're guaranteed that $LOCALSCRATCHDIR/g16_[pk|ck]s is populated
+# By this point, we're guaranteed that $LOCAL_SCRATCHDIR/g16_[pk|ck]s is populated
 
 echo "Done"

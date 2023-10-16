@@ -75,7 +75,7 @@ date +%s >> "$BENCHDIR/start_stage0.txt"
 
 # Sync reqs
 echo "Writing stage0 requests to scratch..."
-/usr/bin/time rsync -aq "$LOCAL_REQDIR/" "$REMOTE_REQDIR/"
+/usr/bin/time -f "%E" -o /dev/stdout rsync -aq "$LOCAL_REQDIR/" "$REMOTE_REQDIR/"
 
 echo "Waiting for stage0 responses..."
 
@@ -83,6 +83,8 @@ SBATCH_STDOUT=$(\
 sbatch --wait \
 	--account=imiers-prj-cmsc \
 	--array="1-$NUM_SUBCIRCUITS%$NUMCORES" \
+	--ntasks-per-node=128 \
+	--time=1:00 \
 	--output="$BENCHDIR/stage0_out_%a.txt" \
 	--error="$BENCHDIR/stage0_err_%a.txt" \
        	janus_worker_job.sh stage0 "$WORKERBIN" "$SCRATCHDIR" \
@@ -94,7 +96,7 @@ echo "Building stage1 requests..."
 
 # Sync responses
 echo "Reading stage0 responses from scratch..."
-/usr/bin/time rsync -aq "$REMOTE_RESPDIR/" "$LOCAL_RESPDIR/"
+/usr/bin/time -f "%E" -o /dev/stdout rsync -aq "$REMOTE_RESPDIR/" "$LOCAL_RESPDIR/"
 
 # Log a timestamp
 echo -n "BEGINTIME " >> "$BENCHDIR/start_stage1.txt"
@@ -118,7 +120,7 @@ date +%s >> "$BENCHDIR/start_stage1.txt"
 
 # Sync requests
 echo "Writing stage1 requests to scratch..."
-/usr/bin/time rsync -aq "$LOCAL_REQDIR/" "$REMOTE_REQDIR/"
+/usr/bin/time -f "%E" -o /dev/stdout rsync -aq "$LOCAL_REQDIR/" "$REMOTE_REQDIR/"
 
 echo "Waiting for stage1 responses (this may take a while)..."
 SBATCH_STDOUT=$(\
@@ -127,6 +129,7 @@ sbatch --wait \
 	--array="1-$NUM_SUBCIRCUITS%$NUMCORES" \
 	--time=03:00 \
 	--mem-per-cpu=3800M \
+	--ntasks-per-node=128 \
 	--output="$BENCHDIR/stage1_out_%a.txt" \
 	--error="$BENCHDIR/stage1_err_%a.txt" \
 	janus_worker_job.sh stage1 "$WORKERBIN" "$SCRATCHDIR" \
@@ -136,7 +139,7 @@ sacct -j $JOB_ID $SACCT_EXTRA_ARGS > "$BENCHDIR/stage1_metrics.txt"
 
 # Sync responses
 echo "Reading stage1 responses from scratch..."
-/usr/bin/time rsync -aq "$REMOTE_RESPDIR/" "$LOCAL_RESPDIR/"
+/usr/bin/time -f "%E" -o /dev/stdout rsync -aq "$REMOTE_RESPDIR/" "$LOCAL_RESPDIR/"
 
 echo -n "BEGINTIME " > "$BENCHDIR/end_proof.txt"
 date +%s >> "$BENCHDIR/end_proof.txt"
