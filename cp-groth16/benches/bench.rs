@@ -25,6 +25,10 @@ use ark_std::rand::Rng;
 const NUM_PROVE_REPETITIONS: usize = 1;
 const NUM_CONSTRAINTS: usize = (1 << 20) / 3 - 100;
 
+#[global_allocator]
+static ALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;
+
+
 /// A multistage circuit
 /// Stage 1. Witness a var and ensure it's 0
 /// Stage 2. Input a monic polynomial and prove knowledge of a root
