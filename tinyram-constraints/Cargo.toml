@@ -21,7 +21,7 @@ ark-std = "0.4.0"
 derivative = "2.2.0"
 
 [dependencies.ark-r1cs-std]
-git = "ssh://git@github.com/arkworks-rs/r1cs-std.git"
+git = "https://www.github.com/arkworks-rs/r1cs-std"
 branch = "refactor-uints"
 
 [dev-dependencies]

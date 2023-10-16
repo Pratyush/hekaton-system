@@ -36,6 +36,9 @@ incremental = true
 debug-assertions = true
 debug = true
 
+[registries.crates-io]
+protocol = "sparse"
+
 [patch.crates-io.ark-serialize]
 git = "https://github.com/rozbb/algebra.git"
 branch = "canonicalserialize-vecdeque"
