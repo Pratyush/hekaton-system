@@ -32,7 +32,7 @@ enum Command {
 
         /// Directory where worker responses will be stored
         #[clap(short, long, value_name = "DIR")]
-        resp_dir: PathBuf,
+        out_dir: PathBuf,
 
         /// Which subcircuit should be proven
         #[clap(short, long, value_name = "NUM")]
@@ -49,9 +49,13 @@ enum Command {
         #[clap(short, long, value_name = "DIR")]
         req_dir: PathBuf,
 
-        /// Directory where worker responses are stored
+        /// Directory where stage0 worker responses are stored
         #[clap(short, long, value_name = "DIR")]
         resp_dir: PathBuf,
+
+        /// Directory where stage1 worker responses will be stored
+        #[clap(short, long, value_name = "DIR")]
+        out_dir: PathBuf,
 
         /// Which subcircuit should be proven
         #[clap(short, long, value_name = "NUM")]
@@ -63,7 +67,7 @@ fn process_stage0_request(
     subcircuit_idx: usize,
     g16_pk_dir: &PathBuf,
     req_dir: &PathBuf,
-    resp_dir: &PathBuf,
+    out_dir: &PathBuf,
 ) {
     let mut rng = rand::thread_rng();
     let tree_params = gen_merkle_params();
@@ -103,7 +107,7 @@ fn process_stage0_request(
     // Save it
     serialize_to_path(
         &stage0_resp,
-        resp_dir,
+        out_dir,
         STAGE0_RESP_FILENAME_PREFIX,
         Some(subcircuit_idx),
     )
@@ -115,6 +119,7 @@ fn process_stage1_request(
     g16_pk_dir: &PathBuf,
     req_dir: &PathBuf,
     resp_dir: &PathBuf,
+    out_dir: &PathBuf,
 ) {
     let mut rng = rand::thread_rng();
     let tree_params = gen_merkle_params();
@@ -160,7 +165,7 @@ fn process_stage1_request(
     // Save it
     serialize_to_path(
         &stage1_resp,
-        resp_dir,
+        out_dir,
         STAGE1_RESP_FILENAME_PREFIX,
         Some(subcircuit_idx),
     )
@@ -177,16 +182,17 @@ fn main() {
         Command::ProcessStage0Request {
             g16_pk_dir,
             req_dir,
-            resp_dir,
+            out_dir,
             subcircuit_index,
-        } => process_stage0_request(subcircuit_index, &g16_pk_dir, &req_dir, &resp_dir),
+        } => process_stage0_request(subcircuit_index, &g16_pk_dir, &req_dir, &out_dir),
 
         Command::ProcessStage1Request {
             g16_pk_dir,
             req_dir,
             resp_dir,
+            out_dir,
             subcircuit_index,
-        } => process_stage1_request(subcircuit_index, &g16_pk_dir, &req_dir, &resp_dir),
+        } => process_stage1_request(subcircuit_index, &g16_pk_dir, &req_dir, &resp_dir, &out_dir),
     }
 
     end_timer!(start);
