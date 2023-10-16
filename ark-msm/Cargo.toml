@@ -1,6 +1,6 @@
 [package]
 name = "ark-msm"
-version = "0.4.0-alpha.2"
+version = "0.4.0"
 authors = [
     "Jiannan Ouyang <ouyang@snarkify.io>",
     "Boyu Sun <boyu@snarkify.io>",

@@ -16,9 +16,6 @@ use crate::{
     types::{GROUP_SIZE, GROUP_SIZE_IN_BITS},
 };
 
-#[cfg(feature = "parallel")]
-use rayon::prelude::*;
-
 pub struct BucketMSM<P: Config> {
     num_windows: u32,
     window_bits: u32,

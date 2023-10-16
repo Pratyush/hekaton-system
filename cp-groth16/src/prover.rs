@@ -1,7 +1,7 @@
-use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup};
+use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup, VariableBaseMSM};
 use ark_ff::{PrimeField, UniformRand, Zero};
 use ark_groth16::{r1cs_to_qap::R1CSToQAP, Proof as ProofWithoutComms};
-use ark_msm::msm::VariableBaseMSMExt;
+// use ark_msm::msm::VariableBaseMSMExt;
 use ark_poly::GeneralEvaluationDomain;
 use ark_relations::r1cs::Result as R1CSResult;
 use ark_std::{cfg_into_iter, end_timer, rand::Rng, start_timer, vec::Vec};
@@ -25,8 +25,8 @@ impl<E: Pairing, QAP: R1CSToQAP> CPGroth16<E, QAP> {
     ) -> R1CSResult<ProofWithoutComms<E>>
     where
         C: MultiStageConstraintSynthesizer<E::ScalarField>,
-        E::G1: VariableBaseMSMExt,
-        E::G2: VariableBaseMSMExt,
+        // E::G1: VariableBaseMSMExt,
+        // E::G2: VariableBaseMSMExt,
     {
         let r = E::ScalarField::rand(rng);
         let s = E::ScalarField::rand(rng);
@@ -43,8 +43,8 @@ impl<E: Pairing, QAP: R1CSToQAP> CPGroth16<E, QAP> {
     ) -> R1CSResult<ProofWithoutComms<E>>
     where
         C: MultiStageConstraintSynthesizer<E::ScalarField>,
-        E::G1: VariableBaseMSMExt,
-        E::G2: VariableBaseMSMExt,
+        // E::G1: VariableBaseMSMExt,
+        // E::G2: VariableBaseMSMExt,
     {
         let r = E::ScalarField::zero();
         let s = E::ScalarField::zero();
@@ -64,8 +64,8 @@ impl<E: Pairing, QAP: R1CSToQAP> CPGroth16<E, QAP> {
     ) -> R1CSResult<ProofWithoutComms<E>>
     where
         E: Pairing,
-        E::G1: VariableBaseMSMExt,
-        E::G2: VariableBaseMSMExt,
+        // E::G1: VariableBaseMSMExt,
+        // E::G2: VariableBaseMSMExt,
         C: MultiStageConstraintSynthesizer<E::ScalarField>,
         QAP: R1CSToQAP,
     {
@@ -89,7 +89,7 @@ impl<E: Pairing, QAP: R1CSToQAP> CPGroth16<E, QAP> {
         let c_acc_time = start_timer!(|| "Compute C");
         let h_time = start_timer!(|| format!("Compute H with size {}", h.len()));
         assert_eq!(h.len(), pk.h_g.len() + 1);
-        let h_acc = E::G1::msm_fast(&pk.h_g, &h[..pk.h_g.len()]);
+        let h_acc = E::G1::msm(&pk.h_g, &h[..pk.h_g.len()]).unwrap();
         end_timer!(h_time);
 
         // Compute C
@@ -97,7 +97,7 @@ impl<E: Pairing, QAP: R1CSToQAP> CPGroth16<E, QAP> {
         let current_witness = cs.current_stage_witness_assignment();
         let l_aux_time = start_timer!(|| format!("Compute L with size {}", current_witness.len()));
         assert_eq!(current_witness.len(), pk.last_ck().len());
-        let l_aux_acc = E::G1::msm_fast(&pk.last_ck(), &current_witness);
+        let l_aux_acc = E::G1::msm(&pk.last_ck(), &current_witness).unwrap();
         end_timer!(l_aux_time);
 
         let r_s_delta_g = pk.last_delta_g() * (r * s);
@@ -164,10 +164,11 @@ impl<E: Pairing, QAP: R1CSToQAP> CPGroth16<E, QAP> {
         assignment: &[<G::ScalarField as PrimeField>::BigInt],
     ) -> G::Group
     where
-        G::Group: VariableBaseMSMExt,
+        G::Group: VariableBaseMSM,
+        // G::Group: VariableBaseMSMExt,
     {
         let el = query[0];
-        let acc = G::Group::msm_bigint_fast(&query[1..], assignment);
+        let acc = G::Group::msm_bigint(&query[1..], assignment);
 
         initial + el + acc + vk_param
     }

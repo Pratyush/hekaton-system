@@ -14,7 +14,7 @@ ark-relations = { version = "0.4.0", default-features = false }
 ark-serialize = { version = "0.4.0", default-features = false }
 ark-std = { version = "0.4.0", default-features = false }
 rayon = { version = "1.5.1", default-features = false, optional = true }
-ark-msm = { path = "../ark-msm", default-features = false }
+# ark-msm = { path = "../ark-msm", default-features = false }
 
 [dev-dependencies]
 ark-bls12-381 = "0.4"
@@ -23,7 +23,7 @@ ark-r1cs-std = {git = "https://github.com/arkworks-rs/r1cs-std", branch = "refac
 [features]
 default = ["parallel"]
 std = ["ark-ff/std", "ark-ec/std", "ark-poly/std", "ark-relations/std", "ark-std/std", "ark-serialize/std" ]
-parallel = ["std", "ark-ff/parallel", "ark-poly/parallel", "ark-ec/parallel", "ark-std/parallel", "ark-serialize/std", "ark-msm/parallel", "rayon"]
+parallel = ["std", "ark-ff/parallel", "ark-poly/parallel", "ark-ec/parallel", "ark-std/parallel", "ark-serialize/std", "rayon"]
 print-trace = [ "ark-std/print-trace" ]
 
 

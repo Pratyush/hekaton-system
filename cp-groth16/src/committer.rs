@@ -8,7 +8,7 @@ use core::marker::PhantomData;
 use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup, VariableBaseMSM};
 use ark_ff::UniformRand;
 use ark_groth16::{r1cs_to_qap::R1CSToQAP, Proof as ProofWithoutComms};
-use ark_msm::msm::VariableBaseMSMExt;
+// use ark_msm::msm::VariableBaseMSMExt;
 use ark_relations::r1cs::{OptimizationGoal, SynthesisError};
 use ark_std::{rand::Rng, start_timer, end_timer};
 
@@ -17,8 +17,8 @@ pub struct CommitmentBuilder<'a, C, E, QAP>
 where
     C: MultiStageConstraintSynthesizer<E::ScalarField>,
     E: Pairing,
-    E::G1: VariableBaseMSMExt,
-    E::G2: VariableBaseMSMExt,
+    // E::G1: VariableBaseMSMExt,
+    // E::G2: VariableBaseMSMExt,
 {
     /// The enhanced constraint system that keeps track of public inputs
     pub cs: MultiStageConstraintSystem<E::ScalarField>,
@@ -35,8 +35,8 @@ impl<'a, C, E, QAP> CommitmentBuilder<'a, C, E, QAP>
 where
     C: MultiStageConstraintSynthesizer<E::ScalarField>,
     E: Pairing,
-    E::G1: VariableBaseMSMExt,
-    E::G2: VariableBaseMSMExt,
+    // E::G1: VariableBaseMSMExt,
+    // E::G2: VariableBaseMSMExt,
     QAP: R1CSToQAP,
 {
     pub fn new(circuit: C, pk: &'a ProvingKey<E>) -> Self {
@@ -90,7 +90,7 @@ where
         // Compute the commitment.
         let commitment =
             // First compute [J(s)/ηᵢ]₁ where i is the current stage.
-            E::G1::msm_fast(current_ck, &current_witness)
+            E::G1::msm(&**current_ck, &current_witness).unwrap()
             // Then add in the randomizer
             + (self.pk.ck.last_delta_g * randomness);
 
@@ -107,9 +107,9 @@ where
         comm_rands: &[CommRandomness<E>],
         rng: &mut impl Rng,
     ) -> Result<Proof<E>, SynthesisError> 
-    where
-        E::G1: VariableBaseMSMExt,
-        E::G2: VariableBaseMSMExt,
+    // where
+    //     E::G1: VariableBaseMSMExt,
+    //     E::G2: VariableBaseMSMExt,
     {
         let ProofWithoutComms { a, b, c } = CPGroth16::<E>::prove_last_stage_with_zk(
             &mut self.cs,

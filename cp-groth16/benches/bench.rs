@@ -10,7 +10,7 @@ use ark_cp_groth16::{
     MultiStageConstraintSynthesizer, MultiStageConstraintSystem,
 };
 use ark_ff::{Field, One, UniformRand};
-use ark_cp_groth16::circom_qap::CircomReduction as QAP;
+use ark_groth16::r1cs_to_qap::LibsnarkReduction as QAP;
 use ark_r1cs_std::{
     eq::EqGadget,
     fields::fp::FpVar,

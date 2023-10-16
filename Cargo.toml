@@ -21,7 +21,7 @@ opt-level = 3
 debug = false
 rpath = false
 lto = "thin"
-incremental = false
+# incremental = false
 debug-assertions = false
 
 [profile.dev]
@@ -38,7 +38,6 @@ debug = true
 [patch.crates-io.ark-serialize]
 git = "https://github.com/rozbb/algebra.git"
 branch = "canonicalserialize-vecdeque"
-
 
 # [patch.crates-io.ark-r1cs-std]
 # git = "https://github.com/arkworks-rs/r1cs-std.git"

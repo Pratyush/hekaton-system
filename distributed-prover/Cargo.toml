@@ -16,7 +16,7 @@ ark-poly = { version = "0.4.0" }
 ark-r1cs-std = { version = "0.4", default-features = false }
 ark-relations = { version = "0.4", default-features = false, features = ["std"] }
 ark-serialize = { version = "0.4", default-features = false, features = ["derive"] }
-ark-msm = { path = "../ark-msm" }
+# ark-msm = { path = "../ark-msm" }
 clap = { version = "4.4", features = ["derive"] }
 rand = "0.8"
 tinyram-emu = { path = "../tinyram-emu" }
@@ -41,12 +41,9 @@ default = ["asm", "parallel"]
 print-trace = ["ark-std/print-trace"]
 std = ["ark-ff/std", "ark-poly/std", "ark-r1cs-std/std", "ark-serialize/std", "ark-relations/std"]
 asm = ["ark-ff/asm"]
-parallel = ["ark-ff/parallel", "ark-ff/rayon", "ark-poly/parallel", "ark-poly/rayon", "ark-r1cs-std/parallel", "ark-msm/parallel" ]
+parallel = ["ark-ff/parallel", "ark-ff/rayon", "ark-poly/parallel", "ark-poly/rayon", "ark-r1cs-std/parallel", ]
 
 [[bench]]
 name = "microbenchmarks"
 harness = false
 required-features = ["asm", "parallel"]
-
-[profile.release]
-debug = true
