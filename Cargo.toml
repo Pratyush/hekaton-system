@@ -10,6 +10,7 @@ members = [
     "tinyram-emu",
     "tinyram-constraints",
 ]
+exclude = [ "mpi-test" ]
 
 [profile.release]
 opt-level = 3
