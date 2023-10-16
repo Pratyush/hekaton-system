@@ -261,7 +261,10 @@ fn process_stage1_resps(
 }
 
 fn microbenches() {
-    let mut c = Criterion::default();
+    let mut c = Criterion::default()
+    .sample_size(10)
+    .warm_up_time(std::time::Duration::from_secs(1));
+
 
     for num_subcircuits in [4] {
         for num_sha2_iters_per_subcirc in [16] {

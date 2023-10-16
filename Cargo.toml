@@ -2,6 +2,7 @@
 
 members = [
     "cp-groth16",
+    "bls12_381",
     "ark-msm",
     "snarkpack",
     "distributed-prover",
