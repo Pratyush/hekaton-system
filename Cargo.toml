@@ -9,6 +9,7 @@ members = [
 
     "tinyram-emu",
     "tinyram-constraints",
+    "mpi-test"
 ]
 
 [profile.release]
