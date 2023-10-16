@@ -87,14 +87,18 @@ impl<E: Pairing, QAP: R1CSToQAP> CPGroth16<E, QAP> {
         end_timer!(witness_map_time);
 
         let c_acc_time = start_timer!(|| "Compute C");
+        let h_time = start_timer!(|| format!("Compute H with size {}", h.len()));
         assert_eq!(h.len(), pk.h_g.len() + 1);
         let h_acc = E::G1::msm_fast(&pk.h_g, &h[..pk.h_g.len()]);
+        end_timer!(h_time);
 
         // Compute C
 
         let current_witness = cs.current_stage_witness_assignment();
+        let l_aux_time = start_timer!(|| format!("Compute L with size {}", current_witness.len()));
         assert_eq!(current_witness.len(), pk.last_ck().len());
         let l_aux_acc = E::G1::msm_fast(&pk.last_ck(), &current_witness);
+        end_timer!(l_aux_time);
 
         let r_s_delta_g = pk.last_delta_g() * (r * s);
 
