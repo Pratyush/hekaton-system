@@ -33,17 +33,18 @@ fn main() {
     let now = std::time::Instant::now();
     let size = world.size();
     // Scatter of inputs
-    let mut x = 0 as Rank;
+    let mut stage0_reqs = 0 as Rank;
     if rank == root_rank {
         let v = (0..size).collect::<Vec<_>>();
+        // Coordinator stageN code goes here.
         std::thread::sleep(std::time::Duration::from_secs(5));
-        root_process.scatter_into_root(&v, &mut x);
+        root_process.scatter_into_root(&v, &mut stage0_reqs);
     } else {
-        root_process.scatter_into(&mut x);
+        root_process.scatter_into(&mut stage0_reqs);
         println!("Rank {rank} waiting for 5 seconds? {}", now.elapsed().as_secs_f64());
     }
-    assert_eq!(x, rank);
-    println!("Rank {} received value: {}.", rank, x);
+    assert_eq!(stage0_reqs, rank);
+    println!("Rank {rank} received value: {stage0_reqs}.");
     /***************************************************************/
     /*********************** Scatter finished **********************/
     /***************************************************************/
@@ -65,6 +66,7 @@ fn main() {
             .enumerate()
             .all(|(a, &b)| b == 2u64.pow(a as u32 + 1)));
     } else {
+        // Worker stageN code goes here.
         std::thread::sleep(std::time::Duration::from_secs(2));
         root_process.gather_into(&i);
         println!("Rank {rank} sent value: {i}.");
