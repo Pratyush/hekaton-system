@@ -260,12 +260,120 @@ fn process_stage1_resps(
     );
 }
 
-fn microbenches() {
-    let mut c = Criterion::default()
-    .sample_size(10)
-    .warm_up_time(std::time::Duration::from_secs(1));
+fn show_portal_constraint_tradeoff(c: &mut Criterion) {
+    let mut rng = rand::thread_rng();
+    let tree_params = gen_merkle_params();
 
+    /// All of these parameters produce circuits that are ~1.5M constraints. They are of the form
+    /// (num_subcircuits, num_sha2_iters, num_portal_wires)
+    let num_subcircuits = 256;
+    let mut num_sha2_iters = 1;
+    let mut num_portals = 109_462;
 
+    let mut circ_params = gen_test_circuit_params(num_subcircuits, num_sha2_iters, num_portals);
+
+    // Constraint conversion factor. 1 SHA2 iter is worth 3037 portal wires
+    let sha2_iter_in_portals = 3037;
+
+    // Everyone uses 16 cores
+    let num_cores = 16;
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(num_cores)
+        .build_global()
+        .unwrap();
+
+    for _ in 0..19 {
+        // Make an empty circuit of the correct size
+        let circ = <MerkleTreeCircuit as CircuitWithPortals<Fr>>::new(&circ_params);
+        let first_leaf_pk = {
+            let generator = G16ProvingKeyGenerator::<TreeConfig, TreeConfigVar, E, _>::new(
+                circ.clone(),
+                tree_params.clone(),
+            );
+            generator.gen_pk(&mut rng, 0)
+        };
+
+        let agg_ck = {
+            let pk_fetcher = |_subcircuit_idx| first_leaf_pk.clone();
+            let super_com_key = SuperComCommittingKey::<E>::gen(&mut rng, num_subcircuits);
+            let kzg_ck = KzgComKey::gen(&mut rng, num_subcircuits);
+            AggProvingKey::new(super_com_key, kzg_ck, pk_fetcher)
+        };
+        let stage0_state = CoordinatorStage0State::<E, _>::new::<TreeConfig>(circ);
+
+        // For stage0, use only 1 thread
+        c.bench_function(
+            &format!(
+                "Stage0 {}-core gen + resp [nc={},ns={}]",
+                num_cores, num_subcircuits, circ_params.num_sha_iters_per_subcircuit
+            ),
+            |b| {
+                b.iter(|| {
+                    let stage0_req = stage0_state.gen_request(0).to_owned();
+                    let stage0_resp = distributed_prover::worker::process_stage0_request::<
+                        _,
+                        TreeConfigVar,
+                        _,
+                        MerkleTreeCircuit,
+                        _,
+                    >(
+                        &mut rng,
+                        tree_params.clone(),
+                        first_leaf_pk.ck.clone(),
+                        stage0_req,
+                    );
+                })
+            },
+        );
+
+        let stage0_req = stage0_state.gen_request(0).to_owned();
+        let stage0_resp = distributed_prover::worker::process_stage0_request::<
+            _,
+            TreeConfigVar,
+            _,
+            MerkleTreeCircuit,
+            _,
+        >(
+            &mut rng,
+            tree_params.clone(),
+            first_leaf_pk.ck.clone(),
+            stage0_req.clone(),
+        );
+        let stage0_resps = vec![stage0_resp.clone(); num_subcircuits];
+        let new_coord_state = stage0_state.process_stage0_responses(
+            &agg_ck.ipp_ck,
+            tree_params.clone(),
+            &stage0_resps,
+        );
+        let stage1_req = new_coord_state.gen_request(0).to_owned();
+
+        c.bench_function(
+            &format!(
+                "Stage1 {}-core proving [nc={},ns={}]",
+                num_cores, num_subcircuits, circ_params.num_sha_iters_per_subcircuit
+            ),
+            |b| {
+                b.iter(|| {
+                    distributed_prover::worker::process_stage1_request::<_, TreeConfigVar, _, _, _>(
+                        &mut rng,
+                        tree_params.clone(),
+                        &first_leaf_pk,
+                        stage0_req.clone(),
+                        &stage0_resp,
+                        stage1_req.clone(),
+                    )
+                })
+            },
+        );
+
+        // Add a sha2 iter. This adds 39482 constraints to the circuit.
+        circ_params.num_sha_iters_per_subcircuit += 2;
+        // Subtract off the corresponding number of portals
+        circ_params.num_portals_per_subcircuit -= 2 * sha2_iter_in_portals;
+    }
+}
+
+fn microbenches(c: &mut Criterion) {
     for num_subcircuits in [4] {
         for num_sha2_iters_per_subcirc in [16] {
             for num_portals_per_subcirc in [1] {
@@ -275,31 +383,36 @@ fn microbenches() {
                     num_portals_per_subcirc,
                 );
 
-                let g16_pk = generate_g16_pk(&mut c, &circ_params);
-                let agg_ck = generate_agg_ck(&mut c, &circ_params, &g16_pk);
-                let ck = generate_agg_ck(&mut c, &circ_params, &g16_pk);
-                let (stage0_state, stage0_req) = begin_stage0(&mut c, &circ_params);
+                let g16_pk = generate_g16_pk(c, &circ_params);
+                let agg_ck = generate_agg_ck(c, &circ_params, &g16_pk);
+                let ck = generate_agg_ck(c, &circ_params, &g16_pk);
+                let (stage0_state, stage0_req) = begin_stage0(c, &circ_params);
                 let stage0_resp =
-                    process_stage0_requests(&mut c, &circ_params, stage0_req.clone(), &g16_pk);
+                    process_stage0_requests(c, &circ_params, stage0_req.clone(), &g16_pk);
                 let (final_agg_state, stage1_req) = process_stage0_resps(
-                    &mut c,
+                    c,
                     &circ_params,
                     stage0_state,
                     stage0_resp.clone(),
                     agg_ck.clone(),
                 );
                 let stage1_resp = process_stage1_requests(
-                    &mut c,
+                    c,
                     &circ_params,
                     &g16_pk,
                     stage0_req,
                     stage0_resp,
                     stage1_req,
                 );
-                process_stage1_resps(&mut c, &circ_params, final_agg_state, agg_ck, stage1_resp);
+                process_stage1_resps(c, &circ_params, final_agg_state, agg_ck, stage1_resp);
             }
         }
     }
 }
 
-criterion_main!(microbenches);
+criterion_group!(
+    name = benches;
+    config = Criterion::default().sample_size(20);
+    targets = microbenches, show_portal_constraint_tradeoff
+);
+criterion_main!(benches);
