@@ -40,10 +40,10 @@ date +%s
 
 if [ $CMD = "stage0" ]; then
 	PKDIR="$LOCAL_SCRATCHDIR/g16_cks"
-	/usr/bin/time ./janus_startup_cache.sh ck $BENCH_DESC
+	/usr/bin/time -f "%E" -o /dev/stdout ./janus_startup_cache.sh ck $BENCH_DESC
 elif [ $CMD = "stage1" ]; then
 	PKDIR="$LOCAL_SCRATCHDIR/g16_pks"
-	/usr/bin/time ./janus_startup_cache.sh pk $BENCH_DESC
+	/usr/bin/time -f "%E" -o /dev/stdout ./janus_startup_cache.sh pk $BENCH_DESC
 else
 	echo "invalid command $CMD"
 	exit 1

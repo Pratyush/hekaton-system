@@ -19,9 +19,10 @@ NUM_SHA2_ITERS=$2
 NUM_PORTALS=$3
 
 SBATCH_STDOUT=$(\
-srun --partition=standard --time 1:00:00 --cpus-per-task=32 --ntasks=1 --account=imiers-prj-cmsc \
+srun --partition=standard --account=imiers-prj-cmsc \
+	--time 1:00:00 --cpus-per-task=32 --ntasks=1 \
+	--output="setup_out.txt" \
        	/usr/bin/time -vo "setup_timing.txt" ./janus_setup.sh $NUM_SUBCIRCUITS $NUM_SHA2_ITERS $NUM_PORTALS \
-	> "setup_out.txt" \
 )
 JOB_ID=$(echo ${SBATCH_STDOUT} | grep -Po "\\d+")
 

@@ -18,9 +18,10 @@ BENCHDIR=$1
 NUM_CORES=$2
 
 SBATCH_STDOUT=$(\
-srun --partition=standard --time 5:00:00 --cpus-per-task=8 --mem-per-cpu=3G --account=imiers-prj-cmsc \
+srun --partition=standard --account=imiers-prj-cmsc \
+	--time 5:00:00 --cpus-per-task=8 --mem-per-cpu=3G \
+	--output="$BENCHDIR/coord_out.txt" \
        	/usr/bin/time -vo "$BENCHDIR/coord_timing.txt" ./janus_bench.sh $BENCHDIR $NUM_CORES \
-	> "$BENCHDIR/coord_out.txt" \
 )
 JOB_ID=$(echo ${SBATCH_STDOUT} | grep -Po "\\d+")
 

@@ -99,4 +99,4 @@ fi
 
 # By this point, we're guaranteed that $LOCAL_SCRATCHDIR/g16_[pk|ck]s is populated
 
-echo "Done"
+echo "Done with caching step"
