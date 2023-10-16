@@ -10,7 +10,7 @@ use ark_ff::UniformRand;
 use ark_groth16::{r1cs_to_qap::R1CSToQAP, Proof as ProofWithoutComms};
 use ark_msm::msm::VariableBaseMSMExt;
 use ark_relations::r1cs::{OptimizationGoal, SynthesisError};
-use ark_std::rand::Rng;
+use ark_std::{rand::Rng, start_timer, end_timer};
 
 /// A struct that sequentially runs [`InputAllocators`] and commits to the variables allocated therein
 pub struct CommitmentBuilder<'a, C, E, QAP>
@@ -60,8 +60,11 @@ where
         &mut self,
         rng: &mut impl Rng,
     ) -> Result<(Comm<E>, CommRandomness<E>), SynthesisError> {
+        let commit_timer = start_timer!(|| "Groth16::Commit");
+        let constraints_timer = start_timer!(|| "Constraint generation");
         self.circuit
             .generate_constraints(self.cur_stage, &mut self.cs)?;
+        end_timer!(constraints_timer);
 
         // Inline/outline the relevant linear combinations.
         debug_assert!(self.cs.is_satisfied().unwrap());
@@ -87,11 +90,12 @@ where
         // Compute the commitment.
         let commitment =
             // First compute [J(s)/ηᵢ]₁ where i is the current stage.
-            E::G1::msm(current_ck, &current_witness).unwrap()
+            E::G1::msm_fast(current_ck, &current_witness)
             // Then add in the randomizer
             + (self.pk.ck.last_delta_g * randomness);
 
         self.cur_stage += 1;
+        end_timer!(commit_timer);
 
         // Return the commitment and the randomness
         Ok((commitment.into(), randomness))
