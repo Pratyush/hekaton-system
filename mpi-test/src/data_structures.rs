@@ -1,9 +1,11 @@
+use std::marker::PhantomData;
+
 use ark_ec::pairing::Pairing;
 use ark_serialize::*;
 
 
 #[derive(Clone, Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
-pub struct Stage0Request<E: Pairing>(pub E::G1);
+pub struct Stage0Request<E: Pairing>(pub u8, pub PhantomData<E>);
 
 #[derive(Clone, Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct Stage1Request<E: Pairing>(pub E::G1);

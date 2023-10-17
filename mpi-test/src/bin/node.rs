@@ -29,9 +29,11 @@ fn main() {
 
         // Stage 0 scatter
         scatter_requests(&root_process, &requests);
+        println!("Finished scatter 0");
         
         // Stage 0 gather
         let responses = gather_responses(size, &root_process);
+        println!("Finished gather 0");
         /***************************************************************************/
         /***************************************************************************/
 
@@ -43,9 +45,11 @@ fn main() {
 
          // Stage 1 scatter
         scatter_requests(&root_process, &requests);
+        println!("Finished scatter 1");
         
         // Stage 1 gather
         let responses = gather_responses(size, &root_process); 
+        println!("Finished gather 1");
         /***************************************************************************/
         /***************************************************************************/
 
@@ -72,10 +76,12 @@ fn main() {
 
         // Compute Stage 0 response
         let response = worker_state.stage_0(&request);
+        println!("Finished worker scatter 0 for rank {rank}");
         
         // Send Stage 0 response
         let response_bytes = serialize_to_vec(&response);
         root_process.gather_varcount_into(&response_bytes);
+        println!("Finished worker gather 0 for rank {rank}");
 
         /***************************************************************************/
         /***************************************************************************/
@@ -89,10 +95,12 @@ fn main() {
 
         // Compute Stage 1 response
         let response = worker_state.stage_1(&request);
+        println!("Finished worker scatter 1 for rank {rank}");
         
         // Send Stage 1 response
         let response_bytes = serialize_to_vec(&response);
         root_process.gather_varcount_into(&response_bytes);
+        println!("Finished worker gather 1 for rank {rank}");
         /***************************************************************************/
         /***************************************************************************/
     }
@@ -105,6 +113,8 @@ fn scatter_requests<'a, C: 'a + Communicator>(
 ) {
     let mut request_bytes = vec![];
     let request_bytes_buf = construct_partitioned_buffer_for_scatter!(requests, &mut request_bytes);
+    let counts = request_bytes_buf.counts().to_vec();
+    root_process.scatter_into_root(&counts, &mut 0i32);
     let mut _recv_buf: Vec<u8> = vec![];
     root_process.scatter_varcount_into_root(&request_bytes_buf, &mut _recv_buf);
 }
@@ -127,7 +137,9 @@ where
 fn receive_requests<'a, C: 'a + Communicator, T: CanonicalDeserialize>(
     root_process: &Process<'a, C>,
 ) -> T {
-    let mut request_bytes = vec![];
+    let mut size = 0 as Count;
+    root_process.scatter_into(&mut size);
+    let mut request_bytes = vec![0u8; size as usize];
     root_process.scatter_varcount_into(&mut request_bytes);
     T::deserialize_uncompressed_unchecked(&request_bytes[..]).unwrap()
 }

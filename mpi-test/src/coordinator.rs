@@ -1,3 +1,5 @@
+use std::marker::PhantomData;
+
 use ark_ec::pairing::Pairing;
 
 use crate::data_structures::{Stage0Request, Stage0Response, Stage1Request, Stage1Response, Proof, ProvingKey};
@@ -14,7 +16,7 @@ impl<E: Pairing> CoordinatorState<E> {
     }
 
     pub fn stage_0(&mut self, ) -> Vec<Stage0Request<E>> {
-        let dummy = Stage0Request(E::G1::default());
+        let dummy = Stage0Request(27u8, PhantomData);
         // TODO: remove hardcoding of 4
         vec![dummy; 3]
     }
