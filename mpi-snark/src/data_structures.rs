@@ -22,3 +22,40 @@ pub type Stage1RequestRef<'a> =
 pub type Stage0Response = distributed_prover::worker::Stage0Response<E>;
 
 pub type Stage1Response = distributed_prover::worker::Stage1Response<E>;
+
+
+pub struct ProvingKeys {
+    // First leaf circuit PK
+    pub first_leaf_pk : Option<G16ProvingKey>,
+    // Second leaf circuit PK
+    pub second_leaf_pk : Option<G16ProvingKey>,
+    // Padding circuit PK
+    pub padding_pk : Option<G16ProvingKey>,
+    // Root Circuit PK
+    pub root_pk : Option<G16ProvingKey>,
+    // Second to last parent pk
+    pub parent_pk : Option<G16ProvingKey>,
+}
+
+impl ProvingKeys {
+    // Generate functions to get each proving key
+    pub fn first_leaf_pk(&self) -> &G16ProvingKey {
+        self.first_leaf_pk.as_ref().unwrap()
+    }
+
+    pub fn second_leaf_pk(&self) -> &G16ProvingKey {
+        self.second_leaf_pk.as_ref().unwrap()
+    }
+
+    pub fn padding_pk(&self) -> &G16ProvingKey {
+        self.padding_pk.as_ref().unwrap()
+    }
+
+    pub fn root_pk(&self) -> &G16ProvingKey {
+        self.root_pk.as_ref().unwrap()
+    }
+
+    pub fn parent_pk(&self) -> &G16ProvingKey {
+        self.parent_pk.as_ref().unwrap()
+    }
+}

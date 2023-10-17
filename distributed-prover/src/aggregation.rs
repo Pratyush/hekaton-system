@@ -238,10 +238,10 @@ pub struct AggProvingKey<E: Pairing> {
 impl<E: Pairing> AggProvingKey<E> {
     /// Creates an aggregation proving key using an IPP commitment key, a KZG commitment key, and a
     /// lambda that will fetch the Groth16 proving key of the given circuit
-    pub fn new(
+    pub fn new<'a>(
         ipp_ck: IppComKey<E>,
         kzg_ck: KzgComKey<E>,
-        pk_fetcher: impl Fn(usize) -> G16ProvingKey<E>,
+        pk_fetcher: impl Fn(usize) -> &'a G16ProvingKey<E>,
     ) -> Self {
         let num_proofs = ipp_ck.v1.len();
 
