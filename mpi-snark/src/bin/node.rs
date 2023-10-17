@@ -19,9 +19,10 @@ fn do_stuff(num_workers: usize, num_subcircuits: usize, num_sha2_iters: usize, n
     let world = universe.world();
     let root_rank = 0;
     let root_process = world.process_at_rank(root_rank);
-    todo!(); // use num_workers somewhere
     let rank = world.rank();
     let size = world.size();
+    assert_eq!(num_workers, num_subcircuits); // use num_workers somewhere
+    assert_eq!(size as usize, num_workers + 1);
 
     if rank == root_rank {
         // Initial broadcast
