@@ -21,8 +21,8 @@ fn do_stuff(num_workers: usize, num_subcircuits: usize, num_sha2_iters: usize, n
     let root_process = world.process_at_rank(root_rank);
     let rank = world.rank();
     let size = world.size();
-    assert_eq!(num_workers, num_subcircuits); // use num_workers somewhere
-    assert_eq!(size as usize, num_workers + 1);
+    assert_eq!(num_workers, num_subcircuits, "We only support num_workers == num_subcircuits"); // use num_workers somewhere
+    assert_eq!(size as usize, num_workers + 1, "We only support one core per worker (num_workers == world.size())");
 
     if rank == root_rank {
         // Initial broadcast
