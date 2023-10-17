@@ -14,8 +14,8 @@ members = [
 
 [profile.release]
 opt-level = 3
-lto = "fat"
-incremental = false
+lto = "thin"
+incremental = true
 panic = 'abort'
 
 [profile.bench]
