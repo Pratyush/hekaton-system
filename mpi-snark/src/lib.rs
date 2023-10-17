@@ -21,7 +21,6 @@ macro_rules! construct_partitioned_buffer_for_scatter {
             })
             .collect();
         *$flattened_item_bytes = item_bytes.concat();
-        dbg!($flattened_item_bytes);
         Partition::new(&*$flattened_item_bytes, counts, displacements)
     }};
 }
