@@ -1,4 +1,6 @@
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use ark_std::{end_timer, start_timer};
+use clap::Parser;
 use mpi::traits::*;
 use mpi::{
     datatype::{Partition, PartitionMut},
@@ -12,18 +14,20 @@ use mpi_snark::{
 };
 use rayon::prelude::*;
 
-fn main() {
+fn do_stuff(num_workers: usize, num_subcircuits: usize, num_sha2_iters: usize, num_portals: usize) {
     let universe = mpi::initialize().unwrap();
     let world = universe.world();
     let root_rank = 0;
     let root_process = world.process_at_rank(root_rank);
+    todo!(); // use num_workers somewhere
     let rank = world.rank();
     let size = world.size();
 
     if rank == root_rank {
         // Initial broadcast
 
-        let mut coordinator_state = CoordinatorState::new(size as usize, 8, 1, 1);
+        let mut coordinator_state =
+            CoordinatorState::new(size as usize, num_subcircuits, num_sha2_iters, num_portals);
         let pks = coordinator_state.get_pks();
         let mut pk_bytes = serialize_to_vec(&pks);
         root_process.broadcast_into(&mut pk_bytes);
@@ -142,4 +146,40 @@ fn receive_requests<'a, C: 'a + Communicator, T: CanonicalDeserialize>(
     let mut request_bytes = vec![0u8; size as usize];
     root_process.scatter_varcount_into(&mut request_bytes);
     T::deserialize_uncompressed_unchecked(&request_bytes[..]).unwrap()
+}
+
+#[derive(Parser)]
+struct Args {
+    /// The number of workers who will do the committing and proving. Each worker has 1 core.
+    #[clap(short, long, value_name = "NUM")]
+    num_workers: usize,
+
+    /// Test circuit param: Number of subcircuits. MUST be a power of two and greater than 1.
+    #[clap(short, long, value_name = "NUM")]
+    num_subcircuits: usize,
+
+    /// Test circuit param: Number of SHA256 iterations per subcircuit. MUST be at least 1.
+    #[clap(short, long, value_name = "NUM")]
+    num_sha2_iters: usize,
+
+    /// Test circuit param: Number of portal wire ops per subcircuit. MUST be at least 1.
+    #[clap(short, long, value_name = "NUM")]
+    num_portals: usize,
+}
+
+fn main() {
+    println!("Rayon num threads: {}", rayon::current_num_threads());
+
+    let Args {
+        num_workers,
+        num_subcircuits,
+        num_sha2_iters,
+        num_portals,
+    } = Args::parse();
+
+    let start = start_timer!(|| format!("Running coordinator"));
+
+    do_stuff(num_workers, num_subcircuits, num_sha2_iters, num_portals);
+
+    end_timer!(start);
 }
