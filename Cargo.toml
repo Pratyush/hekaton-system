@@ -9,8 +9,8 @@ members = [
 
     "tinyram-emu",
     "tinyram-constraints",
+    "mpi-snark"
 ]
-exclude = [ "mpi-snark" ]
 
 [profile.release]
 opt-level = 3
