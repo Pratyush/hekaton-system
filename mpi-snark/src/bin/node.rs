@@ -9,7 +9,7 @@ use mpi::{
 };
 use mpi_snark::{
     construct_partitioned_buffer_for_scatter, construct_partitioned_mut_buffer_for_gather,
-    coordinator::CoordinatorState, data_structures::G16ProvingKey, deserialize_flattened_bytes,
+    coordinator::CoordinatorState, data_structures::ProvingKeys, deserialize_flattened_bytes,
     serialize_to_vec, worker::WorkerState,
 };
 use rayon::prelude::*;
@@ -31,6 +31,7 @@ fn do_stuff(num_workers: usize, num_subcircuits: usize, num_sha2_iters: usize, n
             CoordinatorState::new(size as usize, num_subcircuits, num_sha2_iters, num_portals);
         let pks = coordinator_state.get_pks();
         let mut pk_bytes = serialize_to_vec(&pks);
+        root_process.broadcast_into(&mut (pk_bytes.len() as u64));
         root_process.broadcast_into(&mut pk_bytes);
 
         /***************************************************************************/
@@ -66,14 +67,15 @@ fn do_stuff(num_workers: usize, num_subcircuits: usize, num_sha2_iters: usize, n
         let proof = coordinator_state.aggregate(&responses);
         println!("Made proof");
     } else {
-        let pk: G16ProvingKey = todo!();
-        let mut pk_bytes = serialize_to_vec(&pk);
+        let mut pk_bytes_size = 0u64;
+        root_process.broadcast_into(&mut pk_bytes_size);
+        let mut pk_bytes = vec![0u8; pk_bytes_size as usize];
         root_process.broadcast_into(&mut pk_bytes);
         println!("Received pk bytes of size: {}.", pk_bytes.len());
 
         // FIXME drop extra pk if worker will not use them.
-        let pk = G16ProvingKey::deserialize_uncompressed_unchecked(&pk_bytes[..]).unwrap();
-        let mut worker_state = WorkerState::new(&pk);
+        let pks = ProvingKeys::deserialize_uncompressed_unchecked(&pk_bytes[..]).unwrap();
+        let mut worker_state = WorkerState::new(&pks);
 
         /***************************************************************************/
         /***************************************************************************/
