@@ -10,7 +10,7 @@ categories = ["cryptography", "no-std"]
 
 [dependencies]
 ark-bls12-381 = { path = "../bls12_381", features = ["parallel"] }
-ark-ed-on-bls12-381 = { version = "0.4", features = ["r1cs"] }
+# ark-ed-on-bls12-381 = { version = "0.4", features = ["r1cs"] }
 ark-ff = {version = "0.4", default-features = false }
 ark-poly = { version = "0.4.0" }
 ark-r1cs-std = { version = "0.4", default-features = false }
@@ -19,7 +19,7 @@ ark-serialize = { version = "0.4", default-features = false, features = ["derive
 # ark-msm = { path = "../ark-msm" }
 clap = { version = "4.4", features = ["derive"] }
 rand = "0.8"
-tinyram-emu = { path = "../tinyram-emu" }
+# tinyram-emu = { path = "../tinyram-emu" }
 ark-cp-groth16 = { path = "../cp-groth16" }
 ark-std = "0.4.0"
 derivative = "2.2.0"

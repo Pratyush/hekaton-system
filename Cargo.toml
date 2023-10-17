@@ -11,6 +11,7 @@ members = [
     "tinyram-constraints",
     "mpi-snark"
 ]
+resolver = "2"
 
 [profile.release]
 opt-level = 3
