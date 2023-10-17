@@ -14,6 +14,35 @@ use mpi_snark::{
 };
 use rayon::prelude::*;
 
+macro_rules! start_timer_buf {
+    ($buf:ident, $msg:expr) => {{
+        use std::time::Instant;
+
+        let msg = $msg();
+        let start_info = "Start:";
+
+        $buf.push(format!("{:8} {}", start_info, msg));
+        (msg.to_string(), Instant::now())
+    }};
+}
+
+macro_rules! end_timer_buf {
+    ($buf:ident, $time:expr) => {{
+        let time = $time.1;
+        let final_time = time.elapsed();
+
+        let end_info = "End:";
+        let message = format!("{}", $time.0);
+
+        $buf.push(format!(
+            "{:8} {} {}μs",
+            end_info,
+            message,
+            final_time.as_micros()
+        ));
+    }};
+}
+
 fn do_stuff(num_workers: usize, num_subcircuits: usize, num_sha2_iters: usize, num_portals: usize) {
     let universe = mpi::initialize().unwrap();
     let world = universe.world();
@@ -31,28 +60,30 @@ fn do_stuff(num_workers: usize, num_subcircuits: usize, num_sha2_iters: usize, n
         "We only support one core per worker (num_workers == world.size())"
     );
 
+    let mut log = Vec::new();
+
     if rank == root_rank {
         // Initial broadcast
 
-        let start = start_timer!(|| format!("Coord: Generating PKs"));
+        let start = start_timer_buf!(log, || format!("Coord: Generating PKs"));
         let mut coordinator_state =
             CoordinatorState::new(size as usize, num_subcircuits, num_sha2_iters, num_portals);
-        end_timer!(start);
+        end_timer_buf!(log, start);
 
         let pks = coordinator_state.get_pks();
         let mut pk_bytes = serialize_to_vec(&pks);
 
-        let start = start_timer!(|| format!("Coord: Broadcasting PKs"));
+        let start = start_timer_buf!(log, || format!("Coord: Broadcasting PKs"));
         root_process.broadcast_into(&mut (pk_bytes.len() as u64));
         root_process.broadcast_into(&mut pk_bytes);
-        end_timer!(start);
+        end_timer_buf!(log, start);
 
         /***************************************************************************/
         /***************************************************************************/
         // Stage 0
-        let start = start_timer!(|| format!("Coord: Generating stage0 requests"));
+        let start = start_timer_buf!(log, || format!("Coord: Generating stage0 requests"));
         let requests = coordinator_state.stage_0();
-        end_timer!(start);
+        end_timer_buf!(log, start);
 
         // Stage 0 scatter
         scatter_requests("stage0", &root_process, &requests);
@@ -65,9 +96,9 @@ fn do_stuff(num_workers: usize, num_subcircuits: usize, num_sha2_iters: usize, n
         /***************************************************************************/
         /***************************************************************************/
         // Stage 1
-        let start = start_timer!(|| format!("Coord: Processing stage0 responses"));
+        let start = start_timer_buf!(log, || format!("Coord: Processing stage0 responses"));
         let requests = coordinator_state.stage_1(&responses);
-        end_timer!(start);
+        end_timer_buf!(log, start);
 
         // Stage 1 scatter
         scatter_requests("stage1", &root_process, &requests);
@@ -77,23 +108,24 @@ fn do_stuff(num_workers: usize, num_subcircuits: usize, num_sha2_iters: usize, n
         /***************************************************************************/
         /***************************************************************************/
 
-        let start = start_timer!(|| format!("Coord: Aggregating"));
+        let start = start_timer_buf!(log, || format!("Coord: Aggregating"));
         let proof = coordinator_state.aggregate(&responses);
-        end_timer!(start);
+        end_timer_buf!(log, start);
     } else {
         let mut pk_bytes_size = 0u64;
         root_process.broadcast_into(&mut pk_bytes_size);
-        let start =
-            start_timer!(|| format!("Worker: Receiving PK broadcast of size {pk_bytes_size}"));
+        let start = start_timer_buf!(log, || format!(
+            "Worker {rank}: Receiving PK broadcast of size {pk_bytes_size}"
+        ));
         let mut pk_bytes = vec![0u8; pk_bytes_size as usize];
         root_process.broadcast_into(&mut pk_bytes);
-        end_timer!(start);
+        end_timer_buf!(log, start);
         println!("Received pk bytes of size: {}.", pk_bytes.len());
 
         // FIXME drop extra pk if worker will not use them.
-        let start = start_timer!(|| format!("Worker: Deserializing ProvingKeys"));
+        let start = start_timer_buf!(log, || format!("Worker {rank}: Deserializing ProvingKeys"));
         let pks = ProvingKeys::deserialize_uncompressed_unchecked(&pk_bytes[..]).unwrap();
-        end_timer!(start);
+        end_timer_buf!(log, start);
         let mut worker_state = WorkerState::new(num_subcircuits, &pks);
 
         /***************************************************************************/
@@ -104,19 +136,21 @@ fn do_stuff(num_workers: usize, num_subcircuits: usize, num_sha2_iters: usize, n
         let request = receive_requests("stage0", &root_process);
 
         // Compute Stage 0 response
-        let start = start_timer!(|| format!("Worker: Processing stage0 request"));
+        let start = start_timer_buf!(log, || format!("Worker {rank}: Processing stage0 request"));
         let response = worker_state.stage_0(&request);
-        end_timer!(start);
+        end_timer_buf!(log, start);
         println!("Finished worker scatter 0 for rank {rank}");
 
         // Send Stage 0 response
-        let start = start_timer!(|| format!("Worker: Serializing stage0 response"));
+        let start = start_timer_buf!(log, || format!(
+            "Worker {rank}: Serializing stage0 response"
+        ));
         let response_bytes = serialize_to_vec(&response);
-        end_timer!(start);
+        end_timer_buf!(log, start);
 
-        let start = start_timer!(|| format!("Worker: Gathering stage0 repsonse"));
+        let start = start_timer_buf!(log, || format!("Worker {rank}: Gathering stage0 repsonse"));
         root_process.gather_varcount_into(&response_bytes);
-        end_timer!(start);
+        end_timer_buf!(log, start);
         println!("Finished worker gather 0 for rank {rank}");
 
         /***************************************************************************/
@@ -130,24 +164,26 @@ fn do_stuff(num_workers: usize, num_subcircuits: usize, num_sha2_iters: usize, n
         let request = receive_requests("stage1", &root_process);
 
         // Compute Stage 1 response
-        let start = start_timer!(|| format!("Worker: Processing stage1 request"));
+        let start = start_timer_buf!(log, || format!("Worker: Processing stage1 request"));
         let response = worker_state.stage_1(&request);
-        end_timer!(start);
+        end_timer_buf!(log, start);
         println!("Finished worker scatter 1 for rank {rank}");
 
         // Send Stage 1 response
-        let start = start_timer!(|| format!("Worker: Serializing stage1 response"));
+        let start = start_timer_buf!(log, || format!("Worker: Serializing stage1 response"));
         let response_bytes = serialize_to_vec(&response);
-        end_timer!(start);
+        end_timer_buf!(log, start);
 
-        let start = start_timer!(|| format!("Worker: Gathering stage1 response"));
+        let start = start_timer_buf!(log, || format!("Worker: Gathering stage1 response"));
         root_process.gather_varcount_into(&response_bytes);
-        end_timer!(start);
+        end_timer_buf!(log, start);
 
         println!("Finished worker gather 1 for rank {rank}");
         /***************************************************************************/
         /***************************************************************************/
     }
+
+    println!("{}", log.join(";"));
 }
 
 fn scatter_requests<'a, C: 'a + Communicator>(
