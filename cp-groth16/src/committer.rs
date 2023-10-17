@@ -13,7 +13,7 @@ use ark_relations::r1cs::{OptimizationGoal, SynthesisError};
 use ark_std::{end_timer, rand::Rng, start_timer};
 
 /// A struct that sequentially runs [`InputAllocators`] and commits to the variables allocated therein
-pub struct CommitmentBuilder<C, E, QAP>
+pub struct CommitmentBuilder<'a, C, E, QAP>
 where
     C: MultiStageConstraintSynthesizer<E::ScalarField>,
     E: Pairing,
@@ -28,11 +28,11 @@ where
     cur_stage: usize,
     /// The committer key that will be used to generate commitments at each step.
     // TODO: Consider making this a ref again
-    pk: ProvingKey<E>,
+    pk: &'a ProvingKey<E>,
     _qap: PhantomData<QAP>,
 }
 
-impl<C, E, QAP> CommitmentBuilder<C, E, QAP>
+impl<'a, C, E, QAP> CommitmentBuilder<'a, C, E, QAP>
 where
     C: MultiStageConstraintSynthesizer<E::ScalarField>,
     E: Pairing,
@@ -40,7 +40,7 @@ where
     // E::G2: VariableBaseMSMExt,
     QAP: R1CSToQAP,
 {
-    pub fn new(circuit: C, pk: ProvingKey<E>) -> Self {
+    pub fn new(circuit: C, pk: &'a ProvingKey<E>) -> Self {
         // Make a new constraint system and set the optimization goal
         let mscs = MultiStageConstraintSystem::default();
         mscs.cs.set_optimization_goal(OptimizationGoal::Constraints);

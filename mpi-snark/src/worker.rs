@@ -24,8 +24,8 @@ type CommitterState = G16CommitmentBuilder<
     QAP,
 >;
 
-pub struct WorkerState {
-    g16_pk: G16ProvingKey,
+pub struct WorkerState<'a> {
+    g16_pk: &'a G16ProvingKey,
     tree_params: ExecTreeParams<TreeConfig>,
     cb: Option<CommitterState>,
     com: G16Com,
@@ -33,7 +33,7 @@ pub struct WorkerState {
 }
 
 impl WorkerState {
-    pub fn new(g16_pk: G16ProvingKey) -> Self {
+    pub fn new(g16_pk: &G16ProvingKey) -> Self {
         let tree_params = gen_merkle_params();
         WorkerState {
             g16_pk,
