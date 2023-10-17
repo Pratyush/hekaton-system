@@ -245,11 +245,30 @@ where
 /// This is sent to every worker at the beginning of every distributed proof. It contains
 /// everything the worker will need in order to do its stage0 and stage1 proof computations. It
 /// also requests some stage0 commitments from the worker.
-#[derive(Clone, CanonicalDeserialize)]
+#[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct Stage0Request<F: PrimeField> {
     pub subcircuit_idx: usize,
     pub(crate) time_ordered_subtrace: VecDeque<RomTranscriptEntry<F>>,
     pub(crate) addr_ordered_subtrace: VecDeque<RomTranscriptEntry<F>>,
+}
+
+
+impl<F: PrimeField> Stage0Request<F> {
+    pub fn empty() -> Self {
+        Self {
+            subcircuit_idx: 0,
+            time_ordered_subtrace: VecDeque::new(),
+            addr_ordered_subtrace: VecDeque::new(),
+        }
+    }
+
+    pub fn to_ref<'a>(&'a self) -> Stage0RequestRef<'a, F> {
+        Stage0RequestRef {
+            subcircuit_idx: self.subcircuit_idx,
+            time_ordered_subtrace: &self.time_ordered_subtrace,
+            addr_ordered_subtrace: &self.addr_ordered_subtrace,
+        }
+    }
 }
 
 #[derive(Clone)]

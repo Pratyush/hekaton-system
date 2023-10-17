@@ -1,7 +1,33 @@
 use ark_serialize::{CanonicalSerialize, CanonicalDeserialize};
 use distributed_prover::{worker::{Stage1Response, Stage0Response}, coordinator::{Stage1Request, Stage0Request}};
-use mpi::{topology::Rank, datatype::UserDatatype, Count};
+use mpi::{topology::Rank, datatype::{UserDatatype, Partition}, Count};
 use mpi::traits::*;
+
+macro_rules! construct_partitioned_buffer {
+    ($items:expr) => {{
+
+        let stage0_reqs_bytes = ($items)
+            .iter()
+            .map(serialize_to_vec)
+            .collect::<Vec<_>>();
+        let counts = stage0_reqs_bytes
+            .iter()
+            .map(|bytes| bytes.len() as Count)
+            .collect::<Vec<_>>();
+        let displacements: Vec<Count> = counts
+            .iter()
+            .scan(0, |acc, &x| {
+                let tmp = *acc;
+                *acc += x;
+                Some(tmp)
+            })
+            .collect();
+        let all_bytes = stage0_reqs_bytes.concat();
+        Partition::new(&all_bytes, &counts[..], &displacements[..])
+    }};
+}
+
+
 
 fn main() {
     let universe = mpi::initialize().unwrap();
@@ -36,16 +62,17 @@ fn main() {
     let now = std::time::Instant::now();
     let size = world.size();
     // Scatter of inputs
-    let stage0_req_size = Stage0Request::dummy().uncompressed_size();
-    let mut stage0_request = Stage0Request::dummy();
-    let mut stage0_req_bytes = vec![0u8; stage0_req_size];
+    let mut stage0_request = Stage0Request::empty();
+    let mut stage0_req_bytes = vec![];
     if rank == root_rank {
-        let stage0_requests = vec![0u8; stage0_req_size]; // TODO: compute actual requests
+        let stage0_reqs = vec![stage0_request; size as usize]; // TODO compute actual requests
+        let stage0_request_bytes = construct_partitioned_buffer!(stage0_reqs);
+        
         // Coordinator stageN code goes here.
-        root_process.scatter_into_root(&stage0_requests, &mut stage0_req_bytes);
+        root_process.scatter_varcount_into_root(&stage0_request_bytes, &mut stage0_req_bytes);
     } else {
-        root_process.scatter_into(&mut stage0_req_bytes);
-        stage0_request = Stage0Request::deserialize_uncompressed_unchecked(&stage0_req_bytes[..]);
+        root_process.scatter_varcount_into(&mut stage0_req_bytes);
+        stage0_request = Stage0Request::deserialize_uncompressed_unchecked(&stage0_req_bytes[..]).unwrap();
     }
     /***************************************************************/
     /******************* Stage0 Scatter finished *******************/
@@ -141,4 +168,10 @@ fn main() {
         // TODO: aggregate.
         // Do stuff with responses
     }
+}
+
+fn serialize_to_vec(item: &impl CanonicalSerialize) -> Vec<u8> {
+    let mut bytes = vec![];
+    (*item).serialize_uncompressed(&mut bytes).unwrap();
+    bytes
 }
