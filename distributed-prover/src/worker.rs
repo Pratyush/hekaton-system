@@ -26,6 +26,16 @@ pub struct Stage0Response<E: Pairing> {
     pub(crate) com_seed: G16ComSeed,
 }
 
+impl<E: Pairing> Default for Stage0Response<E> {
+    fn default() -> Self {
+        Stage0Response {
+            subcircuit_idx: 0,
+            com: G16Com::<E>::default(),
+            com_seed: G16ComSeed::default(),
+        }
+    }
+}
+
 impl<E: Pairing> Stage0Response<E> {
     pub fn dummy() -> Self {
         Self {
@@ -41,6 +51,15 @@ impl<E: Pairing> Stage0Response<E> {
 pub struct Stage1Response<E: Pairing> {
     pub subcircuit_idx: usize,
     pub proof: G16Proof<E>,
+}
+
+impl<E: Pairing> Default for Stage1Response<E> {
+    fn default() -> Self {
+        Stage1Response {
+            subcircuit_idx: 0,
+            proof: G16Proof::default(),
+        }
+    }
 }
 
 impl<E: Pairing> Stage1Response<E> {
@@ -59,6 +78,29 @@ pub fn process_stage0_request<C, CG, E, P, R>(
     g16_ck: G16ComKey<E>,
     req: Stage0Request<E::ScalarField>,
 ) -> Stage0Response<E>
+where
+    C: TreeConfig<Leaf = SerializedLeaf<E::ScalarField>>,
+    CG: TreeConfigGadget<C, E::ScalarField, Leaf = SerializedLeafVar<E::ScalarField>>,
+    E: Pairing,
+    // E::G1: VariableBaseMSMExt,
+    // E::G2: VariableBaseMSMExt,
+    P: CircuitWithPortals<E::ScalarField> + Clone,
+    R: RngCore,
+{
+    process_stage0_request_get_cb::<_, CG, _, P, _>(rng, tree_params, g16_ck, req).0
+}
+
+/// Consumes the stage0 request and performs the necessary Groth16 commitment. Returns the response
+/// and the commitment builder used to commit
+pub fn process_stage0_request_get_cb<C, CG, E, P, R>(
+    mut rng: R,
+    tree_params: ExecTreeParams<C>,
+    g16_ck: G16ComKey<E>,
+    req: Stage0Request<E::ScalarField>,
+) -> (
+    Stage0Response<E>,
+    G16CommitmentBuilder<SubcircuitWithPortalsProver<E::ScalarField, P, C, CG>, E, QAP>,
+)
 where
     C: TreeConfig<Leaf = SerializedLeaf<E::ScalarField>>,
     CG: TreeConfigGadget<C, E::ScalarField, Leaf = SerializedLeafVar<E::ScalarField>>,
@@ -123,11 +165,13 @@ where
         .commit(&mut subcircuit_rng)
         .expect("failed to commit to subtrace");
 
-    Stage0Response {
+    let resp = Stage0Response {
         subcircuit_idx,
         com,
         com_seed,
-    }
+    };
+
+    (resp, cb)
 }
 
 /// Process the given stage1 request, along with all the previous messages in this execution, and

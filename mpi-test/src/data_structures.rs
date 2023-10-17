@@ -1,35 +1,24 @@
-use std::marker::PhantomData;
+use distributed_prover::{
+    poseidon_util::PoseidonTreeConfig as TreeConfig, tree_hash_circuit::MerkleTreeCircuit,
+};
 
-use ark_ec::pairing::Pairing;
-use ark_serialize::*;
+use ark_bls12_381::{Bls12_381 as E, Fr};
 
+pub type G16Proof = distributed_prover::util::G16Proof<E>;
+pub type G16ProvingKey = distributed_prover::util::G16ProvingKey<E>;
+pub type G16Com = distributed_prover::util::G16Com<E>;
+pub type G16ComRandomness = distributed_prover::util::G16ComRandomness<E>;
 
-#[derive(Clone, Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
-pub struct Stage0Request<E: Pairing>(pub u8, pub PhantomData<E>);
+pub type Stage0Request = distributed_prover::coordinator::Stage0Request<Fr>;
 
-#[derive(Clone, Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
-pub struct Stage1Request<E: Pairing>(pub E::G1);
+pub type Stage0RequestRef<'a> = distributed_prover::coordinator::Stage0RequestRef<'a, Fr>;
 
-#[derive(Clone, Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
-pub struct Stage0Response<E: Pairing>(pub E::G1);
+pub type Stage1Request =
+    distributed_prover::coordinator::Stage1Request<TreeConfig, Fr, MerkleTreeCircuit>;
 
-impl<E: Pairing> Default for Stage0Response<E> {
-    fn default() -> Self {
-        Self(E::G1::default())
-    }
-}
+pub type Stage1RequestRef<'a> =
+    distributed_prover::coordinator::Stage1RequestRef<'a, TreeConfig, Fr, MerkleTreeCircuit>;
 
-#[derive(Clone, Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
-pub struct Stage1Response<E: Pairing>(pub E::G1);
+pub type Stage0Response = distributed_prover::worker::Stage0Response<E>;
 
-impl<E: Pairing> Default for Stage1Response<E> {
-    fn default() -> Self {
-        Self(E::G1::default())
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
-pub struct ProvingKey<E: Pairing>(pub E::G1);
-
-#[derive(Clone, Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
-pub struct Proof<E: Pairing>(pub E::G1);
+pub type Stage1Response = distributed_prover::worker::Stage1Response<E>;
