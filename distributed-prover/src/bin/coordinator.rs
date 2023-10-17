@@ -159,7 +159,7 @@ fn generate_g16_pks(
             .unwrap();
         }
 
-        let pk_fetcher = move |subcircuit_idx: usize| pks[subcircuit_idx].clone();
+        let pk_fetcher = |subcircuit_idx: usize| &pks[subcircuit_idx];
 
         // Construct the aggregator commitment key
         let start =
@@ -277,17 +277,17 @@ fn generate_g16_pks(
 
     // To generate the aggregation key, we need an efficient G16 pk fetcher. Normally this hits
     // disk, but this might take a long long time.
-    let pk_fetcher = move |subcircuit_idx: usize| {
+    let pk_fetcher = |subcircuit_idx: usize| {
         if subcircuit_idx == 0 {
-            first_leaf_pk.clone()
+            &first_leaf_pk
         } else if other_leaf_idxs.contains(&subcircuit_idx) {
-            second_leaf_pk.clone()
+            &second_leaf_pk
         } else if parent_idxs.contains(&subcircuit_idx) {
-            parent_pk.clone()
+            &parent_pk
         } else if subcircuit_idx == num_subcircuits - 2 {
-            root_pk.clone()
+            &root_pk
         } else if subcircuit_idx == num_subcircuits - 1 {
-            padding_pk.clone()
+            &padding_pk
         } else {
             panic!("unexpected subcircuit index {subcircuit_idx}")
         }
@@ -324,7 +324,8 @@ fn begin_stage0(worker_req_dir: &PathBuf, coord_state_dir: &PathBuf) -> io::Resu
     // Num subcircuits is 2× num leaves
     let num_subcircuits = 2 * circ_params.num_leaves;
 
-    let merkle_tree_timer = start_timer!(|| format!("Sampling a random MerkleTreeCircuit with parapms {circ_params}"));
+    let merkle_tree_timer =
+        start_timer!(|| format!("Sampling a random MerkleTreeCircuit with parapms {circ_params}"));
     // Make a random circuit with the given parameters
     println!("Making a random circuit");
     let circ = MerkleTreeCircuit::rand(&mut rng, &circ_params);

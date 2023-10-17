@@ -1,7 +1,5 @@
 use core::borrow::Borrow;
 
-use std::collections::VecDeque;
-
 use ark_ff::{BigInteger, PrimeField};
 use ark_r1cs_std::{
     alloc::{AllocVar, AllocationMode},
@@ -310,7 +308,7 @@ pub trait CircuitWithPortals<F: PrimeField> {
     fn get_params(&self) -> Self::Parameters;
 
     /// Gets all the subtraces of the portal wires used in this circuit instantiation
-    fn get_portal_subtraces(&self) -> Vec<VecDeque<RomTranscriptEntry<F>>>;
+    fn get_portal_subtraces(&self) -> Vec<Vec<RomTranscriptEntry<F>>>;
 
     /// The number of subcircuits in this circuit
     fn num_subcircuits(&self) -> usize;
