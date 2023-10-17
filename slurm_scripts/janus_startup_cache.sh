@@ -28,7 +28,9 @@ REMOTEKEYDIR="$SCRATCHDIR/g16_pks"
 KEYDIR="$LOCAL_SCRATCHDIR/g16_${KEYTYPE}s"
 
 REMOTE_REQDIR="$SCRATCHDIR/reqs"
+REMOTE_RESPDIR="$SCRATCHDIR/resps"
 LOCAL_REQDIR="$LOCAL_SCRATCHDIR/reqs"
+LOCAL_RESPDIR="$LOCAL_SCRATCHDIR/resps"
 
 # Make a temporary KEYDIR so that once KEYDIR exists, it's ready to be used
 TEMP_KEYDIR="$LOCAL_SCRATCHDIR/tmp_g16_${KEYTYPE}s"
@@ -51,6 +53,7 @@ if [[ ! -d "$KEYDIR" ]]; then
 
 		mkdir $TEMP_KEYDIR
 		mkdir -p $LOCAL_REQDIR
+		mkdir -p $LOCAL_RESPDIR
 
 		NUM_SUBCIRCUITS=$(echo -n "$BENCH_DESC" | cut -d_ -f2 | tr -d [:alpha:])
 		LAST_PARENT_IDX=$(($NUM_SUBCIRCUITS - 3))
@@ -77,8 +80,9 @@ if [[ ! -d "$KEYDIR" ]]; then
 			ln "$TEMP_KEYDIR/g16_${KEYTYPE}_$LAST_PARENT_IDX.bin" "$TEMP_KEYDIR/g16_${KEYTYPE}_$i.bin"
 		done
 
-		# Now sync the requests
+		# Now sync the requests and responses
 		rsync -aq "$REMOTE_REQDIR/" "$LOCAL_REQDIR/"
+		rsync -aq "$REMOTE_RESPDIR/" "$LOCAL_RESPDIR/"
 
 		# All done. Rename the KEYDIR and remove the lockfile
 		mv $TEMP_KEYDIR $KEYDIR

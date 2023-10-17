@@ -9,11 +9,14 @@ WORKERBIN="/home/micro/horizontally-scalable-snarks-system/target/release/worker
 #TOPSCRATCHDIR="/fs/nexus-scratch/micro"
 TOPSCRATCHDIR="/scratch/zt1/project/imiers-prj/shared/"
 
+MEM_PER_CPU="7600M"
+CPUS_PER_TASK="16"
+
 SACCT_EXTRA_ARGS="-P --delimiter=, --format=jobid,jobname,account,state,elapsedraw,cputimeraw,totalcpu,maxvm,maxrss,maxdiskread,maxdiskwrite"
 
 HELPSTR="\
 Usage:\n\
-    janus_bench <benchdir> <max_num_cores>\
+    janus_bench <benchdir> <max_num_tasks>\
 "
 
 if [ -z ${1+x} ] || [ -z ${2+x} ]; then
@@ -22,7 +25,7 @@ if [ -z ${1+x} ] || [ -z ${2+x} ]; then
 fi
 
 BENCHDIR=$1
-NUMCORES=$2
+MAXNUMTASKS=$2
 
 # Get the bench descriptor by cutting everything in the benchname before '-'
 BENCH_DESC=$(basename "$BENCHDIR" | cut -d'-' -f1)
@@ -54,41 +57,46 @@ mkdir -p "$WORKER_LOGDIR"
 # Get number of subcircuits. This is the same as the number of G16 proving keys
 NUM_SUBCIRCUITS=$(ls "$PKDIR"/g16_pk* | wc -l)
 
+echo "Worker mem per CPU: $MEM_PER_CPU"
+echo "Worker cores per task: $CPUS_PER_TASK"
+echo "Max. simultaneous worker tasks: $MAXNUMTASKS"
+echo ""
+
 # Coordinator creates stage0 requests
 echo "Building stage0 requests..."
 
 # Log a timestamp
-echo -n "BEGINTIME " > "$LOCAL_LOGDIR/start_stage0.txt"
-date +%s >> "$LOCAL_LOGDIR/start_stage0.txt"
+echo -n "BEGIN START-STAGE0 "
+date +%s
 
-echo -n "Groth16 PK bytelen " >> "$LOCAL_LOGDIR/start_stage0.txt"
-du -b "$PKDIR/g16_pk_0.bin" | cut -f1 >> "$LOCAL_LOGDIR/start_stage0.txt"
+echo -n "Groth16 PK bytelen "
+du -b "$PKDIR/g16_pk_0.bin" | cut -f1
 
 $COORDBIN start-stage0 \
 	--coord-state-dir "$STATEDIR" \
 	--req-dir "$LOCAL_REQDIR" \
-	>> "$LOCAL_LOGDIR/start_stage0.txt" \
 || { echo "FAILED"; exit 1; }
 
-echo "Stage0 req bytelens" >> "$LOCAL_LOGDIR/start_stage0.txt"
-du -b $LOCAL_REQDIR/stage0_req*.bin >> "$LOCAL_LOGDIR/start_stage0.txt"
+echo "Stage0 req bytelens"
+du -b $LOCAL_REQDIR/stage0_req*.bin
 
 # Log a timestamp
-echo -n "ENDTIME " >> "$LOCAL_LOGDIR/start_stage0.txt"
-date +%s >> "$LOCAL_LOGDIR/start_stage0.txt"
+echo -n "END START-STAGE0 "
+date +%s
+echo ""
 
 # Sync reqs and logs
 echo -n "Writing stage0 requests to scratch... "
 /usr/bin/time -f "%E" -o /dev/stdout rsync -aq "$LOCAL_REQDIR/" "$REMOTE_REQDIR/"
-rsync -aq "$LOCAL_LOGDIR/" "$BENCHDIR/"
 
 echo "Waiting for stage0 responses..."
 
 SBATCH_STDOUT=$(\
 sbatch --wait \
-	--account=imiers-prj-cmsc \
-	--array="1-$NUM_SUBCIRCUITS%$NUMCORES" \
+	--array="1-$NUM_SUBCIRCUITS%$MAXNUMTASKS" \
 	--time=1:00 \
+	--mem-per-cpu=$MEM_PER_CPU \
+	--cpus-per-task=$CPUS_PER_TASK \
 	--output="$WORKER_LOGDIR/stage0_out_%a.txt" \
 	--error="$WORKER_LOGDIR/stage0_err_%a.txt" \
        	janus_worker_job.sh stage0 "$WORKERBIN" "$SCRATCHDIR" \
@@ -104,37 +112,37 @@ echo -n "Reading stage0 responses from scratch... "
 rsync -aq "$LOCAL_LOGDIR/" "$BENCHDIR/"
 
 # Log a timestamp
-echo -n "BEGINTIME " >> "$LOCAL_LOGDIR/start_stage1.txt"
-date +%s >> "$LOCAL_LOGDIR/start_stage1.txt"
+echo ""
+echo -n "BEGIN START-STAGE1 "
+date +%s
 
-echo -n "Stage0 resp bytelen " >> "$LOCAL_LOGDIR/start_stage1.txt"
-du -b "$LOCAL_RESPDIR/stage0_resp_0.bin" | cut -f1 >> "$LOCAL_LOGDIR/start_stage1.txt"
+echo -n "Stage0 resp bytelen "
+du -b "$LOCAL_RESPDIR/stage0_resp_0.bin" | cut -f1
 
 $COORDBIN start-stage1 \
 	--resp-dir "$LOCAL_RESPDIR" \
 	--coord-state-dir "$STATEDIR" \
 	--req-dir "$LOCAL_REQDIR" \
-	> "$LOCAL_LOGDIR/start_stage1.txt" \
 || { echo "FAILED"; exit 1; }
 
-echo -n "Stage1 req bytelen " >> "$LOCAL_LOGDIR/start_stage1.txt"
-du -b "$LOCAL_REQDIR/stage1_req_0.bin" | cut -f1 >> "$LOCAL_LOGDIR/start_stage1.txt"
+echo -n "Stage1 req bytelen "
+du -b "$LOCAL_REQDIR/stage1_req_0.bin" | cut -f1
 
-echo -n "ENDTIME " >> "$LOCAL_LOGDIR/start_stage1.txt"
-date +%s >> "$LOCAL_LOGDIR/start_stage1.txt"
+echo -n "END START-STAGE1 "
+date +%s
+echo ""
 
-# Sync requests and logs
+# Sync requests
 echo -n "Writing stage1 requests to scratch... "
 /usr/bin/time -f "%E" -o /dev/stdout rsync -aq "$LOCAL_REQDIR/" "$REMOTE_REQDIR/"
-rsync -aq "$LOCAL_LOGDIR/" "$BENCHDIR/"
 
 echo "Waiting for stage1 responses (this may take a while)..."
 SBATCH_STDOUT=$(\
 sbatch --wait \
-	--account=imiers-prj-cmsc \
-	--array="1-$NUM_SUBCIRCUITS%$NUMCORES" \
-	--time=03:00 \
-	--mem-per-cpu=3800M \
+	--array="1-$NUM_SUBCIRCUITS%$MAXNUMTASKS" \
+	--time=05:00 \
+	--mem-per-cpu=$MEM_PER_CPU \
+	--cpus-per-task=$CPUS_PER_TASK \
 	--output="$WORKER_LOGDIR/stage1_out_%a.txt" \
 	--error="$WORKER_LOGDIR/stage1_err_%a.txt" \
 	janus_worker_job.sh stage1 "$WORKERBIN" "$SCRATCHDIR" \
@@ -147,24 +155,24 @@ echo -n "Reading stage1 responses from scratch... "
 /usr/bin/time -f "%E" -o /dev/stdout rsync -aq "$REMOTE_RESPDIR/" "$LOCAL_RESPDIR/"
 rsync -aq "$LOCAL_LOGDIR/" "$BENCHDIR/"
 
-echo -n "BEGINTIME " > "$LOCAL_LOGDIR/end_proof.txt"
-date +%s >> "$LOCAL_LOGDIR/end_proof.txt"
+echo -n "BEGIN AGG "
+date +%s
 
 echo "Aggregating proofs"
 $COORDBIN end-proof \
 	--resp-dir "$LOCAL_RESPDIR" \
    	--coord-state-dir "$STATEDIR" \
-	>> "$LOCAL_LOGDIR/end_proof.txt" \
 || { echo "FAILED"; exit 1; }
 
-echo -n "Stage1 resp bytelen " >> "$LOCAL_LOGDIR/end_proof.txt"
-du -b "$LOCAL_RESPDIR/stage1_resp_0.bin" | cut -f1 >> "$LOCAL_LOGDIR/end_proof.txt"
+echo -n "Stage1 resp bytelen "
+du -b "$LOCAL_RESPDIR/stage1_resp_0.bin" | cut -f1
 
-echo -n "Agg bytelen " >> "$LOCAL_LOGDIR/end_proof.txt"
-du -b "$STATEDIR/agg_proof.bin" | cut -f1 >> "$LOCAL_LOGDIR/end_proof.txt"
+echo -n "Agg bytelen "
+du -b "$STATEDIR/agg_proof.bin" | cut -f1
 
-echo -n "ENDTIME " >> "$LOCAL_LOGDIR/end_proof.txt"
-date +%s >> "$LOCAL_LOGDIR/end_proof.txt"
+echo -n "END AGG "
+date +%s
+echo ""
 
 # Sync logs
 rsync -aq "$LOCAL_LOGDIR/" "$BENCHDIR/"
