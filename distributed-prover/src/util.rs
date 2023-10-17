@@ -18,6 +18,7 @@ pub use ark_cp_groth16::{
         Comm as G16Com, CommRandomness as G16ComRandomness, CommitterKey as G16ComKey,
         Proof as G16Proof, ProvingKey as G16ProvingKey,
     },
+    r1cs_to_qap::LibsnarkReduction as QAP,
 };
 pub use merlin::Transcript as ProtoTranscript;
 

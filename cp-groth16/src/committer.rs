@@ -10,10 +10,10 @@ use ark_ff::UniformRand;
 use ark_groth16::{r1cs_to_qap::R1CSToQAP, Proof as ProofWithoutComms};
 // use ark_msm::msm::VariableBaseMSMExt;
 use ark_relations::r1cs::{OptimizationGoal, SynthesisError};
-use ark_std::{rand::Rng, start_timer, end_timer};
+use ark_std::{end_timer, rand::Rng, start_timer};
 
 /// A struct that sequentially runs [`InputAllocators`] and commits to the variables allocated therein
-pub struct CommitmentBuilder<'a, C, E, QAP>
+pub struct CommitmentBuilder<C, E, QAP>
 where
     C: MultiStageConstraintSynthesizer<E::ScalarField>,
     E: Pairing,
@@ -27,11 +27,12 @@ where
     /// The current stage.
     cur_stage: usize,
     /// The committer key that will be used to generate commitments at each step.
-    pk: &'a ProvingKey<E>,
+    // TODO: Consider making this a ref again
+    pk: ProvingKey<E>,
     _qap: PhantomData<QAP>,
 }
 
-impl<'a, C, E, QAP> CommitmentBuilder<'a, C, E, QAP>
+impl<C, E, QAP> CommitmentBuilder<C, E, QAP>
 where
     C: MultiStageConstraintSynthesizer<E::ScalarField>,
     E: Pairing,
@@ -39,7 +40,7 @@ where
     // E::G2: VariableBaseMSMExt,
     QAP: R1CSToQAP,
 {
-    pub fn new(circuit: C, pk: &'a ProvingKey<E>) -> Self {
+    pub fn new(circuit: C, pk: ProvingKey<E>) -> Self {
         // Make a new constraint system and set the optimization goal
         let mscs = MultiStageConstraintSystem::default();
         mscs.cs.set_optimization_goal(OptimizationGoal::Constraints);
@@ -90,7 +91,7 @@ where
         // Compute the commitment.
         let commitment =
             // First compute [J(s)/ηᵢ]₁ where i is the current stage.
-            E::G1::msm(&**current_ck, &current_witness).unwrap()
+            E::G1::msm(current_ck, &current_witness).unwrap()
             // Then add in the randomizer
             + (self.pk.ck.last_delta_g * randomness);
 
@@ -106,8 +107,8 @@ where
         comms: &[Comm<E>],
         comm_rands: &[CommRandomness<E>],
         rng: &mut impl Rng,
-    ) -> Result<Proof<E>, SynthesisError> 
-    // where
+    ) -> Result<Proof<E>, SynthesisError>
+// where
     //     E::G1: VariableBaseMSMExt,
     //     E::G2: VariableBaseMSMExt,
     {

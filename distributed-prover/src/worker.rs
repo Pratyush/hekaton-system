@@ -6,8 +6,6 @@ use crate::{
     CircuitWithPortals,
 };
 
-use std::{collections::VecDeque, marker::PhantomData};
-
 use ark_cp_groth16::{
     committer::CommitmentBuilder as G16CommitmentBuilder, r1cs_to_qap::LibsnarkReduction as QAP,
     Proof as G16Proof,
@@ -120,7 +118,7 @@ where
     };
 
     // Commit to the stage 0 values (the subtraces)
-    let mut cb = G16CommitmentBuilder::<_, E, QAP>::new(prover, &empty_pk);
+    let mut cb = G16CommitmentBuilder::<_, E, QAP>::new(prover, empty_pk);
     let (com, _) = cb
         .commit(&mut subcircuit_rng)
         .expect("failed to commit to subtrace");
@@ -213,13 +211,16 @@ where
     let fake_auth_path_len = 2;
 
     // Set all the values in the underlying circuit
-    let mut circ = SubcircuitWithPortalsProver::<E::ScalarField, P, C, CG>::new(tree_params, 2);
+    let mut circ = SubcircuitWithPortalsProver::<E::ScalarField, P, C, CG>::new(
+        tree_params,
+        fake_auth_path_len,
+    );
     circ.subcircuit_idx = subcircuit_idx;
     circ.time_ordered_subtrace = time_ordered_subtrace;
     circ.addr_ordered_subtrace = addr_ordered_subtrace;
 
     // The commitment RNG is determined by com_seed
-    let mut cb = G16CommitmentBuilder::<_, E, QAP>::new(circ, pk);
+    let mut cb = G16CommitmentBuilder::<_, E, QAP>::new(circ, pk.clone());
     let mut subcircuit_rng = {
         let com_seed = stage0_resp.com_seed.clone();
         ChaCha12Rng::from_seed(com_seed)
