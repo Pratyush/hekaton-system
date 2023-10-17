@@ -677,7 +677,7 @@ fn prove_tipp<E: Pairing>(
         r_left
             .par_iter_mut()
             .zip(r_right.par_iter_mut())
-            .for_each(|(left, right)| {
+            .for_each(|(mut left, mut right)| {
                 // r[:n'] + delta_inv * r[n':]
                 *right *= &delta_inv;
                 *left += right;

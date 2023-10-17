@@ -485,7 +485,7 @@ mod test {
         // Do aggregation. Make up whatever keys are necessary
         let kzg_ck = crate::kzg::KzgComKey::gen(&mut rng, num_subcircuits);
         let agg_ck = AggProvingKey::new(super_com_key, kzg_ck, |subcircuit_idx| {
-            proving_keys[subcircuit_idx].clone()
+            &proving_keys[subcircuit_idx]
         });
 
         // Compute the aggregate proof

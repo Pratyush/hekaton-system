@@ -15,16 +15,17 @@ pub(crate) fn msm_bigint_wnaf<V: VariableBaseMSM>(
     let bases = &bases[..size];
     #[cfg(feature = "parallel")]
     {
-        use ark_std::cfg_chunks;
-        let num_threads = rayon::current_num_threads();
-        if num_threads > 1 {
-            cfg_chunks!(bases, size / num_threads)
-                .zip(cfg_chunks!(scalars, size / num_threads))
-                .map(|(bases, scalars)| msm_bigint_wnaf_helper::<V>(bases, scalars))
-                .sum()
-        } else {
-            msm_bigint_wnaf_helper(bases, scalars)
-        }
+        msm_bigint_wnaf_helper(bases, scalars)
+        // use ark_std::cfg_chunks;
+        // let num_threads = rayon::current_num_threads();
+        // if num_threads > 1 {
+        //     cfg_chunks!(bases, size / num_threads)
+        //         .zip(cfg_chunks!(scalars, size / num_threads))
+        //         .map(|(bases, scalars)| msm_bigint_wnaf_helper::<V>(bases, scalars))
+        //         .sum()
+        // } else {
+        //     msm_bigint_wnaf_helper(bases, scalars)
+        // }
     }
     #[cfg(not(feature = "parallel"))]
     msm_bigint_wnaf_helper(bases, scalars)
