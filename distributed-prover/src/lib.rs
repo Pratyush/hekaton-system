@@ -12,7 +12,6 @@ use ark_relations::{
     r1cs::{ConstraintSystemRef, Namespace, SynthesisError},
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use xxhash_rust::xxh3::xxh3_128;
 
 pub mod aggregation;
 pub mod coordinator;

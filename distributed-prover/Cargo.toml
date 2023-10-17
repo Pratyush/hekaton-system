@@ -22,8 +22,7 @@ rand = "0.8"
 # tinyram-emu = { path = "../tinyram-emu" }
 ark-cp-groth16 = { path = "../cp-groth16" }
 ark-std = "0.4.0"
-derivative = "2.2.0"
-xxhash-rust = { version = "0.8.7", features = ["xxh3"] }
+# xxhash-rust = { version = "0.8.7", features = ["xxh3"] }
 ark-crypto-primitives = { version = "0.4", features = ["merkle_tree", "r1cs"] }
 ark-ec = "0.4.2"
 rand_chacha = "0.3.1"

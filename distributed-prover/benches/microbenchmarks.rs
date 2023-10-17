@@ -88,7 +88,7 @@ fn generate_agg_ck(
     let num_subcircuits = 2 * circ_params.num_leaves;
 
     // Create a lambda that returns the same proving key
-    let pk_fetcher = |_subcircuit_idx| pk.clone();
+    let pk_fetcher = |_subcircuit_idx| pk;
 
     // We don't bench the SuperCom key. This is a subset of the KZG key. This will be resolved when
     // verification is resolved.
