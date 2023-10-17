@@ -20,7 +20,7 @@ NUM_PORTALS=$3
 
 SBATCH_STDOUT=$(\
 srun --partition=standard --account=imiers-prj-cmsc \
-	--time 1:00:00 --cpus-per-task=32 --ntasks=1 \
+	--time 1:00:00 --cpus-per-task=32 --mem-per-cpu=3900M --ntasks=1 \
 	--output="setup_out.txt" \
        	/usr/bin/time -vo "setup_timing.txt" ./janus_setup.sh $NUM_SUBCIRCUITS $NUM_SHA2_ITERS $NUM_PORTALS \
 )

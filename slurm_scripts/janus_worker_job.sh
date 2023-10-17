@@ -2,8 +2,7 @@
 #
 #SBATCH --job-name=janus-worker
 #SBATCH --partition="standard"
-#
-#SBATCH --cpus-per-task=1
+#SBATCH --account=imiers-prj-cmsc
 
 set -eu
 
@@ -16,21 +15,24 @@ CMD=$1
 WORKERBIN=$2
 SCRATCHDIR=$3
 
-export RAYON_NUM_THREADS=1
+export RAYON_NUM_THREADS=16
 
 # Workers have a local scratch space that stores Groth16 keys and
 # coordinator requests
 BENCH_DESC=$(basename "$SCRATCHDIR")
 LOCAL_SCRATCHDIR="/tmp/${USER}-${BENCH_DESC}"
 
-# Responses are written to scratch
-RESPDIR="$SCRATCHDIR/resps"
+REMOTE_RESPDIR="$SCRATCHDIR/resps"
 
-# Requests are stored locally and synced in ./janus_startup_cache
+# Requests and responses are stored locally and synced in ./janus_startup_cache
 REQDIR="$LOCAL_SCRATCHDIR/reqs"
+LOCAL_RESPDIR="$LOCAL_SCRATCHDIR/resps"
 
-# Only RESPDIR might not exist already
-mkdir -p "$RESPDIR"
+# Responses are written locally and copied to scratch
+TEMP_RESPDIR=$(mktemp -d)
+
+# Only LOCAL_RESPDIR might not exist already
+mkdir -p "$LOCAL_RESPDIR"
 
 # The subcircuit ID is the task ID (minus 1 because 0-indexing)
 SUBCIRCUIT_IDX="$((SLURM_ARRAY_TASK_ID-1))"
@@ -40,10 +42,10 @@ date +%s
 
 if [ $CMD = "stage0" ]; then
 	PKDIR="$LOCAL_SCRATCHDIR/g16_cks"
-	/usr/bin/time -f "%E" -o /dev/stdout ./janus_startup_cache.sh ck $BENCH_DESC
+	./janus_startup_cache.sh ck $BENCH_DESC
 elif [ $CMD = "stage1" ]; then
 	PKDIR="$LOCAL_SCRATCHDIR/g16_pks"
-	/usr/bin/time -f "%E" -o /dev/stdout ./janus_startup_cache.sh pk $BENCH_DESC
+	./janus_startup_cache.sh pk $BENCH_DESC
 else
 	echo "invalid command $CMD"
 	exit 1
@@ -55,7 +57,7 @@ if [ $CMD = "stage0" ]; then
 	"$WORKERBIN" process-stage0-request \
 		--g16-pk-dir "$PKDIR" \
 		--req-dir "$REQDIR" \
-		--resp-dir "$RESPDIR" \
+		--out-dir "$TEMP_RESPDIR" \
 		--subcircuit-index $SUBCIRCUIT_IDX
 elif [ $CMD = "stage1" ]; then
 	# If the command is "stage1" then process the corresponding stage1 request
@@ -63,12 +65,17 @@ elif [ $CMD = "stage1" ]; then
 	"$WORKERBIN" process-stage1-request \
 		--g16-pk-dir "$PKDIR" \
 		--req-dir "$REQDIR" \
-		--resp-dir "$RESPDIR" \
+		--resp-dir "$LOCAL_RESPDIR" \
+		--out-dir "$TEMP_RESPDIR" \
 		--subcircuit-index $SUBCIRCUIT_IDX
 else
 	echo "invalid command $CMD"
 	exit 1
 fi
+
+# Our response was put in a temp local directory. Write it to scratch
+/usr/bin/cp -f $TEMP_RESPDIR/* "$REMOTE_RESPDIR/"
+rm -rf TEMP_RESPDIR
 
 echo -n "ENDTIME "
 date +%s
