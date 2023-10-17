@@ -6,7 +6,7 @@ use mpi::{
     topology::Process,
     Count,
 };
-use mpi_test::{
+use mpi_snark::{
     construct_partitioned_buffer_for_scatter, construct_partitioned_mut_buffer_for_gather,
     coordinator::CoordinatorState, data_structures::G16ProvingKey, deserialize_flattened_bytes,
     serialize_to_vec, worker::WorkerState,
