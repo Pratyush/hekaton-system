@@ -10,10 +10,10 @@ impl<E: Pairing> WorkerState<E> {
     }
 
     pub fn stage_0(&mut self, request: &Stage0Request<E>) -> Stage0Response<E> {
-        unimplemented!()
+        Stage0Response::default()
     }
 
     pub fn stage_1(&mut self, request: &Stage1Request<E>) -> Stage1Response<E> {
-        unimplemented!()
+        Stage1Response::default()
     }
 }

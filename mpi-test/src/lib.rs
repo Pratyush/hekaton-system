@@ -1,5 +1,9 @@
 use ark_serialize::CanonicalSerialize;
 
+pub mod coordinator;
+pub mod worker;
+pub mod data_structures;
+
 #[macro_export]
 macro_rules! construct_partitioned_buffer_for_scatter {
     ($items:expr, $flattened_item_bytes: expr) => {{
@@ -21,6 +25,8 @@ macro_rules! construct_partitioned_buffer_for_scatter {
                 Some(tmp)
             })
             .collect();
+        dbg!(&counts);
+        dbg!(&displacements);
         *$flattened_item_bytes = item_bytes.concat();
         Partition::new(&*$flattened_item_bytes, counts, displacements)
     }};
@@ -69,7 +75,3 @@ pub fn serialize_to_vec(item: &impl CanonicalSerialize) -> Vec<u8> {
     (*item).serialize_uncompressed(&mut bytes).unwrap();
     bytes
 }
-
-pub mod coordinator;
-pub mod worker;
-pub mod data_structures;

@@ -12,6 +12,7 @@ ark-ec = { version = "0.4", features = ["parallel"] }
 ark-bls12-381 = { path = "../bls12_381", features = ["parallel"] }
 mpi = { version = "0.6.0", features = [ "derive" ] }
 distributed-prover = { path = "../distributed-prover" }
+rayon = { version = "1" }
 
 [patch.crates-io.ark-serialize]
 git = "https://github.com/rozbb/algebra.git"

@@ -2,7 +2,8 @@ use ark_serialize::{CanonicalSerialize, CanonicalDeserialize};
 use mpi_test::{data_structures::ProvingKey, worker::WorkerState, coordinator::CoordinatorState, serialize_to_vec, construct_partitioned_buffer_for_scatter, construct_partitioned_mut_buffer_for_gather, deserialize_flattened_bytes};
 use mpi::{datatype::{Partition, PartitionMut}, Count, topology::Process};
 use mpi::traits::*;
-use ark_bls12_381::Bls12_381;
+use ark_bls12_381::{Bls12_381, G1Projective as G1};
+use rayon::prelude::*;
 
 
 fn main() {
@@ -16,7 +17,7 @@ fn main() {
     if rank == root_rank {
         // Initial broadcast
 
-        let mut coordinator_state = CoordinatorState::<Bls12_381>::new();
+        let mut coordinator_state = CoordinatorState::<Bls12_381>::new(size as usize);
         let pk = coordinator_state.get_pk();
         let mut pk_bytes = serialize_to_vec(&pk);
         root_process.broadcast_into(&mut pk_bytes);
@@ -50,10 +51,13 @@ fn main() {
 
         let proof = coordinator_state.aggregate(&responses);
         println!("Proof: {:?}", proof)
+
     } else {
 
-        let mut pk_bytes = vec![];
+        let pk = ProvingKey::<Bls12_381>(G1::default());
+        let mut pk_bytes = serialize_to_vec(&pk);
         root_process.broadcast_into(&mut pk_bytes);
+        println!("Received pk bytes of size: {}.", pk_bytes.len());
 
         // FIXME drop extra pk if worker will not use them.
         let pk = ProvingKey::<Bls12_381>::deserialize_uncompressed_unchecked(&pk_bytes[..]).unwrap();
@@ -97,11 +101,12 @@ fn main() {
 
 fn scatter_requests<'a, C: 'a + Communicator>(
     root_process: &Process<'a, C>,
-    requests: &[impl CanonicalSerialize],
+    requests: &[impl CanonicalSerialize + Send],
 ) {
     let mut request_bytes = vec![];
     let request_bytes_buf = construct_partitioned_buffer_for_scatter!(requests, &mut request_bytes);
-    root_process.scatter_varcount_into_root(&request_bytes_buf, &mut [0u8; 0]);
+    let mut _recv_buf: Vec<u8> = vec![];
+    root_process.scatter_varcount_into_root(&request_bytes_buf, &mut _recv_buf);
 }
 
 fn gather_responses<'a, C, T>(
