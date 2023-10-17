@@ -28,11 +28,30 @@ pub struct Stage0Response<E: Pairing> {
     pub(crate) com_seed: G16ComSeed,
 }
 
+impl<E: Pairing> Stage0Response<E> {
+    pub fn dummy() -> Self {
+        Self {
+            subcircuit_idx: 0,
+            com: G16Com::<E>::default(),
+            com_seed: G16ComSeed::default(),
+        }
+    }
+}
+
 /// The repsonse is the Groth16 proof for the requested subcircuit
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct Stage1Response<E: Pairing> {
     pub subcircuit_idx: usize,
     pub proof: G16Proof<E>,
+}
+
+impl<E: Pairing> Stage1Response<E> {
+    pub fn dummy() -> Self {
+        Self {
+            subcircuit_idx: 0,
+            proof: G16Proof::default(),
+        }
+    }
 }
 
 /// Consumes the stage0 request and performs the necessary Groth16 commitment

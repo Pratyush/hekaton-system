@@ -15,6 +15,17 @@ pub struct Proof<E: Pairing> {
     pub ds: Vec<E::G1Affine>,
 }
 
+impl<E: Pairing> Default for Proof<E> {
+    fn default() -> Self {
+        Self {
+            a: E::G1Affine::default(),
+            b: E::G2Affine::default(),
+            c: E::G1Affine::default(),
+            ds: vec![E::G1Affine::default()],
+        }
+    }
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 
 /// A verification key in the Groth16 SNARK.
