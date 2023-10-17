@@ -69,7 +69,7 @@ fn main() {
 
         // FIXME drop extra pk if worker will not use them.
         let pk = G16ProvingKey::deserialize_uncompressed_unchecked(&pk_bytes[..]).unwrap();
-        let mut worker_state = WorkerState::new(pk);
+        let mut worker_state = WorkerState::new(&pk);
 
         /***************************************************************************/
         /***************************************************************************/

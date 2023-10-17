@@ -18,7 +18,7 @@ use ark_bls12_381::{Bls12_381 as E, Fr};
 use ark_cp_groth16::committer::CommitmentBuilder as G16CommitmentBuilder;
 use rand::thread_rng;
 
-type CommitterState = G16CommitmentBuilder<
+type CommitterState<'a> = G16CommitmentBuilder<'a,
     SubcircuitWithPortalsProver<Fr, MerkleTreeCircuit, TreeConfig, TreeConfigVar>,
     E,
     QAP,
@@ -27,13 +27,13 @@ type CommitterState = G16CommitmentBuilder<
 pub struct WorkerState<'a> {
     g16_pk: &'a G16ProvingKey,
     tree_params: ExecTreeParams<TreeConfig>,
-    cb: Option<CommitterState>,
+    cb: Option<CommitterState<'a>>,
     com: G16Com,
     com_rand: G16ComRandomness,
 }
 
-impl WorkerState {
-    pub fn new(g16_pk: &G16ProvingKey) -> Self {
+impl<'a> WorkerState<'a> {
+    pub fn new(g16_pk: &'a G16ProvingKey) -> Self {
         let tree_params = gen_merkle_params();
         WorkerState {
             g16_pk,
@@ -52,7 +52,7 @@ impl WorkerState {
         let (resp, cb) = process_stage0_request_get_cb::<_, TreeConfigVar, _, MerkleTreeCircuit, _>(
             &mut rng,
             self.tree_params.clone(),
-            self.g16_pk.ck.clone(),
+            &self.g16_pk,
             stage0_req.clone(),
         );
 
