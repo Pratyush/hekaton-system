@@ -1,44 +1,94 @@
-use ark_bls12_381::{Fr, Bls12_381};
-use ark_ec::pairing::Pairing;
-use ark_std::{start_timer, end_timer};
-use distributed_prover::{tree_hash_circuit::{MerkleTreeCircuitParams, MerkleTreeCircuit}, poseidon_util::{gen_merkle_params, PoseidonTreeConfig, PoseidonTreeConfigVar}, CircuitWithPortals, coordinator::G16ProvingKeyGenerator, aggregation::{SuperComCommittingKey, AggProvingKey}, kzg::KzgComKey};
-
 use crate::data_structures::{
-    G16Proof, G16ProvingKey, Stage0RequestRef, Stage0Response, Stage1RequestRef, Stage1Response, ProvingKeys,
+    AggProof, G16Proof, G16ProvingKey, ProvingKeys, Stage0RequestRef, Stage0Response,
+    Stage1RequestRef, Stage1Response,
 };
 
-pub struct CoordinatorState<E: Pairing>(E::G1);
+use distributed_prover::{
+    aggregation::{AggProvingKey, SuperComCommittingKey},
+    coordinator::{CoordinatorStage0State, CoordinatorStage1State, G16ProvingKeyGenerator},
+    kzg::KzgComKey,
+    poseidon_util::{
+        gen_merkle_params, PoseidonTreeConfig as TreeConfig, PoseidonTreeConfigVar as TreeConfigVar,
+    },
+    tree_hash_circuit::{MerkleTreeCircuit, MerkleTreeCircuitParams},
+    CircuitWithPortals,
+};
 
-impl<E: Pairing> CoordinatorState<E> {
+use ark_bls12_381::{Bls12_381 as E, Fr};
+use ark_ec::pairing::Pairing;
+use ark_std::{end_timer, start_timer};
+use rand::thread_rng;
+
+pub struct CoordinatorState {
+    g16_pks: ProvingKeys,
+    agg_pk: AggProvingKey<E>,
+    circ_params: MerkleTreeCircuitParams,
+    stage0_state: Option<CoordinatorStage0State<E, MerkleTreeCircuit>>,
+    stage1_state: Option<CoordinatorStage1State<TreeConfig, E, MerkleTreeCircuit>>,
+}
+
+impl CoordinatorState {
     pub fn new(
         num_nodes: usize,
         num_subcircuits: usize,
         num_sha_iterations: usize,
         num_portals_per_subcircuit: usize,
     ) -> Self {
-        let mt_params = gen_test_circuit_params(num_subcircuits, num_sha_iterations, num_portals_per_subcircuit);
+        let circ_params = gen_test_circuit_params(
+            num_subcircuits,
+            num_sha_iterations,
+            num_portals_per_subcircuit,
+        );
 
-        let (g16_pks, agg_pk) = generate_g16_pks(mt_params);
-        todo!()
+        let (g16_pks, agg_pk) = generate_g16_pks(circ_params);
+
+        CoordinatorState {
+            g16_pks,
+            agg_pk,
+            circ_params,
+            stage0_state: None,
+            stage1_state: None,
+        }
     }
 
-    pub fn get_pk(&self) -> G16ProvingKey {
-        todo!()
+    pub fn get_pks(&self) -> &ProvingKeys {
+        &self.g16_pks
     }
 
     pub fn stage_0(&mut self) -> Vec<Stage0RequestRef> {
-        todo!()
+        let mut rng = thread_rng();
+
+        let circ = MerkleTreeCircuit::rand(&mut rng, &self.circ_params);
+        let num_subcircuits = <MerkleTreeCircuit as CircuitWithPortals<Fr>>::num_subcircuits(&circ);
+        let all_subcircuit_indices = (0..num_subcircuits).collect::<Vec<_>>();
+
+        self.stage0_state = Some(CoordinatorStage0State::new::<TreeConfig>(circ));
+        (0..num_subcircuits)
+            .map(|idx| self.stage0_state.as_ref().unwrap().gen_request(idx))
+            .collect::<Vec<_>>()
     }
 
-    pub fn stage_1(&mut self, responses: &[Stage0Response]) -> Vec<Stage1RequestRef> {
-        todo!()
+    pub fn stage_1(&mut self, stage0_resps: &[Stage0Response]) -> Vec<Stage1RequestRef> {
+        let tree_params = gen_merkle_params();
+        let num_subcircuits = 2 * self.circ_params.num_leaves;
+
+        // Consume the stage0 state and the responses
+        self.stage1_state = Some(self.stage0_state.take().unwrap().process_stage0_responses(
+            &self.agg_pk.ipp_ck,
+            tree_params,
+            &stage0_resps,
+        ));
+
+        (0..num_subcircuits)
+            .map(|idx| self.stage1_state.as_ref().unwrap().gen_request(idx))
+            .collect::<Vec<_>>()
     }
 
-    pub fn aggregate(&mut self, responses: &[Stage1Response]) -> G16Proof {
-        todo!()
+    pub fn aggregate(&mut self, stage1_resps: &[Stage1Response]) -> AggProof {
+        let final_agg_state = self.stage1_state.take().unwrap().into_agg_state();
+        final_agg_state.gen_agg_proof(&self.agg_pk, stage1_resps)
     }
 }
-
 
 // Checks the test circuit parameters and puts them in a struct
 fn gen_test_circuit_params(
@@ -68,9 +118,7 @@ fn gen_test_circuit_params(
 }
 
 /// Generates all the Groth16 proving and committing keys keys that the workers will use
-fn generate_g16_pks(
-    circ_params: MerkleTreeCircuitParams,
-) -> (ProvingKeys, AggProvingKey<Bls12_381>) {
+fn generate_g16_pks(circ_params: MerkleTreeCircuitParams) -> (ProvingKeys, AggProvingKey<E>) {
     let mut rng = rand::thread_rng();
     let tree_params = gen_merkle_params();
 
@@ -78,7 +126,7 @@ fn generate_g16_pks(
     let circ = <MerkleTreeCircuit as CircuitWithPortals<Fr>>::new(&circ_params);
     let num_subcircuits = <MerkleTreeCircuit as CircuitWithPortals<Fr>>::num_subcircuits(&circ);
 
-    let generator = G16ProvingKeyGenerator::<PoseidonTreeConfig, PoseidonTreeConfigVar, Bls12_381, _>::new(
+    let generator = G16ProvingKeyGenerator::<TreeConfig, TreeConfigVar, E, _>::new(
         circ.clone(),
         tree_params.clone(),
     );
@@ -132,12 +180,12 @@ fn generate_g16_pks(
 
     // Construct the aggregator commitment key
     let start = start_timer!(|| format!("Generating aggregation key with params {circ_params}"));
-    let agg_ck = {
+    let agg_pk = {
         // Need some intermediate keys
-        let super_com_key = SuperComCommittingKey::<Bls12_381>::gen(&mut rng, num_subcircuits);
+        let super_com_key = SuperComCommittingKey::<E>::gen(&mut rng, num_subcircuits);
         let kzg_ck = KzgComKey::gen(&mut rng, num_subcircuits);
         AggProvingKey::new(super_com_key, kzg_ck, pk_fetcher)
     };
     end_timer!(start);
-    (pks, agg_ck)
+    (pks, agg_pk)
 }

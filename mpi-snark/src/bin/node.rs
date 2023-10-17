@@ -1,4 +1,3 @@
-use ark_bls12_381::{Bls12_381, G1Projective as G1};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use mpi::traits::*;
 use mpi::{
@@ -24,9 +23,9 @@ fn main() {
     if rank == root_rank {
         // Initial broadcast
 
-        let mut coordinator_state = CoordinatorState::<Bls12_381>::new(size as usize, 0, 0, 0);
-        let pk = coordinator_state.get_pk();
-        let mut pk_bytes = serialize_to_vec(&pk);
+        let mut coordinator_state = CoordinatorState::new(size as usize, 4, 1, 1);
+        let pks = coordinator_state.get_pks();
+        let mut pk_bytes = serialize_to_vec(&pks);
         root_process.broadcast_into(&mut pk_bytes);
 
         /***************************************************************************/
@@ -60,7 +59,7 @@ fn main() {
         /***************************************************************************/
 
         let proof = coordinator_state.aggregate(&responses);
-        println!("Proof: {:?}", proof)
+        println!("Made proof");
     } else {
         let pk: G16ProvingKey = todo!();
         let mut pk_bytes = serialize_to_vec(&pk);
