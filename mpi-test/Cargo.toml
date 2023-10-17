@@ -10,9 +10,11 @@ ark-serialize = { version = "0.4" }
 ark-ff = { version = "0.4", features = ["parallel"] }
 ark-ec = { version = "0.4", features = ["parallel"] }
 ark-bls12-381 = { path = "../bls12_381", features = ["parallel"] }
+ark-cp-groth16 = { path = "../cp-groth16" }
 mpi = { version = "0.6.0", features = [ "derive" ] }
 distributed-prover = { path = "../distributed-prover" }
 rayon = { version = "1" }
+rand = "0.8.5"
 
 
 [profile.release]

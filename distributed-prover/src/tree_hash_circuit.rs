@@ -115,7 +115,7 @@ impl std::fmt::Display for MerkleTreeCircuitParams {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         writeln!(
             f,
-            "[n_subcircs={}, n_iters={}, n_portals={}]",
+            "[nc={},ns={},np={}]",
             2 * self.num_leaves,
             self.num_sha_iters_per_subcircuit,
             self.num_portals_per_subcircuit

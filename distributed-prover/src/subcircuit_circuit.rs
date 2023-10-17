@@ -26,7 +26,7 @@ use ark_r1cs_std::{
 use ark_relations::{ns, r1cs::SynthesisError};
 
 // A ZK circuit that takes a CircuitWithPortals and proves just 1 subcircuit
-pub(crate) struct SubcircuitWithPortalsProver<F, P, C, CG>
+pub struct SubcircuitWithPortalsProver<F, P, C, CG>
 where
     F: PrimeField,
     P: CircuitWithPortals<F>,
@@ -40,13 +40,13 @@ where
     pub tree_params: ExecTreeParams<C>,
 
     // Stage 0 committed values
-    pub time_ordered_subtrace: VecDeque<RomTranscriptEntry<F>>,
-    pub addr_ordered_subtrace: VecDeque<RomTranscriptEntry<F>>,
-    pub time_ordered_subtrace_var: VecDeque<RomTranscriptEntryVar<F>>,
-    pub addr_ordered_subtrace_var: VecDeque<RomTranscriptEntryVar<F>>,
+    pub(crate) time_ordered_subtrace: VecDeque<RomTranscriptEntry<F>>,
+    pub(crate) addr_ordered_subtrace: VecDeque<RomTranscriptEntry<F>>,
+    pub(crate) time_ordered_subtrace_var: VecDeque<RomTranscriptEntryVar<F>>,
+    pub(crate) addr_ordered_subtrace_var: VecDeque<RomTranscriptEntryVar<F>>,
 
     // Stage 1 witnesses
-    pub cur_leaf: ExecTreeLeaf<F>,
+    pub(crate) cur_leaf: ExecTreeLeaf<F>,
     pub next_leaf_membership: MerklePath<C>,
 
     // Stage 1 public inputs

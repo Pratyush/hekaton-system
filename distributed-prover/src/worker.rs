@@ -2,11 +2,9 @@ use crate::{
     coordinator::{Stage0Request, Stage1Request},
     eval_tree::{ExecTreeParams, SerializedLeaf, SerializedLeafVar, TreeConfig, TreeConfigGadget},
     subcircuit_circuit::SubcircuitWithPortalsProver,
-    util::{G16Com, G16ComKey, G16ComSeed, G16ProvingKey},
+    util::{G16Com, G16ComKey, G16ComRandomness, G16ComSeed, G16ProvingKey},
     CircuitWithPortals,
 };
-
-use std::{collections::VecDeque, marker::PhantomData};
 
 use ark_cp_groth16::{
     committer::CommitmentBuilder as G16CommitmentBuilder, r1cs_to_qap::LibsnarkReduction as QAP,
@@ -28,6 +26,16 @@ pub struct Stage0Response<E: Pairing> {
     pub(crate) com_seed: G16ComSeed,
 }
 
+impl<E: Pairing> Default for Stage0Response<E> {
+    fn default() -> Self {
+        Stage0Response {
+            subcircuit_idx: 0,
+            com: G16Com::<E>::default(),
+            com_seed: G16ComSeed::default(),
+        }
+    }
+}
+
 impl<E: Pairing> Stage0Response<E> {
     pub fn dummy() -> Self {
         Self {
@@ -43,6 +51,15 @@ impl<E: Pairing> Stage0Response<E> {
 pub struct Stage1Response<E: Pairing> {
     pub subcircuit_idx: usize,
     pub proof: G16Proof<E>,
+}
+
+impl<E: Pairing> Default for Stage1Response<E> {
+    fn default() -> Self {
+        Stage1Response {
+            subcircuit_idx: 0,
+            proof: G16Proof::default(),
+        }
+    }
 }
 
 impl<E: Pairing> Stage1Response<E> {
@@ -61,6 +78,29 @@ pub fn process_stage0_request<C, CG, E, P, R>(
     g16_ck: G16ComKey<E>,
     req: Stage0Request<E::ScalarField>,
 ) -> Stage0Response<E>
+where
+    C: TreeConfig<Leaf = SerializedLeaf<E::ScalarField>>,
+    CG: TreeConfigGadget<C, E::ScalarField, Leaf = SerializedLeafVar<E::ScalarField>>,
+    E: Pairing,
+    // E::G1: VariableBaseMSMExt,
+    // E::G2: VariableBaseMSMExt,
+    P: CircuitWithPortals<E::ScalarField> + Clone,
+    R: RngCore,
+{
+    process_stage0_request_get_cb::<_, CG, _, P, _>(rng, tree_params, g16_ck, req).0
+}
+
+/// Consumes the stage0 request and performs the necessary Groth16 commitment. Returns the response
+/// and the commitment builder used to commit
+pub fn process_stage0_request_get_cb<C, CG, E, P, R>(
+    mut rng: R,
+    tree_params: ExecTreeParams<C>,
+    g16_ck: G16ComKey<E>,
+    req: Stage0Request<E::ScalarField>,
+) -> (
+    Stage0Response<E>,
+    G16CommitmentBuilder<SubcircuitWithPortalsProver<E::ScalarField, P, C, CG>, E, QAP>,
+)
 where
     C: TreeConfig<Leaf = SerializedLeaf<E::ScalarField>>,
     CG: TreeConfigGadget<C, E::ScalarField, Leaf = SerializedLeafVar<E::ScalarField>>,
@@ -120,15 +160,67 @@ where
     };
 
     // Commit to the stage 0 values (the subtraces)
-    let mut cb = G16CommitmentBuilder::<_, E, QAP>::new(prover, &empty_pk);
+    let mut cb = G16CommitmentBuilder::<_, E, QAP>::new(prover, empty_pk);
     let (com, _) = cb
         .commit(&mut subcircuit_rng)
         .expect("failed to commit to subtrace");
 
-    Stage0Response {
+    let resp = Stage0Response {
         subcircuit_idx,
         com,
         com_seed,
+    };
+
+    (resp, cb)
+}
+
+/// Process the given stage1 request, along with all the previous messages in this execution, and
+/// produces a Groth16 proof
+pub fn process_stage1_request_with_cb<C, CG, E, P, R>(
+    mut rng: R,
+    mut cb: G16CommitmentBuilder<SubcircuitWithPortalsProver<E::ScalarField, P, C, CG>, E, QAP>,
+    com: G16Com<E>,
+    rand: G16ComRandomness<E>,
+    stage1_req: Stage1Request<C, E::ScalarField, P>,
+) -> Stage1Response<E>
+where
+    C: TreeConfig<Leaf = SerializedLeaf<E::ScalarField>>,
+    CG: TreeConfigGadget<C, E::ScalarField, Leaf = SerializedLeafVar<E::ScalarField>>,
+    E: Pairing,
+    P: CircuitWithPortals<E::ScalarField>,
+    R: RngCore,
+{
+    // Unpack everything we'll need
+    let Stage1Request {
+        subcircuit_idx,
+        cur_leaf,
+        next_leaf_membership,
+        root,
+        serialized_witnesses,
+        circ_params,
+    } = stage1_req;
+    let (entry_chal, tr_chal) = cur_leaf.evals.challenges.unwrap();
+
+    assert_eq!(cb.circuit.subcircuit_idx, subcircuit_idx);
+
+    // Make an empty version of the large circuit and fill in just the witnesses for the
+    // subcircuit we're proving now
+    let mut underlying_circuit = P::new(&circ_params);
+    underlying_circuit.set_serialized_witnesses(subcircuit_idx, &serialized_witnesses);
+    cb.circuit.circ = Some(underlying_circuit);
+
+    // Put the request values into our circuit
+    cb.circuit.cur_leaf = cur_leaf;
+    cb.circuit.next_leaf_membership = next_leaf_membership;
+    cb.circuit.root = root;
+    cb.circuit.entry_chal = entry_chal;
+    cb.circuit.tr_chal = tr_chal;
+
+    let proof = cb.prove(&[com], &[rand], &mut rng).unwrap();
+
+    Stage1Response {
+        subcircuit_idx,
+        proof,
     }
 }
 
@@ -151,62 +243,33 @@ where
     P: CircuitWithPortals<E::ScalarField>,
     R: RngCore,
 {
-    // Unpack everything we'll need
-    let Stage1Request {
-        subcircuit_idx,
-        cur_leaf,
-        next_leaf_membership,
-        root,
-        serialized_witnesses,
-        circ_params,
-    } = stage1_req;
-    let (entry_chal, tr_chal) = cur_leaf.evals.challenges.unwrap();
-
-    // Make an empty version of the large circuit and fill in just the witnesses for the
-    // subcircuit we're proving now
-    let mut partial_circ = P::new(&circ_params);
-
-    partial_circ.set_serialized_witnesses(subcircuit_idx, &serialized_witnesses);
-
     let Stage0Request {
+        subcircuit_idx,
         time_ordered_subtrace,
         addr_ordered_subtrace,
         ..
     } = stage0_req;
 
-    let real_circ = SubcircuitWithPortalsProver {
-        subcircuit_idx,
-        circ: Some(partial_circ),
-        tree_params: tree_params.clone(),
-        time_ordered_subtrace,
-        addr_ordered_subtrace,
-        time_ordered_subtrace_var: VecDeque::new(),
-        addr_ordered_subtrace_var: VecDeque::new(),
-        cur_leaf,
-        next_leaf_membership,
-        entry_chal,
-        tr_chal,
-        root,
-        _marker: PhantomData::<CG>,
-    };
+    // We don't need a real auth path length because it'll get overwritten in
+    // process_stage1_request_with_cb
+    let fake_auth_path_len = 2;
+
+    // Set all the values in the underlying circuit
+    let mut circ = SubcircuitWithPortalsProver::<E::ScalarField, P, C, CG>::new(
+        tree_params,
+        fake_auth_path_len,
+    );
+    circ.subcircuit_idx = subcircuit_idx;
+    circ.time_ordered_subtrace = time_ordered_subtrace;
+    circ.addr_ordered_subtrace = addr_ordered_subtrace;
 
     // The commitment RNG is determined by com_seed
-    let mut cb = G16CommitmentBuilder::<_, E, QAP>::new(real_circ, pk);
+    let mut cb = G16CommitmentBuilder::<_, E, QAP>::new(circ, pk.clone());
     let mut subcircuit_rng = {
         let com_seed = stage0_resp.com_seed.clone();
         ChaCha12Rng::from_seed(com_seed)
     };
 
-    // Commit to the values
-    // TODO: Figure out a way to save constraint systems so that we don't have to do the commitment
-    // from scratch
     let (com, rand) = cb.commit(&mut subcircuit_rng).unwrap();
-    assert_eq!(com, stage0_resp.com);
-
-    let proof = cb.prove(&[com], &[rand], &mut rng).unwrap();
-
-    Stage1Response {
-        subcircuit_idx,
-        proof,
-    }
+    process_stage1_request_with_cb(rng, cb, com, rand, stage1_req)
 }

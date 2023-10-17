@@ -1,19 +1,14 @@
 use ark_serialize::CanonicalSerialize;
 
 pub mod coordinator;
-pub mod worker;
 pub mod data_structures;
+pub mod worker;
 
 #[macro_export]
 macro_rules! construct_partitioned_buffer_for_scatter {
     ($items:expr, $flattened_item_bytes: expr) => {{
-
-        let item_bytes = ($items)
-            .iter()
-            .map(serialize_to_vec)
-            .collect::<Vec<_>>();
-        let counts = 
-            std::iter::once(&vec![])
+        let item_bytes = ($items).iter().map(serialize_to_vec).collect::<Vec<_>>();
+        let counts = std::iter::once(&vec![])
             .chain(item_bytes.iter())
             .map(|bytes| bytes.len() as Count)
             .collect::<Vec<_>>();
@@ -65,7 +60,7 @@ macro_rules! deserialize_flattened_bytes {
         $flattened_item_bytes
             .chunks_exact(item_size)
             .map(<$item_type>::deserialize_uncompressed_unchecked)
-            .collect::<Result<Vec<_>,_>>()
+            .collect::<Result<Vec<_>, _>>()
     }};
 }
 
