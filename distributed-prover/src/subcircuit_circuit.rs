@@ -8,7 +8,7 @@ use crate::{
     CircuitWithPortals, RomTranscriptEntry, RomTranscriptEntryVar,
 };
 
-use std::{collections::VecDeque, marker::PhantomData};
+use std::marker::PhantomData;
 
 use ark_cp_groth16::{MultiStageConstraintSynthesizer, MultiStageConstraintSystem};
 use ark_crypto_primitives::merkle_tree::{
@@ -40,10 +40,10 @@ where
     pub tree_params: ExecTreeParams<C>,
 
     // Stage 0 committed values
-    pub(crate) time_ordered_subtrace: VecDeque<RomTranscriptEntry<F>>,
-    pub(crate) addr_ordered_subtrace: VecDeque<RomTranscriptEntry<F>>,
-    pub(crate) time_ordered_subtrace_var: VecDeque<RomTranscriptEntryVar<F>>,
-    pub(crate) addr_ordered_subtrace_var: VecDeque<RomTranscriptEntryVar<F>>,
+    pub(crate) time_ordered_subtrace: Vec<RomTranscriptEntry<F>>,
+    pub(crate) addr_ordered_subtrace: Vec<RomTranscriptEntry<F>>,
+    pub(crate) time_ordered_subtrace_var: Vec<RomTranscriptEntryVar<F>>,
+    pub(crate) addr_ordered_subtrace_var: Vec<RomTranscriptEntryVar<F>>,
 
     // Stage 1 witnesses
     pub(crate) cur_leaf: ExecTreeLeaf<F>,
@@ -101,10 +101,10 @@ where
             subcircuit_idx: 0,
             circ: None,
             tree_params,
-            time_ordered_subtrace: VecDeque::new(),
-            addr_ordered_subtrace: VecDeque::new(),
-            time_ordered_subtrace_var: VecDeque::new(),
-            addr_ordered_subtrace_var: VecDeque::new(),
+            time_ordered_subtrace: Vec::new(),
+            addr_ordered_subtrace: Vec::new(),
+            time_ordered_subtrace_var: Vec::new(),
+            addr_ordered_subtrace_var: Vec::new(),
             cur_leaf: ExecTreeLeaf::default(),
             next_leaf_membership: auth_path,
             entry_chal: F::zero(),
@@ -140,14 +140,18 @@ where
                     .time_ordered_subtrace
                     .iter()
                     .map(|entry| RomTranscriptEntryVar::new_witness(ns!(c, "time"), || Ok(entry)))
-                    .collect::<Result<VecDeque<_>, _>>()
+                    .collect::<Result<Vec<_>, _>>()
                     .unwrap();
                 self.addr_ordered_subtrace_var = self
                     .addr_ordered_subtrace
                     .iter()
                     .map(|entry| RomTranscriptEntryVar::new_witness(ns!(c, "addr"), || Ok(entry)))
-                    .collect::<Result<VecDeque<_>, _>>()
+                    .collect::<Result<Vec<_>, _>>()
                     .unwrap();
+                println!(
+                    "Witnessed trace of size {}",
+                    self.time_ordered_subtrace.len()
+                );
                 Ok(())
             });
         }
@@ -211,15 +215,16 @@ where
             let full_addr_ordered_subtrace = core::iter::once(&cur_leaf_var.last_subtrace_entry)
                 .chain(self.addr_ordered_subtrace_var.iter())
                 .cloned()
-                .collect::<VecDeque<_>>();
+                .collect::<Vec<_>>();
             // Save the last subtrace entry for a check later
-            let last_subtrace_entry = full_addr_ordered_subtrace.back().unwrap().clone();
+            let last_subtrace_entry = full_addr_ordered_subtrace.last().unwrap().clone();
 
             // Create the portal manager to give to the circuit
             let mut pm = ProverPortalManager {
                 time_ordered_subtrace: self.time_ordered_subtrace_var.clone(),
                 addr_ordered_subtrace: full_addr_ordered_subtrace,
                 running_evals: running_evals_var,
+                next_entry_idx: 0,
             };
 
             // Run the specific subcircuit and give it the prepared portal manager
@@ -230,8 +235,7 @@ where
 
             // Sanity checks: make sure all the subtraces were used. The addr-ordered one has 1
             // remaining because it starts with 1 extra. The last one is used, but it's not popped.
-            assert_eq!(pm.time_ordered_subtrace.len(), 0);
-            assert_eq!(pm.addr_ordered_subtrace.len(), 1);
+            assert_eq!(pm.next_entry_idx, pm.time_ordered_subtrace.len());
 
             // Make sure the resulting tree leaf appears in the Merkle Tree
             let next_leaf = ExecTreeLeafVar {
@@ -365,8 +369,8 @@ mod test {
                 tree_params: tree_params.clone(),
                 time_ordered_subtrace: stage0_req.time_ordered_subtrace.clone(),
                 addr_ordered_subtrace: stage0_req.addr_ordered_subtrace.clone(),
-                time_ordered_subtrace_var: VecDeque::new(),
-                addr_ordered_subtrace_var: VecDeque::new(),
+                time_ordered_subtrace_var: Vec::new(),
+                addr_ordered_subtrace_var: Vec::new(),
                 cur_leaf: stage1_req.cur_leaf,
                 next_leaf_membership: stage1_req.next_leaf_membership,
                 entry_chal,

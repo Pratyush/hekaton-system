@@ -12,7 +12,6 @@ use crate::{
 };
 
 use core::marker::PhantomData;
-use std::collections::VecDeque;
 
 use ark_cp_groth16::r1cs_to_qap::LibsnarkReduction as QAP;
 use ark_crypto_primitives::{
@@ -38,7 +37,7 @@ where
 {
     tree_params: ExecTreeParams<C>,
     circ: P,
-    time_ordered_subtraces: Vec<VecDeque<RomTranscriptEntry<E::ScalarField>>>,
+    time_ordered_subtraces: Vec<Vec<RomTranscriptEntry<E::ScalarField>>>,
     _marker: PhantomData<(C, CG)>,
 }
 
@@ -120,8 +119,8 @@ fn get_chals<E: Pairing>(com: &IppCom<E>) -> (E::ScalarField, E::ScalarField) {
 /// Flattens the subtraces into one big trace, sorts it by address, and chunks it back into the
 /// same-sized subtraces
 fn sort_subtraces_by_addr<F: PrimeField>(
-    time_ordered_subtraces: &[VecDeque<RomTranscriptEntry<F>>],
-) -> Vec<VecDeque<RomTranscriptEntry<F>>> {
+    time_ordered_subtraces: &[Vec<RomTranscriptEntry<F>>],
+) -> Vec<Vec<RomTranscriptEntry<F>>> {
     // Make the (flattened) address-sorted trace
     // Flatten the trace
     let mut flat_trace = time_ordered_subtraces
@@ -148,8 +147,8 @@ fn sort_subtraces_by_addr<F: PrimeField>(
 fn generate_exec_tree<E, C>(
     tree_params: &ExecTreeParams<C>,
     super_com: &IppCom<E>,
-    time_ordered_subtraces: &[VecDeque<RomTranscriptEntry<E::ScalarField>>],
-    addr_ordered_subtraces: &[VecDeque<RomTranscriptEntry<E::ScalarField>>],
+    time_ordered_subtraces: &[Vec<RomTranscriptEntry<E::ScalarField>>],
+    addr_ordered_subtraces: &[Vec<RomTranscriptEntry<E::ScalarField>>],
 ) -> (MerkleTree<C>, Vec<ExecTreeLeaf<E::ScalarField>>)
 where
     E: Pairing,
@@ -236,8 +235,8 @@ where
     E: Pairing,
     P: CircuitWithPortals<E::ScalarField>,
 {
-    time_ordered_subtraces: Vec<VecDeque<RomTranscriptEntry<E::ScalarField>>>,
-    addr_ordered_subtraces: Vec<VecDeque<RomTranscriptEntry<E::ScalarField>>>,
+    time_ordered_subtraces: Vec<Vec<RomTranscriptEntry<E::ScalarField>>>,
+    addr_ordered_subtraces: Vec<Vec<RomTranscriptEntry<E::ScalarField>>>,
     all_serialized_witnesses: Vec<Vec<u8>>,
     circ_params: P::Parameters,
 }
@@ -248,16 +247,16 @@ where
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct Stage0Request<F: PrimeField> {
     pub subcircuit_idx: usize,
-    pub(crate) time_ordered_subtrace: VecDeque<RomTranscriptEntry<F>>,
-    pub(crate) addr_ordered_subtrace: VecDeque<RomTranscriptEntry<F>>,
+    pub(crate) time_ordered_subtrace: Vec<RomTranscriptEntry<F>>,
+    pub(crate) addr_ordered_subtrace: Vec<RomTranscriptEntry<F>>,
 }
 
 impl<F: PrimeField> Stage0Request<F> {
     pub fn empty() -> Self {
         Self {
             subcircuit_idx: 0,
-            time_ordered_subtrace: VecDeque::new(),
-            addr_ordered_subtrace: VecDeque::new(),
+            time_ordered_subtrace: Vec::new(),
+            addr_ordered_subtrace: Vec::new(),
         }
     }
 
@@ -273,8 +272,8 @@ impl<F: PrimeField> Stage0Request<F> {
 #[derive(Clone)]
 pub struct Stage0RequestRef<'a, F: PrimeField> {
     subcircuit_idx: usize,
-    pub time_ordered_subtrace: &'a VecDeque<RomTranscriptEntry<F>>,
-    pub addr_ordered_subtrace: &'a VecDeque<RomTranscriptEntry<F>>,
+    pub time_ordered_subtrace: &'a Vec<RomTranscriptEntry<F>>,
+    pub addr_ordered_subtrace: &'a Vec<RomTranscriptEntry<F>>,
 }
 
 // We need to manually implement this because CanonicalSerialize isn't implemented for &T
@@ -411,9 +410,9 @@ where
     P: CircuitWithPortals<E::ScalarField>,
 {
     /// All the time-ordered subtraces
-    time_ordered_subtraces: Vec<VecDeque<RomTranscriptEntry<E::ScalarField>>>,
+    time_ordered_subtraces: Vec<Vec<RomTranscriptEntry<E::ScalarField>>>,
     /// All the addr-ordered subtraces
-    addr_ordered_subtraces: Vec<VecDeque<RomTranscriptEntry<E::ScalarField>>>,
+    addr_ordered_subtraces: Vec<Vec<RomTranscriptEntry<E::ScalarField>>>,
     /// The list of serialized witnesses, ordered by subcircuit
     all_serialized_witnesses: Vec<Vec<u8>>,
     /// Circuit metadata
@@ -476,8 +475,8 @@ where
 {
     fn new(
         tree_params: ExecTreeParams<C>,
-        time_ordered_subtraces: Vec<VecDeque<RomTranscriptEntry<E::ScalarField>>>,
-        addr_ordered_subtraces: Vec<VecDeque<RomTranscriptEntry<E::ScalarField>>>,
+        time_ordered_subtraces: Vec<Vec<RomTranscriptEntry<E::ScalarField>>>,
+        addr_ordered_subtraces: Vec<Vec<RomTranscriptEntry<E::ScalarField>>>,
         all_serialized_witnesses: Vec<Vec<u8>>,
         circ_params: P::Parameters,
         coms: Vec<G16Com<E>>,

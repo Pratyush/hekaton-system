@@ -1,9 +1,6 @@
 use crate::{RomTranscriptEntry, RomTranscriptEntryVar, RunningEvalsVar};
 
-use std::{
-    cmp::Ordering,
-    collections::{HashMap, VecDeque},
-};
+use std::{cmp::Ordering, collections::HashMap};
 
 use ark_ff::PrimeField;
 use ark_r1cs_std::{
@@ -30,7 +27,7 @@ pub trait PortalManager<F: PrimeField> {
 /// This portal manager is used by the coordinator to produce the trace
 pub struct SetupPortalManager<F: PrimeField> {
     /// All the subtraces from the full run of the circuit
-    pub subtraces: Vec<VecDeque<RomTranscriptEntry<F>>>,
+    pub subtraces: Vec<Vec<RomTranscriptEntry<F>>>,
 
     /// The address that this manager will assign to the next unseen variable name
     next_var_addr: u64,
@@ -55,7 +52,7 @@ impl<F: PrimeField> SetupPortalManager<F> {
     /// Makes a subtrace and updates the constraint system. The constraint system needs to be
     /// updated with an empty one otherwise it gets too big and we run out of memory
     pub(crate) fn start_subtrace(&mut self, cs: ConstraintSystemRef<F>) {
-        self.subtraces.push(VecDeque::new());
+        self.subtraces.push(Vec::new());
         self.cs = cs;
     }
 }
@@ -76,7 +73,7 @@ impl<F: PrimeField> PortalManager<F> for SetupPortalManager<F> {
         self.subtraces
             .last_mut()
             .expect("must run start_subtrace() before using SetupPortalManager")
-            .push_back(entry);
+            .push(entry);
 
         // Return the witnessed value
         Ok(val_var)
@@ -103,7 +100,7 @@ impl<F: PrimeField> PortalManager<F> for SetupPortalManager<F> {
         self.subtraces
             .last_mut()
             .expect("must run start_subtrace() before using SetupPortalManager")
-            .push_back(entry);
+            .push(entry);
 
         Ok(())
     }
@@ -113,19 +110,20 @@ impl<F: PrimeField> PortalManager<F> for SetupPortalManager<F> {
 /// well as the running evals up until this point. These values are used in the CircuitWithPortals
 /// construction later.
 pub(crate) struct ProverPortalManager<F: PrimeField> {
-    pub time_ordered_subtrace: VecDeque<RomTranscriptEntryVar<F>>,
-    pub addr_ordered_subtrace: VecDeque<RomTranscriptEntryVar<F>>,
+    pub time_ordered_subtrace: Vec<RomTranscriptEntryVar<F>>,
+    pub addr_ordered_subtrace: Vec<RomTranscriptEntryVar<F>>,
     pub running_evals: RunningEvalsVar<F>,
+    pub next_entry_idx: usize,
 }
 
 impl<F: PrimeField> PortalManager<F> for ProverPortalManager<F> {
-    /// Pops off the subtrace, updates the running polyn evals to reflect the read op, and does one
-    /// step of the name-ordered coherence check.
+    /// Gets the next subtrace elem, updates the running polyn evals to reflect the read op, and
+    /// does one step of the name-ordered coherence check.
     fn get(&mut self, _name: &str) -> Result<FpVar<F>, SynthesisError> {
-        // Pop the value and sanity check the name
+        // Get the next value
         let entry = self
             .time_ordered_subtrace
-            .pop_front()
+            .get(self.next_entry_idx)
             .expect("ran out of time-ordered subtrace entries");
 
         // TODO: Would probably be a good thing to have RomTranscriptEntry and
@@ -137,15 +135,18 @@ impl<F: PrimeField> PortalManager<F> for ProverPortalManager<F> {
 
         // On our other subtrace, do one step of a memory-ordering check
 
-        // Pop off a value and peek the next one. Unpack both
+        // Get the next two values. Unpack both
         let RomTranscriptEntryVar {
             addr: cur_addr,
             val: cur_val,
         } = self
             .addr_ordered_subtrace
-            .pop_front()
+            .get(self.next_entry_idx)
             .expect("ran out of addr-ordered subtrace entries");
-        let next_entry = self.addr_ordered_subtrace.front().unwrap();
+        let next_entry = self
+            .addr_ordered_subtrace
+            .get(self.next_entry_idx + 1)
+            .unwrap();
         let (next_addr, next_val) = (&next_entry.addr, &next_entry.val);
 
         // Check cur_addr <= next_addr. In fact, next_addr is guaranteed to be cur_addr + 1 if not
@@ -163,8 +164,11 @@ impl<F: PrimeField> PortalManager<F> for ProverPortalManager<F> {
         // except for the initial padding entry.
         self.running_evals.update_addr_ordered(&next_entry);
 
+        // Update the index into the trace(s)
+        self.next_entry_idx += 1;
+
         // Return the val from the subtrace
-        Ok(entry.val)
+        Ok(entry.val.clone())
     }
 
     /// Set is no different from get in circuit land. This does the same thing, and also enforce

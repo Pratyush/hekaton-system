@@ -37,9 +37,9 @@ incremental = true
 debug-assertions = true
 debug = true
 
-[patch.crates-io.ark-serialize]
-git = "https://github.com/rozbb/algebra.git"
-branch = "canonicalserialize-vecdeque"
+#[patch.crates-io.ark-serialize]
+#git = "https://github.com/rozbb/algebra.git"
+#branch = "canonicalserialize-vecdeque"
 
 # [patch.crates-io.ark-r1cs-std]
 # git = "https://github.com/arkworks-rs/r1cs-std.git"

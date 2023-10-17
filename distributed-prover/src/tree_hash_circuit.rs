@@ -4,8 +4,6 @@ use crate::{
     CircuitWithPortals, RomTranscriptEntry,
 };
 
-use std::collections::VecDeque;
-
 use ark_crypto_primitives::crh::sha256::{
     constraints::{DigestVar, Sha256Gadget},
     digest::Digest,
@@ -337,7 +335,7 @@ impl<F: PrimeField> CircuitWithPortals<F> for MerkleTreeCircuit {
 
     // This produces the same portal trace as generate_constraints(0...num_circuits) would do, but
     // without having to do all the ZK SHA2 computations
-    fn get_portal_subtraces(&self) -> Vec<VecDeque<RomTranscriptEntry<F>>> {
+    fn get_portal_subtraces(&self) -> Vec<Vec<RomTranscriptEntry<F>>> {
         let num_leaves = self.leaves.len();
         let num_subcircuits = num_leaves * 2;
 
@@ -596,7 +594,7 @@ mod test {
 
     // The other way of getting the portal trace is by just running the full circuit. This is very
     // slow in general
-    pub(crate) fn slow_get_portal_subtraces<F, P>(circ: &P) -> Vec<VecDeque<RomTranscriptEntry<F>>>
+    pub(crate) fn slow_get_portal_subtraces<F, P>(circ: &P) -> Vec<Vec<RomTranscriptEntry<F>>>
     where
         F: PrimeField,
         P: CircuitWithPortals<F>,
