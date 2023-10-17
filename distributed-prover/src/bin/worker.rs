@@ -74,9 +74,9 @@ fn process_stage0_request(
 
     // Deserialize the appropriate committing key and request
     let start = start_timer!(|| "Deserializing g16 com key");
-    let g16_ck = deserialize_from_path::<G16ComKey<E>>(
+    let g16_pk = deserialize_from_path::<G16ProvingKey<E>>(
         g16_pk_dir,
-        G16_CK_FILENAME_PREFIX,
+        G16_PK_FILENAME_PREFIX,
         Some(subcircuit_idx),
     )
     .unwrap();
@@ -101,7 +101,7 @@ fn process_stage0_request(
         _,
         MerkleTreeCircuit,
         _,
-    >(&mut rng, tree_params, g16_ck, stage0_req);
+    >(&mut rng, tree_params, &g16_pk, stage0_req);
     end_timer!(start);
 
     // Save it

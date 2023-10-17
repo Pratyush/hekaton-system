@@ -165,7 +165,7 @@ fn process_stage0_requests(
                     >(
                         &mut rng,
                         tree_params.clone(),
-                        g16_pk.ck.clone(),
+                        &g16_pk,
                         stage0_req.clone(),
                     )
                 })
@@ -176,7 +176,7 @@ fn process_stage0_requests(
     distributed_prover::worker::process_stage0_request::<_, TreeConfigVar, _, MerkleTreeCircuit, _>(
         &mut rng,
         tree_params,
-        g16_pk.ck.clone(),
+        &g16_pk,
         stage0_req,
     )
 }
@@ -327,7 +327,7 @@ fn show_portal_constraint_tradeoff(c: &mut Criterion) {
                     >(
                         &mut rng,
                         tree_params.clone(),
-                        first_leaf_pk.ck.clone(),
+                        &first_leaf_pk,
                         stage0_req,
                     );
                 })
