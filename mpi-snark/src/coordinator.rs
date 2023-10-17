@@ -19,6 +19,7 @@ impl<E: Pairing> CoordinatorState<E> {
         let mt_params = gen_test_circuit_params(num_subcircuits, num_sha_iterations, num_portals_per_subcircuit);
 
         let (g16_pks, agg_pk) = generate_g16_pks(mt_params);
+        todo!()
     }
 
     pub fn get_pk(&self) -> G16ProvingKey {
@@ -113,7 +114,7 @@ fn generate_g16_pks(
 
     // To generate the aggregation key, we need an efficient G16 pk fetcher. Normally this hits
     // disk, but this might take a long long time.
-    let pk_fetcher = move |subcircuit_idx: usize| {
+    let pk_fetcher = |subcircuit_idx: usize| {
         if subcircuit_idx == 0 {
             pks.first_leaf_pk()
         } else if other_leaf_idxs.contains(&subcircuit_idx) {
@@ -130,12 +131,13 @@ fn generate_g16_pks(
     };
 
     // Construct the aggregator commitment key
-    let start = ark_std::start_timer!(|| format!("Generating aggregation key with params {circ_params}"));
+    let start = start_timer!(|| format!("Generating aggregation key with params {circ_params}"));
     let agg_ck = {
         // Need some intermediate keys
         let super_com_key = SuperComCommittingKey::<Bls12_381>::gen(&mut rng, num_subcircuits);
         let kzg_ck = KzgComKey::gen(&mut rng, num_subcircuits);
         AggProvingKey::new(super_com_key, kzg_ck, pk_fetcher)
     };
+    end_timer!(start);
     (pks, agg_ck)
 }

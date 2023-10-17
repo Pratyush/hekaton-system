@@ -24,7 +24,7 @@ fn main() {
     if rank == root_rank {
         // Initial broadcast
 
-        let mut coordinator_state = CoordinatorState::<Bls12_381>::new(size as usize);
+        let mut coordinator_state = CoordinatorState::<Bls12_381>::new(size as usize, 0, 0, 0);
         let pk = coordinator_state.get_pk();
         let mut pk_bytes = serialize_to_vec(&pk);
         root_process.broadcast_into(&mut pk_bytes);
