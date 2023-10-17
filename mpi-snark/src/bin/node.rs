@@ -1,6 +1,6 @@
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{end_timer, start_timer};
-use clap::Parser;
+// use clap::Parser;
 use mpi::traits::*;
 use mpi::{
     datatype::{Partition, PartitionMut},
@@ -158,34 +158,39 @@ fn receive_requests<'a, C: 'a + Communicator, T: CanonicalDeserialize>(
     T::deserialize_uncompressed_unchecked(&request_bytes[..]).unwrap()
 }
 
-#[derive(Parser)]
-struct Args {
-    /// The number of workers who will do the committing and proving. Each worker has 1 core.
-    #[clap(short, long, value_name = "NUM")]
-    num_workers: usize,
+// #[derive(Parser)]
+// struct Args {
+//     /// The number of workers who will do the committing and proving. Each worker has 1 core.
+//     #[clap(short, long, value_name = "NUM")]
+//     num_workers: usize,
 
-    /// Test circuit param: Number of subcircuits. MUST be a power of two and greater than 1.
-    #[clap(short, long, value_name = "NUM")]
-    num_subcircuits: usize,
+//     /// Test circuit param: Number of subcircuits. MUST be a power of two and greater than 1.
+//     #[clap(short, long, value_name = "NUM")]
+//     num_subcircuits: usize,
 
-    /// Test circuit param: Number of SHA256 iterations per subcircuit. MUST be at least 1.
-    #[clap(short, long, value_name = "NUM")]
-    num_sha2_iters: usize,
+//     /// Test circuit param: Number of SHA256 iterations per subcircuit. MUST be at least 1.
+//     #[clap(short, long, value_name = "NUM")]
+//     num_sha2_iters: usize,
 
-    /// Test circuit param: Number of portal wire ops per subcircuit. MUST be at least 1.
-    #[clap(short, long, value_name = "NUM")]
-    num_portals: usize,
-}
+//     /// Test circuit param: Number of portal wire ops per subcircuit. MUST be at least 1.
+//     #[clap(short, long, value_name = "NUM")]
+//     num_portals: usize,
+// }
 
 fn main() {
     println!("Rayon num threads: {}", rayon::current_num_threads());
 
-    let Args {
-        num_workers,
-        num_subcircuits,
-        num_sha2_iters,
-        num_portals,
-    } = Args::parse();
+    // let Args {
+    //     num_workers,
+    //     num_subcircuits,
+    //     num_sha2_iters,
+    //     num_portals,
+    // } = Args::parse();
+
+    let num_workers = 8;
+    let num_subcircuits = 8;
+    let num_sha2_iters = 1;
+    let num_portals = 1;
 
     let start = start_timer!(|| format!("Running coordinator"));
 

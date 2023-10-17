@@ -9,21 +9,17 @@ keywords = ["cryptography", "crypto", "zero-knowledge", "snark"]
 categories = ["cryptography", "no-std"]
 
 [dependencies]
-ark-bls12-381 = { path = "../bls12_381", features = ["parallel"] }
-# ark-ed-on-bls12-381 = { version = "0.4", features = ["r1cs"] }
+ark-bls12-381 = { path = "../bls12_381" }
 ark-ff = {version = "0.4", default-features = false }
 ark-poly = { version = "0.4.0" }
 ark-r1cs-std = { version = "0.4", default-features = false }
-ark-relations = { version = "0.4", default-features = false, features = ["std"] }
+ark-relations = { version = "0.4", default-features = false }
 ark-serialize = { version = "0.4", default-features = false, features = ["derive"] }
-# ark-msm = { path = "../ark-msm" }
 clap = { version = "4.4", features = ["derive"] }
 rand = "0.8"
-# tinyram-emu = { path = "../tinyram-emu" }
-ark-cp-groth16 = { path = "../cp-groth16" }
+ark-cp-groth16 = { path = "../cp-groth16", default-features = false }
 ark-std = "0.4.0"
-# xxhash-rust = { version = "0.8.7", features = ["xxh3"] }
-ark-crypto-primitives = { version = "0.4", features = ["merkle_tree", "r1cs"] }
+ark-crypto-primitives = { version = "0.4", default-features = false, features = ["merkle_tree", "r1cs"] }
 ark-ec = "0.4.2"
 rand_chacha = "0.3.1"
 rayon = "1.8.0"

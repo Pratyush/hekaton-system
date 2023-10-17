@@ -70,7 +70,7 @@ pub fn execute_with_max_available_threads<T: Sync + Send>(f: impl FnOnce() -> T 
     }
     #[cfg(not(feature = "parallel"))]
     {
-        f();
+        f()
     }
 }
 

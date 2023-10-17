@@ -1,7 +1,6 @@
 use ark_ec::{
     bls12,
     bls12::Bls12Config,
-    hashing::curve_maps::wb::{IsogenyMap, WBConfig},
     models::CurveConfig,
     short_weierstrass::{Affine, SWCurveConfig},
     AffineRepr, Group,
@@ -10,7 +9,6 @@ use ark_ff::{MontFp, PrimeField, Zero, Field};
 use ark_serialize::{Compress, SerializationError};
 use ark_std::{ops::Neg, One, cfg_into_iter, vec::Vec};
 
-use super::g1_swu_iso;
 use crate::{
     util::{
         read_g1_compressed, read_g1_uncompressed, serialize_fq, EncodingFlags, G1_SERIALIZED_SIZE,
@@ -162,14 +160,6 @@ impl SWCurveConfig for Config {
 fn one_minus_x() -> Fr {
     const X: Fr = Fr::from_sign_and_limbs(!crate::Config::X_IS_NEGATIVE, crate::Config::X);
     Fr::one() - X
-}
-
-// Parameters from the [IETF draft v16, section E.2](https://www.ietf.org/archive/id/draft-irtf-cfrg-hash-to-curve-16.html#name-11-isogeny-map-for-bls12-381).
-impl WBConfig for Config {
-    type IsogenousCurve = g1_swu_iso::SwuIsoConfig;
-
-    const ISOGENY_MAP: IsogenyMap<'static, Self::IsogenousCurve, Self> =
-        g1_swu_iso::ISOGENY_MAP_TO_G1;
 }
 
 /// G1_GENERATOR_X =

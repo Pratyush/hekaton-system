@@ -3,7 +3,6 @@ use ark_std::{ops::Neg, cfg_into_iter, vec::Vec};
 use ark_ec::{
     bls12,
     bls12::Bls12Config,
-    hashing::curve_maps::wb::{IsogenyMap, WBConfig},
     models::CurveConfig,
     short_weierstrass::{Affine, Projective, SWCurveConfig},
     AffineRepr, CurveGroup, Group,
@@ -12,7 +11,6 @@ use ark_ff::{Field, MontFp, Zero, PrimeField};
 use ark_serialize::{Compress, SerializationError};
 
 use super::{
-    g2_swu_iso,
     util::{serialize_fq, EncodingFlags, G2_SERIALIZED_SIZE},
 };
 use crate::{
@@ -279,14 +277,6 @@ fn double_p_power_endomorphism(p: &Projective<Config>) -> Projective<Config> {
     res.y = res.y.neg();
 
     res
-}
-
-// Parametres from the [IETF draft v16, section E.3](https://www.ietf.org/archive/id/draft-irtf-cfrg-hash-to-curve-16.html#name-3-isogeny-map-for-bls12-381).
-impl WBConfig for Config {
-    type IsogenousCurve = g2_swu_iso::SwuIsoConfig;
-
-    const ISOGENY_MAP: IsogenyMap<'static, Self::IsogenousCurve, Self> =
-        g2_swu_iso::ISOGENY_MAP_TO_G2;
 }
 
 #[cfg(test)]
