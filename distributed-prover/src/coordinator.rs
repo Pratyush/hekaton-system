@@ -25,7 +25,7 @@ use ark_relations::r1cs::{ConstraintSystem, ConstraintSystemRef};
 use ark_serialize::{
     CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Write,
 };
-use ark_std::{start_timer, end_timer};
+use ark_std::{end_timer, start_timer};
 use rand::RngCore;
 
 /// Generates Groth16 proving keys
@@ -252,7 +252,6 @@ pub struct Stage0Request<F: PrimeField> {
     pub(crate) addr_ordered_subtrace: VecDeque<RomTranscriptEntry<F>>,
 }
 
-
 impl<F: PrimeField> Stage0Request<F> {
     pub fn empty() -> Self {
         Self {
@@ -339,7 +338,6 @@ where
         end_timer!(subtrace_timer);
 
         end_timer!(timer);
-
 
         CoordinatorStage0State {
             time_ordered_subtraces,

@@ -12,8 +12,12 @@ use rand::SeedableRng;
 use rand_chacha::ChaCha12Rng;
 use rayon::prelude::*;
 
-pub use ark_cp_groth16::data_structures::{
-    Comm as G16Com, CommitterKey as G16ComKey, Proof as G16Proof, ProvingKey as G16ProvingKey,
+pub use ark_cp_groth16::{
+    committer::CommitmentBuilder as G16CommitmentBuilder,
+    data_structures::{
+        Comm as G16Com, CommRandomness as G16ComRandomness, CommitterKey as G16ComKey,
+        Proof as G16Proof, ProvingKey as G16ProvingKey,
+    },
 };
 pub use merlin::Transcript as ProtoTranscript;
 
