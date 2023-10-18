@@ -86,10 +86,10 @@ fn do_stuff(num_workers: usize, num_subcircuits: usize, num_sha2_iters: usize, n
         end_timer_buf!(log, start);
 
         // Stage 0 scatter
-        scatter_requests("stage0", &root_process, &requests);
+        scatter_requests(&mut log, "stage0", &root_process, &requests);
 
         // Stage 0 gather
-        let responses = gather_responses("stage1", size, &root_process);
+        let responses = gather_responses(&mut log, "stage1", size, &root_process);
         /***************************************************************************/
         /***************************************************************************/
 
@@ -101,10 +101,10 @@ fn do_stuff(num_workers: usize, num_subcircuits: usize, num_sha2_iters: usize, n
         end_timer_buf!(log, start);
 
         // Stage 1 scatter
-        scatter_requests("stage1", &root_process, &requests);
+        scatter_requests(&mut log, "stage1", &root_process, &requests);
 
         // Stage 1 gather
-        let responses = gather_responses("stage1", size, &root_process);
+        let responses = gather_responses(&mut log, "stage1", size, &root_process);
         /***************************************************************************/
         /***************************************************************************/
 
@@ -133,7 +133,7 @@ fn do_stuff(num_workers: usize, num_subcircuits: usize, num_sha2_iters: usize, n
         // Stage 0
 
         // Receive Stage 0 request
-        let request = receive_requests("stage0", &root_process);
+        let request = receive_requests(&mut log, rank, "stage0", &root_process);
 
         // Compute Stage 0 response
         let start = start_timer_buf!(log, || format!("Worker {rank}: Processing stage0 request"));
@@ -148,7 +148,10 @@ fn do_stuff(num_workers: usize, num_subcircuits: usize, num_sha2_iters: usize, n
         let response_bytes = serialize_to_vec(&response);
         end_timer_buf!(log, start);
 
-        let start = start_timer_buf!(log, || format!("Worker {rank}: Gathering stage0 repsonse"));
+        let start = start_timer_buf!(log, || format!(
+            "Worker {rank}: Gathering stage0 repsonse, each of size {}",
+            response_bytes.len()
+        ));
         root_process.gather_varcount_into(&response_bytes);
         end_timer_buf!(log, start);
         println!("Finished worker gather 0 for rank {rank}");
@@ -161,20 +164,25 @@ fn do_stuff(num_workers: usize, num_subcircuits: usize, num_sha2_iters: usize, n
         // Stage 1
 
         // Receive Stage 1 request
-        let request = receive_requests("stage1", &root_process);
+        let request = receive_requests(&mut log, rank, "stage1", &root_process);
 
         // Compute Stage 1 response
-        let start = start_timer_buf!(log, || format!("Worker: Processing stage1 request"));
+        let start = start_timer_buf!(log, || format!("Worker {rank}: Processing stage1 request"));
         let response = worker_state.stage_1(&request);
         end_timer_buf!(log, start);
         println!("Finished worker scatter 1 for rank {rank}");
 
         // Send Stage 1 response
-        let start = start_timer_buf!(log, || format!("Worker: Serializing stage1 response"));
+        let start = start_timer_buf!(log, || format!(
+            "Worker {rank}: Serializing stage1 response"
+        ));
         let response_bytes = serialize_to_vec(&response);
         end_timer_buf!(log, start);
 
-        let start = start_timer_buf!(log, || format!("Worker: Gathering stage1 response"));
+        let start = start_timer_buf!(log, || format!(
+            "Worker {rank}: Gathering stage1 response, each of size {}",
+            response_bytes.len()
+        ));
         root_process.gather_varcount_into(&response_bytes);
         end_timer_buf!(log, start);
 
@@ -183,29 +191,35 @@ fn do_stuff(num_workers: usize, num_subcircuits: usize, num_sha2_iters: usize, n
         /***************************************************************************/
     }
 
-    println!("{}", log.join(";"));
+    println!("Rank {rank} log: {}", log.join(";"));
 }
 
 fn scatter_requests<'a, C: 'a + Communicator>(
-    name: &str,
+    log: &mut Vec<String>,
+    stage: &str,
     root_process: &Process<'a, C>,
     requests: &[impl CanonicalSerialize + Send],
 ) {
-    let start = start_timer!(|| format!("Coord: Serializing {name} requests"));
+    let start = start_timer_buf!(log, || format!("Coord: Serializing {stage} requests"));
     let mut request_bytes = vec![];
     let request_bytes_buf = construct_partitioned_buffer_for_scatter!(requests, &mut request_bytes);
-    end_timer!(start);
+    end_timer_buf!(log, start);
 
     let counts = request_bytes_buf.counts().to_vec();
     root_process.scatter_into_root(&counts, &mut 0i32);
     let mut _recv_buf: Vec<u8> = vec![];
 
-    let start = start_timer!(|| format!("Coord: Scattering {name} requests"));
+    let start = start_timer_buf!(log, || format!("Coord: Scattering {stage} requests"));
     root_process.scatter_varcount_into_root(&request_bytes_buf, &mut _recv_buf);
-    end_timer!(start);
+    end_timer_buf!(log, start);
 }
 
-fn gather_responses<'a, C, T>(name: &str, size: Count, root_process: &Process<'a, C>) -> Vec<T>
+fn gather_responses<'a, C, T>(
+    log: &mut Vec<String>,
+    stage: &str,
+    size: Count,
+    root_process: &Process<'a, C>,
+) -> Vec<T>
 where
     C: 'a + Communicator,
     T: CanonicalSerialize + CanonicalDeserialize + Default,
@@ -214,33 +228,38 @@ where
     let mut response_bytes_buf =
         construct_partitioned_mut_buffer_for_gather!(size, T, &mut response_bytes);
     // Root does not send anything, it only receives.
-    let start = start_timer!(|| format!("Coord: Gathering {name} responses"));
+    let start = start_timer_buf!(log, || format!("Coord: Gathering {stage} responses"));
     root_process.gather_varcount_into_root(&[0u8; 0], &mut response_bytes_buf);
-    end_timer!(start);
+    end_timer_buf!(log, start);
 
-    let start = start_timer!(|| format!("Coord: Deserializing {name} responses"));
+    let start = start_timer_buf!(log, || format!("Coord: Deserializing {stage} responses"));
     let ret = deserialize_flattened_bytes!(response_bytes, T).unwrap();
-    end_timer!(start);
+    end_timer_buf!(log, start);
 
     ret
 }
 
 fn receive_requests<'a, C: 'a + Communicator, T: CanonicalDeserialize>(
-    name: &str,
+    log: &mut Vec<String>,
+    rank: i32,
+    stage: &str,
     root_process: &Process<'a, C>,
 ) -> T {
     let mut size = 0 as Count;
     root_process.scatter_into(&mut size);
 
-    let start =
-        start_timer!(|| format!("Worker: Receiving scattered {name} request of size {size}"));
+    let start = start_timer_buf!(log, || format!(
+        "Worker {rank}: Receiving scattered {stage} request of size {size}"
+    ));
     let mut request_bytes = vec![0u8; size as usize];
     root_process.scatter_varcount_into(&mut request_bytes);
-    end_timer!(start);
+    end_timer_buf!(log, start);
 
-    let start = start_timer!(|| format!("Worker: Deserializing {name} request"));
+    let start = start_timer_buf!(log, || format!(
+        "Worker {rank}: Deserializing {stage} request"
+    ));
     let ret = T::deserialize_uncompressed_unchecked(&request_bytes[..]).unwrap();
-    end_timer!(start);
+    end_timer_buf!(log, start);
 
     ret
 }
