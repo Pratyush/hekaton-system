@@ -19,7 +19,7 @@ rand = "0.8.5"
 clap = { version = "4.4.6", default-features = false, features = ["derive"] }
 
 [features]
-default = ["print-trace"]
+default = []#"print-trace"]
 print-trace = ["ark-std/print-trace"]
 
 
