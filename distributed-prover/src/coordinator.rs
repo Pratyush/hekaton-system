@@ -583,6 +583,7 @@ where
     pub(crate) circ_params: P::Parameters,
 }
 
+#[derive(Clone)]
 pub struct Stage1RequestRef<'a, C, F, P>
 where
     C: TreeConfig,

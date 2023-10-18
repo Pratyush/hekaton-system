@@ -1,4 +1,4 @@
-use distributed_prover::tree_hash_circuit::{MerkleTreeCircuit, MerkleTreeCircuitParams};
+use distributed_prover::tree_hash_circuit::MerkleTreeCircuitParams;
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use clap::{Parser, Subcommand};
@@ -15,7 +15,6 @@ use mpi_snark::{
     deserialize_flattened_bytes, serialize_to_vec,
     worker::WorkerState,
 };
-use rayon::prelude::*;
 
 use std::{
     fs::File,
@@ -52,6 +51,74 @@ macro_rules! end_timer_buf {
             final_time.as_micros()
         ));
     }};
+}
+
+use rayon::prelude::*;
+
+#[derive(Parser)]
+struct Args {
+    #[clap(subcommand)]
+    command: Command,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    Setup {
+        /// Test circuit param: Number of subcircuits. MUST be a power of two and greater than 1.
+        #[clap(long, value_name = "NUM")]
+        num_subcircuits: usize,
+
+        /// Test circuit param: Number of SHA256 iterations per subcircuit. MUST be at least 1.
+        #[clap(long, value_name = "NUM")]
+        num_sha2_iters: usize,
+
+        /// Test circuit param: Number of portal wire ops per subcircuit. MUST be at least 1.
+        #[clap(long, value_name = "NUM")]
+        num_portals: usize,
+
+        /// Path for the output coordinator key package
+        #[clap(long, value_name = "DIR")]
+        key_out: PathBuf,
+    },
+
+    Work {
+        /// Path to the coordinator key package
+        #[clap(long, value_name = "DIR")]
+        key_file: PathBuf,
+
+        /// The number of workers who will do the committing and proving. Each worker has 1 core.
+        #[clap(long, value_name = "NUM")]
+        num_workers: usize,
+    },
+}
+
+fn main() {
+    println!("Rayon num threads: {}", rayon::current_num_threads());
+
+    let args = Args::parse();
+
+    match args.command {
+        Command::Setup {
+            num_subcircuits,
+            num_sha2_iters,
+            num_portals,
+            key_out,
+        } => setup(key_out, num_subcircuits, num_sha2_iters, num_portals),
+        Command::Work {
+            key_file,
+            num_workers,
+        } => {
+            // Deserialize the proving keys
+            let proving_keys = {
+                let mut buf = Vec::new();
+                let mut f =
+                    File::open(&key_file).expect(&format!("couldn't open file {:?}", key_file));
+                let _ = f.read_to_end(&mut buf);
+                ProvingKeys::deserialize_uncompressed_unchecked(&mut buf.as_slice()).unwrap()
+            };
+            work(num_workers, proving_keys);
+        },
+    }
 }
 
 fn setup(
@@ -103,6 +170,9 @@ fn work(num_workers: usize, proving_keys: ProvingKeys) {
     let num_sha2_iters = circ_params.num_sha_iters_per_subcircuit;
     let num_portals = circ_params.num_portals_per_subcircuit;
 
+    let num_subcircuits_per_worker = num_subcircuits / num_workers;
+    assert_eq!(num_subcircuits_per_worker * num_workers, num_subcircuits);
+
     assert_eq!(
         num_workers, num_subcircuits,
         "We only support num_workers == num_subcircuits"
@@ -128,13 +198,21 @@ fn work(num_workers: usize, proving_keys: ProvingKeys) {
         // Stage 0
         let start = start_timer_buf!(log, || format!("Coord: Generating stage0 requests"));
         let requests = coordinator_state.stage_0();
+        let requests_chunked = requests
+            .chunks(num_subcircuits_per_worker)
+            .map(|chunk| chunk.to_vec())
+            .collect::<Vec<_>>();
         end_timer_buf!(log, start);
 
         // Stage 0 scatter
-        scatter_requests(&mut log, "stage0", &root_process, &requests);
+        scatter_requests(&mut log, "stage0", &root_process, &requests_chunked);
 
         // Stage 0 gather
-        let responses = gather_responses(&mut log, "stage0", size, &root_process);
+        let responses_chunked: Vec<Vec<_>> = gather_responses(&mut log, "stage0", size, &root_process);
+        let responses = responses_chunked
+            .into_par_iter()
+            .flatten()
+            .collect::<Vec<_>>();
         /***************************************************************************/
         /***************************************************************************/
 
@@ -143,49 +221,51 @@ fn work(num_workers: usize, proving_keys: ProvingKeys) {
         // Stage 1
         let start = start_timer_buf!(log, || format!("Coord: Processing stage0 responses"));
         let requests = coordinator_state.stage_1(&responses);
+        let requests_chunked = requests
+            .chunks(num_subcircuits_per_worker)
+            .map(|chunk| chunk.to_vec())
+            .collect::<Vec<_>>();
         end_timer_buf!(log, start);
 
         // Stage 1 scatter
-        scatter_requests(&mut log, "stage1", &root_process, &requests);
+        scatter_requests(&mut log, "stage1", &root_process, &requests_chunked);
 
         // Stage 1 gather
-        let responses = gather_responses(&mut log, "stage1", size, &root_process);
+        let responses_chunked: Vec<Vec<_>> = gather_responses(&mut log, "stage1", size, &root_process);
+        let responses = responses_chunked
+            .into_par_iter()
+            .flatten()
+            .collect::<Vec<_>>();
         /***************************************************************************/
         /***************************************************************************/
 
         let start = start_timer_buf!(log, || format!("Coord: Aggregating"));
-        let proof = coordinator_state.aggregate(&responses);
+        let _proof = coordinator_state.aggregate(&responses);
         end_timer_buf!(log, start);
     } else {
         // Worker code 
-        let mut worker_state = WorkerState::new(num_subcircuits, &proving_keys);
+        let mut worker_states = 
+            std::iter::from_fn(|| Some(WorkerState::new(num_subcircuits, &proving_keys))).take(num_subcircuits_per_worker).collect::<Vec<_>>();
 
         /***************************************************************************/
         /***************************************************************************/
         // Stage 0
 
         // Receive Stage 0 request
-        let request = receive_requests(&mut log, rank, "stage0", &root_process);
+        let requests: Vec<_> = receive_requests(&mut log, rank, "stage0", &root_process);
 
         // Compute Stage 0 response
-        let start = start_timer_buf!(log, || format!("Worker {rank}: Processing stage0 request"));
-        let response = worker_state.stage_0(&request);
+        let start = start_timer_buf!(log, || format!("Worker {rank}: Processing stage0 requests"));
+        let responses = requests
+            .iter()
+            .zip(worker_states.as_mut_slice())
+            .map(|(req, state)| state.stage_0(req))
+            .collect::<Vec<_>>();
         end_timer_buf!(log, start);
         println!("Finished worker scatter 0 for rank {rank}");
 
         // Send Stage 0 response
-        let start = start_timer_buf!(log, || format!(
-            "Worker {rank}: Serializing stage0 response"
-        ));
-        let response_bytes = serialize_to_vec(&response);
-        end_timer_buf!(log, start);
-
-        let start = start_timer_buf!(log, || format!(
-            "Worker {rank}: Gathering stage0 repsonse, each of size {}",
-            response_bytes.len()
-        ));
-        root_process.gather_varcount_into(&response_bytes);
-        end_timer_buf!(log, start);
+        send_responses(&mut log, rank, "stage0", &root_process, &responses);
         println!("Finished worker gather 0 for rank {rank}");
 
         /***************************************************************************/
@@ -196,27 +276,19 @@ fn work(num_workers: usize, proving_keys: ProvingKeys) {
         // Stage 1
 
         // Receive Stage 1 request
-        let request = receive_requests(&mut log, rank, "stage1", &root_process);
+        let requests: Vec<_> = receive_requests(&mut log, rank, "stage1", &root_process);
 
         // Compute Stage 1 response
         let start = start_timer_buf!(log, || format!("Worker {rank}: Processing stage1 request"));
-        let response = worker_state.stage_1(&request);
+        let responses = requests
+            .iter()
+            .zip(worker_states)
+            .map(|(req, state)| state.stage_1(req))
+            .collect::<Vec<_>>();
         end_timer_buf!(log, start);
         println!("Finished worker scatter 1 for rank {rank}");
 
-        // Send Stage 1 response
-        let start = start_timer_buf!(log, || format!(
-            "Worker {rank}: Serializing stage1 response"
-        ));
-        let response_bytes = serialize_to_vec(&response);
-        end_timer_buf!(log, start);
-
-        let start = start_timer_buf!(log, || format!(
-            "Worker {rank}: Gathering stage1 response, each of size {}",
-            response_bytes.len()
-        ));
-        root_process.gather_varcount_into(&response_bytes);
-        end_timer_buf!(log, start);
+        send_responses(&mut log, rank, "stage1", &root_process, &responses);
 
         println!("Finished worker gather 1 for rank {rank}");
         /***************************************************************************/
@@ -227,6 +299,8 @@ fn work(num_workers: usize, proving_keys: ProvingKeys) {
 
     println!("Rank {rank} log: {}", log.join(";"));
 }
+
+
 
 fn scatter_requests<'a, C: 'a + Communicator>(
     log: &mut Vec<String>,
@@ -298,70 +372,25 @@ fn receive_requests<'a, C: 'a + Communicator, T: CanonicalDeserialize>(
     ret
 }
 
-use rayon::prelude::*;
-
-#[derive(Parser)]
-struct Args {
-    #[clap(subcommand)]
-    command: Command,
-}
-
-#[derive(Subcommand)]
-enum Command {
-    Setup {
-        /// Test circuit param: Number of subcircuits. MUST be a power of two and greater than 1.
-        #[clap(long, value_name = "NUM")]
-        num_subcircuits: usize,
-
-        /// Test circuit param: Number of SHA256 iterations per subcircuit. MUST be at least 1.
-        #[clap(long, value_name = "NUM")]
-        num_sha2_iters: usize,
-
-        /// Test circuit param: Number of portal wire ops per subcircuit. MUST be at least 1.
-        #[clap(long, value_name = "NUM")]
-        num_portals: usize,
-
-        /// Path for the output coordinator key package
-        #[clap(long, value_name = "DIR")]
-        key_out: PathBuf,
-    },
-
-    Work {
-        /// Path to the coordinator key package
-        #[clap(long, value_name = "DIR")]
-        key_file: PathBuf,
-
-        /// The number of workers who will do the committing and proving. Each worker has 1 core.
-        #[clap(long, value_name = "NUM")]
-        num_workers: usize,
-    },
-}
-
-fn main() {
-    println!("Rayon num threads: {}", rayon::current_num_threads());
-
-    let args = Args::parse();
-
-    match args.command {
-        Command::Setup {
-            num_subcircuits,
-            num_sha2_iters,
-            num_portals,
-            key_out,
-        } => setup(key_out, num_subcircuits, num_sha2_iters, num_portals),
-        Command::Work {
-            key_file,
-            num_workers,
-        } => {
-            // Deserialize the proving keys
-            let proving_keys = {
-                let mut buf = Vec::new();
-                let mut f =
-                    File::open(&key_file).expect(&format!("couldn't open file {:?}", key_file));
-                let _ = f.read_to_end(&mut buf);
-                ProvingKeys::deserialize_uncompressed_unchecked(&mut buf.as_slice()).unwrap()
-            };
-            work(num_workers, proving_keys);
-        },
-    }
+fn send_responses<'a, C: 'a + Communicator, T: CanonicalSerialize>(
+    log: &mut Vec<String>,
+    rank: i32,
+    stage: &str,
+    root_process: &Process<'a, C>,
+    responses: &[T],
+) {
+    // Send Stage 1 response
+    let start = start_timer_buf!(log, || format!(
+        "Worker {rank}: Serializing {stage} {}, responses",
+        responses.len(),
+    ));
+    let responses_bytes = serialize_to_vec(&responses);
+    end_timer_buf!(log, start);
+    
+    let start = start_timer_buf!(log, || format!(
+        "Worker {rank}: Gathering {stage} response, each of size {}",
+        responses_bytes.len()/responses.len()
+    ));
+    root_process.gather_varcount_into(&responses_bytes);
+    end_timer_buf!(log, start);
 }
