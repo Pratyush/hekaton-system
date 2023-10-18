@@ -3,7 +3,7 @@
 set -eu
 
 MEM_PER_CPU="3800M"
-CPUS_PER_TASK="16"
+CPUS_PER_TASK="8"
 
 HELPSTR="\
 Usage:\n\
@@ -21,8 +21,8 @@ NUM_WORKERS=$2
 JOB_DESC=$(basename $KEYFILE_PATH | cut -d- -f2 | cut -d. -f1)
 
 DATETIME=$(printf '%(%Y%m%d.%H%M%S)T\n' -1)
-OUT_FILENAME="bench_out-${JOB_DESC}.txt"
-ERR_FILENAME="bench_err-${JOB_DESC}.txt"
+OUT_FILENAME="bench_out-${JOB_DESC}-${DATETIME}.txt"
+ERR_FILENAME="bench_err-${JOB_DESC}-${DATETIME}.txt"
 
 sbatch \
 	--wait \
