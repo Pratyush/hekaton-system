@@ -1,5 +1,6 @@
 use distributed_prover::{
-    poseidon_util::PoseidonTreeConfig as TreeConfig, tree_hash_circuit::MerkleTreeCircuit,
+    poseidon_util::PoseidonTreeConfig as TreeConfig,
+    tree_hash_circuit::{MerkleTreeCircuit, MerkleTreeCircuitParams},
 };
 
 use ark_bls12_381::{Bls12_381 as E, Fr};
@@ -29,6 +30,8 @@ pub type Stage1Response = distributed_prover::worker::Stage1Response<E>;
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct ProvingKeys {
+    // The parameters of the circuit being proved
+    pub circ_params: MerkleTreeCircuitParams,
     // First leaf circuit PK
     pub first_leaf_pk: Option<G16ProvingKey>,
     // Second leaf circuit PK
@@ -71,6 +74,8 @@ impl<'a> CanonicalSerialize for &'a ProvingKeys {
         mut writer: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
+        self.circ_params
+            .serialize_with_mode(&mut writer, compress)?;
         self.first_leaf_pk
             .serialize_with_mode(&mut writer, compress)?;
         self.second_leaf_pk
@@ -84,7 +89,8 @@ impl<'a> CanonicalSerialize for &'a ProvingKeys {
 
     #[inline]
     fn serialized_size(&self, compress: Compress) -> usize {
-        self.first_leaf_pk.serialized_size(compress)
+        self.circ_params.serialized_size(compress)
+            + self.first_leaf_pk.serialized_size(compress)
             + self.second_leaf_pk.serialized_size(compress)
             + self.padding_pk.serialized_size(compress)
             + self.root_pk.serialized_size(compress)

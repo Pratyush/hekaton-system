@@ -1,5 +1,7 @@
+use distributed_prover::tree_hash_circuit::{MerkleTreeCircuit, MerkleTreeCircuitParams};
+
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use mpi::traits::*;
 use mpi::{
     datatype::{Partition, PartitionMut},
@@ -8,10 +10,20 @@ use mpi::{
 };
 use mpi_snark::{
     construct_partitioned_buffer_for_scatter, construct_partitioned_mut_buffer_for_gather,
-    coordinator::CoordinatorState, data_structures::ProvingKeys, deserialize_flattened_bytes,
-    serialize_to_vec, worker::WorkerState,
+    coordinator::{generate_g16_pks, CoordinatorState},
+    data_structures::ProvingKeys,
+    deserialize_flattened_bytes, serialize_to_vec,
+    worker::WorkerState,
 };
 use rayon::prelude::*;
+
+use std::{
+    fs::File,
+    io::{Read, Write},
+    path::PathBuf,
+};
+
+const PROVING_KEYS_FILENAME: &str = "proving_keys.bin";
 
 macro_rules! start_timer_buf {
     ($buf:ident, $msg:expr) => {{
@@ -42,13 +54,55 @@ macro_rules! end_timer_buf {
     }};
 }
 
-fn do_stuff(num_workers: usize, num_subcircuits: usize, num_sha2_iters: usize, num_portals: usize) {
+fn setup(
+    key_out_path: PathBuf,
+    num_subcircuits: usize,
+    num_sha_iterations: usize,
+    num_portals_per_subcircuit: usize,
+) {
+    assert!(
+        num_subcircuits.is_power_of_two(),
+        "#subcircuits MUST be a power of 2"
+    );
+    assert!(num_subcircuits > 1, "num. of subcircuits MUST be > 1");
+    assert!(
+        num_sha_iterations > 0,
+        "num. of SHA256 iterations per subcircuit MUST be > 0"
+    );
+    assert!(
+        num_portals_per_subcircuit > 0,
+        "num. of portal ops per subcircuit MUST be > 0"
+    );
+
+    let circ_params = MerkleTreeCircuitParams {
+        num_leaves: num_subcircuits / 2,
+        num_sha_iters_per_subcircuit: num_sha_iterations,
+        num_portals_per_subcircuit,
+    };
+
+    let pks = generate_g16_pks(circ_params);
+
+    let mut buf = Vec::new();
+    pks.serialize_uncompressed(&mut buf).unwrap();
+
+    let mut f =
+        File::create(&key_out_path).expect(&format!("could not create file {:?}", key_out_path));
+    f.write_all(&buf).unwrap();
+}
+
+fn work(num_workers: usize, proving_keys: ProvingKeys) {
     let universe = mpi::initialize().unwrap();
     let world = universe.world();
     let root_rank = 0;
     let root_process = world.process_at_rank(root_rank);
     let rank = world.rank();
     let size = world.size();
+
+    let circ_params = proving_keys.circ_params.clone();
+    let num_subcircuits = 2 * circ_params.num_leaves;
+    let num_sha2_iters = circ_params.num_sha_iters_per_subcircuit;
+    let num_portals = circ_params.num_portals_per_subcircuit;
+
     assert_eq!(
         num_workers, num_subcircuits,
         "We only support num_workers == num_subcircuits"
@@ -66,8 +120,7 @@ fn do_stuff(num_workers: usize, num_subcircuits: usize, num_sha2_iters: usize, n
         // Initial broadcast
 
         let start = start_timer_buf!(log, || format!("Coord: Generating PKs"));
-        let mut coordinator_state =
-            CoordinatorState::new(size as usize, num_subcircuits, num_sha2_iters, num_portals);
+        let mut coordinator_state = CoordinatorState::new(proving_keys);
         end_timer_buf!(log, start);
 
         let pks = coordinator_state.get_pks();
@@ -266,34 +319,70 @@ fn receive_requests<'a, C: 'a + Communicator, T: CanonicalDeserialize>(
     ret
 }
 
+use rayon::prelude::*;
+
 #[derive(Parser)]
 struct Args {
-    /// The number of workers who will do the committing and proving. Each worker has 1 core.
-    #[clap(long, value_name = "NUM")]
-    num_workers: usize,
+    #[clap(subcommand)]
+    command: Command,
+}
 
-    /// Test circuit param: Number of subcircuits. MUST be a power of two and greater than 1.
-    #[clap(long, value_name = "NUM")]
-    num_subcircuits: usize,
+#[derive(Subcommand)]
+enum Command {
+    Setup {
+        /// Test circuit param: Number of subcircuits. MUST be a power of two and greater than 1.
+        #[clap(long, value_name = "NUM")]
+        num_subcircuits: usize,
 
-    /// Test circuit param: Number of SHA256 iterations per subcircuit. MUST be at least 1.
-    #[clap(long, value_name = "NUM")]
-    num_sha2_iters: usize,
+        /// Test circuit param: Number of SHA256 iterations per subcircuit. MUST be at least 1.
+        #[clap(long, value_name = "NUM")]
+        num_sha2_iters: usize,
 
-    /// Test circuit param: Number of portal wire ops per subcircuit. MUST be at least 1.
-    #[clap(long, value_name = "NUM")]
-    num_portals: usize,
+        /// Test circuit param: Number of portal wire ops per subcircuit. MUST be at least 1.
+        #[clap(long, value_name = "NUM")]
+        num_portals: usize,
+
+        /// Path for the output coordinator key package
+        #[clap(long, value_name = "DIR")]
+        key_out: PathBuf,
+    },
+
+    Work {
+        /// Path to the coordinator key package
+        #[clap(long, value_name = "DIR")]
+        key_file: PathBuf,
+
+        /// The number of workers who will do the committing and proving. Each worker has 1 core.
+        #[clap(long, value_name = "NUM")]
+        num_workers: usize,
+    },
 }
 
 fn main() {
     println!("Rayon num threads: {}", rayon::current_num_threads());
 
-    let Args {
-        num_workers,
-        num_subcircuits,
-        num_sha2_iters,
-        num_portals,
-    } = Args::parse();
+    let args = Args::parse();
 
-    do_stuff(num_workers, num_subcircuits, num_sha2_iters, num_portals);
+    match args.command {
+        Command::Setup {
+            num_subcircuits,
+            num_sha2_iters,
+            num_portals,
+            key_out,
+        } => setup(key_out, num_subcircuits, num_sha2_iters, num_portals),
+        Command::Work {
+            key_file,
+            num_workers,
+        } => {
+            // Deserialize the proving keys
+            let proving_keys = {
+                let mut buf = Vec::new();
+                let mut f =
+                    File::open(&key_file).expect(&format!("couldn't open file {:?}", key_file));
+                let _ = f.read_to_end(&mut buf);
+                ProvingKeys::deserialize_uncompressed_unchecked(&mut buf.as_slice()).unwrap()
+            };
+            work(num_workers, proving_keys);
+        },
+    }
 }

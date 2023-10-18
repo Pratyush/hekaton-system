@@ -28,24 +28,11 @@ pub struct CoordinatorState {
 }
 
 impl CoordinatorState {
-    pub fn new(
-        num_nodes: usize,
-        num_subcircuits: usize,
-        num_sha_iterations: usize,
-        num_portals_per_subcircuit: usize,
-    ) -> Self {
-        let circ_params = gen_test_circuit_params(
-            num_subcircuits,
-            num_sha_iterations,
-            num_portals_per_subcircuit,
-        );
-
-        let (g16_pks, agg_pk) = generate_g16_pks(circ_params);
-
+    pub fn new(g16_pks: ProvingKeys) -> Self {
         CoordinatorState {
+            circ_params: g16_pks.circ_params.clone(),
+            agg_pk: generate_agg_key(&g16_pks),
             g16_pks,
-            agg_pk,
-            circ_params,
             stage0_state: None,
             stage1_state: None,
         }
@@ -90,35 +77,8 @@ impl CoordinatorState {
     }
 }
 
-// Checks the test circuit parameters and puts them in a struct
-fn gen_test_circuit_params(
-    num_subcircuits: usize,
-    num_sha_iterations: usize,
-    num_portals_per_subcircuit: usize,
-) -> MerkleTreeCircuitParams {
-    assert!(
-        num_subcircuits.is_power_of_two(),
-        "#subcircuits MUST be a power of 2"
-    );
-    assert!(num_subcircuits > 1, "num. of subcircuits MUST be > 1");
-    assert!(
-        num_sha_iterations > 0,
-        "num. of SHA256 iterations per subcircuit MUST be > 0"
-    );
-    assert!(
-        num_portals_per_subcircuit > 0,
-        "num. of portal ops per subcircuit MUST be > 0"
-    );
-
-    MerkleTreeCircuitParams {
-        num_leaves: num_subcircuits / 2,
-        num_sha_iters_per_subcircuit: num_sha_iterations,
-        num_portals_per_subcircuit,
-    }
-}
-
 /// Generates all the Groth16 proving and committing keys keys that the workers will use
-fn generate_g16_pks(circ_params: MerkleTreeCircuitParams) -> (ProvingKeys, AggProvingKey<E>) {
+pub fn generate_g16_pks(circ_params: MerkleTreeCircuitParams) -> ProvingKeys {
     let mut rng = rand::thread_rng();
     let tree_params = gen_merkle_params();
 
@@ -149,13 +109,20 @@ fn generate_g16_pks(circ_params: MerkleTreeCircuitParams) -> (ProvingKeys, AggPr
     // Generate the second to last parent
     let parent_pk = generator.gen_pk(&mut rng, num_subcircuits - 3);
 
-    let pks = ProvingKeys {
+    ProvingKeys {
+        circ_params,
         first_leaf_pk: Some(first_leaf_pk),
         second_leaf_pk: Some(second_leaf_pk),
         padding_pk: Some(padding_pk),
         root_pk: Some(root_pk),
         parent_pk: Some(parent_pk),
-    };
+    }
+}
+
+fn generate_agg_key(g16_pks: &ProvingKeys) -> AggProvingKey<E> {
+    let mut rng = thread_rng();
+
+    let num_subcircuits = 2 * g16_pks.circ_params.num_leaves;
 
     let other_leaf_idxs = 1..(num_subcircuits / 2);
     let parent_idxs = (num_subcircuits / 2)..(num_subcircuits - 2);
@@ -164,15 +131,15 @@ fn generate_g16_pks(circ_params: MerkleTreeCircuitParams) -> (ProvingKeys, AggPr
     // disk, but this might take a long long time.
     let pk_fetcher = |subcircuit_idx: usize| {
         if subcircuit_idx == 0 {
-            pks.first_leaf_pk()
+            g16_pks.first_leaf_pk()
         } else if other_leaf_idxs.contains(&subcircuit_idx) {
-            pks.second_leaf_pk()
+            g16_pks.second_leaf_pk()
         } else if parent_idxs.contains(&subcircuit_idx) {
-            pks.parent_pk()
+            g16_pks.parent_pk()
         } else if subcircuit_idx == num_subcircuits - 2 {
-            pks.root_pk()
+            g16_pks.root_pk()
         } else if subcircuit_idx == num_subcircuits - 1 {
-            pks.padding_pk()
+            g16_pks.padding_pk()
         } else {
             panic!("unexpected subcircuit index {subcircuit_idx}")
         }
@@ -187,5 +154,5 @@ fn generate_g16_pks(circ_params: MerkleTreeCircuitParams) -> (ProvingKeys, AggPr
         AggProvingKey::new(super_com_key, kzg_ck, pk_fetcher)
     };
     end_timer!(start);
-    (pks, agg_pk)
+    agg_pk
 }
