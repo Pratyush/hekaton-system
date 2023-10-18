@@ -173,16 +173,6 @@ fn work(num_workers: usize, proving_keys: ProvingKeys) {
     let num_subcircuits_per_worker = num_subcircuits / num_workers;
     assert_eq!(num_subcircuits_per_worker * num_workers, num_subcircuits);
 
-    assert_eq!(
-        num_workers, num_subcircuits,
-        "We only support num_workers == num_subcircuits"
-    ); // use num_workers somewhere
-    assert_eq!(
-        size as usize,
-        num_workers + 1,
-        "We only support one core per worker (num_workers == world.size())"
-    );
-
     let mut log = Vec::new();
     let very_start = start_timer_buf!(log, || format!("Node {rank}: Beginning work"));
 
