@@ -196,6 +196,7 @@ fn work(num_workers: usize, proving_keys: ProvingKeys) {
 
         // Stage 0 scatter
         scatter_requests(&mut log, "stage0", &root_process, &requests_chunked);
+        println!("Finished coordinator scatter 0");
 
         // Stage 0 gather
         let responses_chunked: Vec<Vec<_>> = gather_responses(&mut log, "stage0", size, &root_process);
@@ -203,6 +204,7 @@ fn work(num_workers: usize, proving_keys: ProvingKeys) {
             .into_par_iter()
             .flatten()
             .collect::<Vec<_>>();
+        println!("Finished coordinator gather 0");
         /***************************************************************************/
         /***************************************************************************/
 
@@ -219,6 +221,7 @@ fn work(num_workers: usize, proving_keys: ProvingKeys) {
 
         // Stage 1 scatter
         scatter_requests(&mut log, "stage1", &root_process, &requests_chunked);
+        println!("Finished coordinator scatter 1");
 
         // Stage 1 gather
         let responses_chunked: Vec<Vec<_>> = gather_responses(&mut log, "stage1", size, &root_process);
@@ -226,6 +229,7 @@ fn work(num_workers: usize, proving_keys: ProvingKeys) {
             .into_par_iter()
             .flatten()
             .collect::<Vec<_>>();
+        println!("Finished coordinator gather 1");
         /***************************************************************************/
         /***************************************************************************/
 
