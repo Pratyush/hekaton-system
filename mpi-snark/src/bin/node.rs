@@ -119,16 +119,8 @@ fn work(num_workers: usize, proving_keys: ProvingKeys) {
     if rank == root_rank {
         // Initial broadcast
 
-        let start = start_timer_buf!(log, || format!("Coord: Generating PKs"));
+        let start = start_timer_buf!(log, || format!("Coord: construct coordinator state"));
         let mut coordinator_state = CoordinatorState::new(proving_keys);
-        end_timer_buf!(log, start);
-
-        let pks = coordinator_state.get_pks();
-        let mut pk_bytes = serialize_to_vec(&pks);
-
-        let start = start_timer_buf!(log, || format!("Coord: Broadcasting PKs"));
-        root_process.broadcast_into(&mut (pk_bytes.len() as u64));
-        root_process.broadcast_into(&mut pk_bytes);
         end_timer_buf!(log, start);
 
         /***************************************************************************/
@@ -165,21 +157,8 @@ fn work(num_workers: usize, proving_keys: ProvingKeys) {
         let proof = coordinator_state.aggregate(&responses);
         end_timer_buf!(log, start);
     } else {
-        let mut pk_bytes_size = 0u64;
-        root_process.broadcast_into(&mut pk_bytes_size);
-        let start = start_timer_buf!(log, || format!(
-            "Worker {rank}: Receiving PK broadcast of size {pk_bytes_size}"
-        ));
-        let mut pk_bytes = vec![0u8; pk_bytes_size as usize];
-        root_process.broadcast_into(&mut pk_bytes);
-        end_timer_buf!(log, start);
-        println!("Received pk bytes of size: {}.", pk_bytes.len());
-
-        // FIXME drop extra pk if worker will not use them.
-        let start = start_timer_buf!(log, || format!("Worker {rank}: Deserializing ProvingKeys"));
-        let pks = ProvingKeys::deserialize_uncompressed_unchecked(&pk_bytes[..]).unwrap();
-        end_timer_buf!(log, start);
-        let mut worker_state = WorkerState::new(num_subcircuits, &pks);
+        // Worker code 
+        let mut worker_state = WorkerState::new(num_subcircuits, &proving_keys);
 
         /***************************************************************************/
         /***************************************************************************/

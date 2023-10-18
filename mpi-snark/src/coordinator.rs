@@ -1,5 +1,5 @@
 use crate::data_structures::{
-    AggProof, G16Proof, G16ProvingKey, ProvingKeys, Stage0RequestRef, Stage0Response,
+    AggProof, ProvingKeys, Stage0RequestRef, Stage0Response,
     Stage1RequestRef, Stage1Response,
 };
 
@@ -15,7 +15,6 @@ use distributed_prover::{
 };
 
 use ark_bls12_381::{Bls12_381 as E, Fr};
-use ark_ec::pairing::Pairing;
 use ark_std::{end_timer, start_timer};
 use rand::thread_rng;
 
@@ -47,7 +46,6 @@ impl CoordinatorState {
 
         let circ = MerkleTreeCircuit::rand(&mut rng, &self.circ_params);
         let num_subcircuits = <MerkleTreeCircuit as CircuitWithPortals<Fr>>::num_subcircuits(&circ);
-        let all_subcircuit_indices = (0..num_subcircuits).collect::<Vec<_>>();
 
         self.stage0_state = Some(CoordinatorStage0State::new::<TreeConfig>(circ));
         (0..num_subcircuits)
@@ -146,7 +144,7 @@ fn generate_agg_key(g16_pks: &ProvingKeys) -> AggProvingKey<E> {
     };
 
     // Construct the aggregator commitment key
-    let start = start_timer!(|| format!("Generating aggregation key with params {circ_params}"));
+    let start = start_timer!(|| format!("Generating aggregation key "));
     let agg_pk = {
         // Need some intermediate keys
         let super_com_key = SuperComCommittingKey::<E>::gen(&mut rng, num_subcircuits);
