@@ -3,46 +3,41 @@
 set -eu
 
 MEM_PER_CPU="3800M"
-CPUS_PER_TASK="1"
+CPUS_PER_TASK="16"
 
 HELPSTR="\
 Usage:\n\
-run_single_bench <num_workers> <num_subcircuits> <num_sha2_iters> <num_portals>\
+run_single_bench <proving_keys_bin> <num_workers> \
 "
 
-if [ -z ${1+x} ] || [ -z ${2+x} ] || [ -z ${3+x} ] || [ -z ${4+x} ]; then
+if [ -z ${1+x} ] || [ -z ${2+x} ]; then
     echo -e "$HELPSTR"
     exit 1
 fi
 
-NUM_WORKERS=$1
-NUM_SUBCIRCUITS=$2
-NUM_SHA2_ITERS=$3
-NUM_PORTALS=$4
+KEYFILE_PATH=$1
+NUM_WORKERS=$2
+
+JOB_DESC=$(basename $KEYFILE_PATH | cut -d- -f2 | cut -d. -f1)
 
 DATETIME=$(printf '%(%Y%m%d.%H%M%S)T\n' -1)
-# nc=num subcircuits, ns=num sha2 iters, np=num portals
-JOB_DESC="nc=${NUM_SUBCIRCUITS}_ns=${NUM_SHA2_ITERS}_np=${NUM_PORTALS}-${DATETIME}"
-OUT_FILENAME="bench_out_${JOB_DESC}.txt"
-ERR_FILENAME="bench_err_${JOB_DESC}.txt"
+OUT_FILENAME="bench_out-${JOB_DESC}.txt"
+ERR_FILENAME="bench_err-${JOB_DESC}.txt"
 
-
-echo "HERE1"
 sbatch \
 	--wait \
+	--time 20:00 \
 	--account imiers-prj-cmsc \
-	--ntasks=$(($NUM_WORKERS + 1)) \
+	--ntasks=$(($NUM_WORKERS + 2)) \
 	--job-name $JOB_DESC \
 	--mem-per-cpu=$MEM_PER_CPU \
 	--cpus-per-task=$CPUS_PER_TASK \
        	--out=$OUT_FILENAME \
 	--error=$ERR_FILENAME \
-	./bench_job.slurm $1 $2 $3 $4 $CPUS_PER_TASK
+	./bench_job.slurm $KEYFILE_PATH $NUM_WORKERS $CPUS_PER_TASK
 
+echo "JOB DESC: ${JOB_DESC}" >> $OUT_FILENAME
 echo "NUM WORKERS: ${NUM_WORKERS}" >> $OUT_FILENAME
-echo "NUM SUBCIRCUITS: ${NUM_SUBCIRCUITS}" >> $OUT_FILENAME
-echo "NUM SHA2 ITERS: ${NUM_SHA2_ITERS}" >> $OUT_FILENAME
-echo "NUM PORTALS: ${NUM_PORTALS}" >> $OUT_FILENAME
 echo "MEGS PER CPU: ${MEM_PER_CPU}" >> $OUT_FILENAME
 echo "CPUS PER TASK: ${CPUS_PER_TASK}" >> $OUT_FILENAME
 echo "${@:0}" >> $OUT_FILENAME

@@ -2,20 +2,17 @@
 
 set -eu
 
-NUM_WORKERS=$1
-NUM_SUBCIRCUITS=$2
-NUM_SHA2_ITERS=$3
-NUM_PORTALS=$4
-CPUS_PER_WORKER=$5
+KEYFILE_PATH=$1
+NUM_WORKERS=$2
+CPUS_PER_WORKER=$3
 
 export RAYON_NUM_THREADS=$CPUS_PER_WORKER
 
-echo "HERE2"
+FILENAME=$(basename $KEYFILE_PATH)
+cp $KEYFILE_PATH /tmp/$FILENAME
 
 module load openmpi
 mpirun -n $(($NUM_WORKERS + 1)) \
-	/home/micro/mpitest/node \
+	node work \
+	--key-file $KEYFILE_PATH \
 	--num-workers $NUM_WORKERS \
-	--num-subcircuits $NUM_SUBCIRCUITS \
-	--num-sha2-iters $NUM_SHA2_ITERS \
-       	--num-portals $NUM_PORTALS
