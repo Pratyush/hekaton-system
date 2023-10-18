@@ -27,9 +27,8 @@ macro_rules! construct_partitioned_buffer_for_scatter {
 
 #[macro_export]
 macro_rules! construct_partitioned_mut_buffer_for_gather {
-    ($size:expr, $item_type:ty, $flattened_item_bytes: expr) => {{
-        let item = <$item_type>::default();
-        let item_size = item.uncompressed_size();
+    ($size: expr, $default: expr, $flattened_item_bytes: expr) => {{
+        let item_size = $default.uncompressed_size();
         let item_bytes = std::iter::once(vec![])
             .chain(std::iter::repeat(vec![0u8; item_size]))
             .take($size as usize)
@@ -53,9 +52,8 @@ macro_rules! construct_partitioned_mut_buffer_for_gather {
 
 #[macro_export]
 macro_rules! deserialize_flattened_bytes {
-    ($flattened_item_bytes: expr, $item_type: ty) => {{
-        let item = <$item_type>::default();
-        let item_size = item.uncompressed_size();
+    ($flattened_item_bytes: expr, $default: expr, $item_type: ty) => {{
+        let item_size = $default.uncompressed_size();
         $flattened_item_bytes
             .chunks_exact(item_size)
             .map(<$item_type>::deserialize_uncompressed_unchecked)

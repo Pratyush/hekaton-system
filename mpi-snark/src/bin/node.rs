@@ -11,7 +11,7 @@ use mpi::{
 use mpi_snark::{
     construct_partitioned_buffer_for_scatter, construct_partitioned_mut_buffer_for_gather,
     coordinator::{generate_g16_pks, CoordinatorState},
-    data_structures::ProvingKeys,
+    data_structures::{ProvingKeys, Stage0Response, Stage1Response},
     deserialize_flattened_bytes, serialize_to_vec,
     worker::WorkerState,
 };
@@ -199,7 +199,8 @@ fn work(num_workers: usize, proving_keys: ProvingKeys) {
         println!("Finished coordinator scatter 0");
 
         // Stage 0 gather
-        let responses_chunked: Vec<Vec<_>> = gather_responses(&mut log, "stage0", size, &root_process);
+        let default_response = vec![Stage0Response::default(); num_subcircuits_per_worker];
+        let responses_chunked: Vec<Vec<_>> = gather_responses(&mut log, "stage0", size, &root_process, default_response);
         let responses = responses_chunked
             .into_par_iter()
             .flatten()
@@ -224,7 +225,8 @@ fn work(num_workers: usize, proving_keys: ProvingKeys) {
         println!("Finished coordinator scatter 1");
 
         // Stage 1 gather
-        let responses_chunked: Vec<Vec<_>> = gather_responses(&mut log, "stage1", size, &root_process);
+        let default_response = vec![Stage1Response::default(); num_subcircuits_per_worker];
+        let responses_chunked: Vec<Vec<_>> = gather_responses(&mut log, "stage1", size, &root_process, default_response);
         let responses = responses_chunked
             .into_par_iter()
             .flatten()
@@ -321,6 +323,7 @@ fn gather_responses<'a, C, T>(
     stage: &str,
     size: Count,
     root_process: &Process<'a, C>,
+    default_response: T,
 ) -> Vec<T>
 where
     C: 'a + Communicator,
@@ -328,14 +331,14 @@ where
 {
     let mut response_bytes = vec![];
     let mut response_bytes_buf =
-        construct_partitioned_mut_buffer_for_gather!(size, T, &mut response_bytes);
+        construct_partitioned_mut_buffer_for_gather!(size, default_response, &mut response_bytes);
     // Root does not send anything, it only receives.
     let start = start_timer_buf!(log, || format!("Coord: Gathering {stage} responses"));
     root_process.gather_varcount_into_root(&[0u8; 0], &mut response_bytes_buf);
     end_timer_buf!(log, start);
 
     let start = start_timer_buf!(log, || format!("Coord: Deserializing {stage} responses"));
-    let ret = deserialize_flattened_bytes!(response_bytes, T).unwrap();
+    let ret = deserialize_flattened_bytes!(response_bytes, default_response, T).unwrap();
     end_timer_buf!(log, start);
 
     ret
