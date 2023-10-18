@@ -1,5 +1,4 @@
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use ark_std::{end_timer, start_timer};
 use clap::Parser;
 use mpi::traits::*;
 use mpi::{
@@ -61,6 +60,7 @@ fn do_stuff(num_workers: usize, num_subcircuits: usize, num_sha2_iters: usize, n
     );
 
     let mut log = Vec::new();
+    let very_start = start_timer_buf!(log, || format!("Node {rank}: Beginning work"));
 
     if rank == root_rank {
         // Initial broadcast
@@ -89,7 +89,7 @@ fn do_stuff(num_workers: usize, num_subcircuits: usize, num_sha2_iters: usize, n
         scatter_requests(&mut log, "stage0", &root_process, &requests);
 
         // Stage 0 gather
-        let responses = gather_responses(&mut log, "stage1", size, &root_process);
+        let responses = gather_responses(&mut log, "stage0", size, &root_process);
         /***************************************************************************/
         /***************************************************************************/
 
@@ -190,6 +190,8 @@ fn do_stuff(num_workers: usize, num_subcircuits: usize, num_sha2_iters: usize, n
         /***************************************************************************/
         /***************************************************************************/
     }
+
+    end_timer_buf!(log, very_start);
 
     println!("Rank {rank} log: {}", log.join(";"));
 }
@@ -293,9 +295,5 @@ fn main() {
         num_portals,
     } = Args::parse();
 
-    let start = start_timer!(|| format!("Running node"));
-
     do_stuff(num_workers, num_subcircuits, num_sha2_iters, num_portals);
-
-    end_timer!(start);
 }
