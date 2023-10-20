@@ -96,7 +96,7 @@ impl<E: Pairing, QAP: R1CSToQAP> CPGroth16<E, QAP> {
         let current_witness = cs.current_stage_witness_assignment();
         let c_acc_time = start_timer!(|| "Compute C");
         let witness_map_time = start_timer!(|| "R1CS to QAP witness map");
-        let h = QAP::witness_map::<E::ScalarField, D<E::ScalarField>>(cs.cs.clone())?;
+        let h = cs.map(QAP::witness_map::<E::ScalarField, D<E::ScalarField>>)?;
         end_timer!(witness_map_time);
         
         let mut pool = crate::parallel::ExecutionPool::<ResultWrapper<E>>::with_capacity(5);

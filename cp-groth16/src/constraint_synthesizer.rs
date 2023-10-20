@@ -1,7 +1,7 @@
 use core::ops::Range;
 
 use ark_ff::Field;
-use ark_relations::r1cs::{ConstraintSystem, ConstraintSystemRef, SynthesisError};
+use ark_relations::r1cs::{ConstraintSystem, ConstraintSystemRef, SynthesisError, OptimizationGoal, SynthesisMode};
 
 /// Represents a constraint system whose variables come from a number of distinct allocation
 /// stages. Each allocation stage happens separately, and adds to the total instance variable
@@ -10,7 +10,7 @@ use ark_relations::r1cs::{ConstraintSystem, ConstraintSystemRef, SynthesisError}
 /// We assume that the indexing of witness variables increases linearly. e.g. it is not the case
 /// that stage 1 allocates variables 1, 2, 100, and stage 2 allocates variables 3, 4, 5.
 pub struct MultiStageConstraintSystem<F: Field> {
-    pub cs: ConstraintSystemRef<F>,
+    cs: ConstraintSystemRef<F>,
     /// Keeps track of the witness variables at different stages. That is
     /// `start..end = max_variable_for_stage[i]` is the range of witness variables allocated in
     /// stage `i`.
@@ -34,6 +34,18 @@ impl<F: Field> MultiStageConstraintSystem<F> {
         Self::default()
     }
 
+    pub fn map<T>(&mut self, f: impl FnOnce(ConstraintSystemRef<F>) -> T) -> T {
+        f(self.cs.clone())
+    }
+
+    pub fn set_optimization_goal(&mut self, goal: OptimizationGoal) {
+        self.cs.set_optimization_goal(goal);
+    }
+
+    pub fn set_mode(&mut self, mode: SynthesisMode) {
+        self.cs.set_mode(mode);
+    }
+
     /// Must be called by the constraint synthesizer before starting constraint synthesis
     /// for the i-th stage.
     pub fn initialize_stage(&mut self) {
@@ -55,7 +67,7 @@ impl<F: Field> MultiStageConstraintSystem<F> {
         constraints: impl FnOnce(ConstraintSystemRef<F>) -> Result<(), SynthesisError>,
     ) -> Result<(), SynthesisError> {
         self.initialize_stage();
-        constraints(self.cs.clone())?;
+        self.map(constraints)?;
         self.finalize_stage();
         Ok(())
     }

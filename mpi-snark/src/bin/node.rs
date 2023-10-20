@@ -22,8 +22,6 @@ use std::{
     path::PathBuf,
 };
 
-const PROVING_KEYS_FILENAME: &str = "proving_keys.bin";
-
 macro_rules! start_timer_buf {
     ($buf:ident, $msg:expr) => {{
         use std::time::Instant;
@@ -167,8 +165,6 @@ fn work(num_workers: usize, proving_keys: ProvingKeys) {
 
     let circ_params = proving_keys.circ_params.clone();
     let num_subcircuits = 2 * circ_params.num_leaves;
-    let num_sha2_iters = circ_params.num_sha_iters_per_subcircuit;
-    let num_portals = circ_params.num_portals_per_subcircuit;
 
     let num_subcircuits_per_worker = num_subcircuits / num_workers;
     assert_eq!(num_subcircuits_per_worker * num_workers, num_subcircuits);
@@ -254,7 +250,7 @@ fn work(num_workers: usize, proving_keys: ProvingKeys) {
         let start = start_timer_buf!(log, || format!("Worker {rank}: Processing stage0 requests"));
         let responses = requests
             .iter()
-            .zip(worker_states.as_mut_slice())
+            .zip(&mut worker_states)
             .map(|(req, state)| state.stage_0(req))
             .collect::<Vec<_>>();
         end_timer_buf!(log, start);

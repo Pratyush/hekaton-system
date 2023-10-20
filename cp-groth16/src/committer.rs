@@ -42,8 +42,8 @@ where
 {
     pub fn new(circuit: C, pk: &'a ProvingKey<E>) -> Self {
         // Make a new constraint system and set the optimization goal
-        let mscs = MultiStageConstraintSystem::default();
-        mscs.cs.set_optimization_goal(OptimizationGoal::Constraints);
+        let mut mscs = MultiStageConstraintSystem::default();
+        mscs.set_optimization_goal(OptimizationGoal::Constraints);
 
         Self {
             cs: mscs,

@@ -37,8 +37,8 @@ where
 
     let setup_time = start_timer!(|| "CPGroth16::Generator");
     let mut mscs = MultiStageConstraintSystem::default();
-    mscs.cs.set_optimization_goal(OptimizationGoal::Constraints);
-    mscs.cs.set_mode(SynthesisMode::Setup);
+    mscs.set_optimization_goal(OptimizationGoal::Constraints);
+    mscs.set_mode(SynthesisMode::Setup);
 
     // Synthesize the circuit.
     let synthesis_time = start_timer!(|| "Constraint synthesis");
@@ -72,8 +72,8 @@ where
 
     let reduction_time = start_timer!(|| "R1CS to QAP Instance Map with Evaluation");
     let num_instance_variables = mscs.num_instance_variables();
-    let (a, b, c, zt, qap_num_variables, m_raw) =
-        QAP::instance_map_with_evaluation::<E::ScalarField, D<_>>(mscs.cs.clone(), &t)?;
+    let (a, b, c, zt, qap_num_variables, m_raw) = mscs.map(|cs|
+        QAP::instance_map_with_evaluation::<E::ScalarField, D<_>>(cs, &t))?;
     end_timer!(reduction_time);
 
     // Compute query densities

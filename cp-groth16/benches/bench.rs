@@ -146,7 +146,6 @@ fn main() {
         circuit.add_point(point);
         circuit.generate_constraints(1, &mut cs).unwrap();
         // assert!(cs.is_satisfied().unwrap());
-        println!("Hello");
     }
 
     // Proof check

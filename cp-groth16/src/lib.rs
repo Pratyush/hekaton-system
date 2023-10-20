@@ -91,6 +91,10 @@ mod tests {
                     .last()
                     .unwrap()
                     .enforce_equal(&FpVar::one())?;
+                polynomial_var
+                    .last()
+                    .unwrap()
+                    .enforce_equal(&FpVar::one())?;
                 self.polynomial_var = Some(polynomial_var);
 
                 Ok(())
