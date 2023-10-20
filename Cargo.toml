@@ -6,7 +6,6 @@ members = [
     "mpi-snark",
     "distributed-prover",
 
-    "ark-msm",
     "snarkpack",
     "tinyram-emu",
     "tinyram-constraints",
