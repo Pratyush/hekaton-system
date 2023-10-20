@@ -196,7 +196,8 @@ fn work(num_workers: usize, proving_keys: ProvingKeys) {
 
         // Stage 0 gather
         let default_response = vec![Stage0Response::default(); num_subcircuits_per_worker];
-        let responses_chunked: Vec<Vec<_>> = gather_responses(&mut log, "stage0", size, &root_process, default_response);
+        let responses_chunked: Vec<Vec<_>> =
+            gather_responses(&mut log, "stage0", size, &root_process, default_response);
         let responses = responses_chunked
             .into_par_iter()
             .flatten()
@@ -222,7 +223,8 @@ fn work(num_workers: usize, proving_keys: ProvingKeys) {
 
         // Stage 1 gather
         let default_response = vec![Stage1Response::default(); num_subcircuits_per_worker];
-        let responses_chunked: Vec<Vec<_>> = gather_responses(&mut log, "stage1", size, &root_process, default_response);
+        let responses_chunked: Vec<Vec<_>> =
+            gather_responses(&mut log, "stage1", size, &root_process, default_response);
         let responses = responses_chunked
             .into_par_iter()
             .flatten()
@@ -235,9 +237,11 @@ fn work(num_workers: usize, proving_keys: ProvingKeys) {
         let _proof = coordinator_state.aggregate(&responses);
         end_timer_buf!(log, start);
     } else {
-        // Worker code 
-        let mut worker_states = 
-            std::iter::from_fn(|| Some(WorkerState::new(num_subcircuits, &proving_keys))).take(num_subcircuits_per_worker).collect::<Vec<_>>();
+        // Worker code
+        let mut worker_states =
+            std::iter::from_fn(|| Some(WorkerState::new(num_subcircuits, &proving_keys)))
+                .take(num_subcircuits_per_worker)
+                .collect::<Vec<_>>();
 
         /***************************************************************************/
         /***************************************************************************/
@@ -291,8 +295,6 @@ fn work(num_workers: usize, proving_keys: ProvingKeys) {
 
     println!("Rank {rank} log: {}", log.join(";"));
 }
-
-
 
 fn scatter_requests<'a, C: 'a + Communicator>(
     log: &mut Vec<String>,
@@ -379,10 +381,10 @@ fn send_responses<'a, C: 'a + Communicator, T: CanonicalSerialize>(
     ));
     let responses_bytes = serialize_to_vec(&responses);
     end_timer_buf!(log, start);
-    
+
     let start = start_timer_buf!(log, || format!(
         "Worker {rank}: Gathering {stage} response, each of size {}",
-        responses_bytes.len()/responses.len()
+        responses_bytes.len() / responses.len()
     ));
     root_process.gather_varcount_into(&responses_bytes);
     end_timer_buf!(log, start);

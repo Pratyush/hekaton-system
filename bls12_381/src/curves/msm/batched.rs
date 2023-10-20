@@ -14,15 +14,17 @@
 // You should have received a copy of the GNU General Public License
 // along with the snarkVM library. If not, see <https://www.gnu.org/licenses/>.
 
-use snarkvm_curves::{AffineCurve, ProjectiveCurve};
-use snarkvm_fields::{Field, One, PrimeField, Zero};
-use snarkvm_utilities::{cfg_into_iter, BigInteger, BitIteratorBE};
+use ark_ec::Group;
+use ark_ff::{BigInteger, BitIteratorBE, Field, One, PrimeField, Zero};
+use ark_std::{cfg_into_iter, vec, vec::Vec};
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 #[cfg(target_arch = "x86_64")]
 use crate::{prefetch_slice, prefetch_slice_write};
+
+use super::ext_traits::{AffineReprExt, Half};
 
 #[derive(Copy, Clone, Debug)]
 pub struct BucketPosition {
@@ -75,9 +77,12 @@ const fn batch_size(msm_size: usize) -> usize {
 /// If `(j, k)` is the `i`-th entry in `index`, then this method sets
 /// `bases[j] = bases[j] + bases[k]`. The state of `bases[k]` becomes unspecified.
 #[inline]
-fn batch_add_in_place_same_slice<G: AffineCurve>(bases: &mut [G], index: &[(u32, u32)]) {
+fn batch_add_in_place_same_slice<G: AffineReprExt>(bases: &mut [G], index: &[(u32, u32)])
+where
+    G::BaseField: Half,
+{
     let mut inversion_tmp = G::BaseField::one();
-    let half = G::BaseField::half();
+    let half = G::BaseField::HALF;
 
     #[cfg(target_arch = "x86_64")]
     let mut prefetch_iter = index.iter();
@@ -128,14 +133,16 @@ fn batch_add_in_place_same_slice<G: AffineCurve>(bases: &mut [G], index: &[(u32,
 ///
 /// It uses `scratch_space` to store intermediate values, and clears it after use.
 #[inline]
-fn batch_add_write<G: AffineCurve>(
+fn batch_add_write<G: AffineReprExt>(
     bases: &[G],
     index: &[(u32, u32)],
     addition_result: &mut Vec<G>,
     scratch_space: &mut Vec<Option<G>>,
-) {
+) where
+    G::BaseField: Half,
+{
     let mut inversion_tmp = G::BaseField::one();
-    let half = G::BaseField::half();
+    let half = G::BaseField::HALF;
 
     #[cfg(target_arch = "x86_64")]
     let mut prefetch_iter = index.iter();
@@ -160,11 +167,15 @@ fn batch_add_write<G: AffineCurve>(
 
     inversion_tmp = inversion_tmp.inverse().unwrap(); // this is always in Fp*
 
-    for (a, op_b) in addition_result.iter_mut().rev().zip(scratch_space.iter().rev()) {
+    for (a, op_b) in addition_result
+        .iter_mut()
+        .rev()
+        .zip(scratch_space.iter().rev())
+    {
         match op_b {
             Some(b) => {
                 G::batch_add_loop_2(a, *b, &mut inversion_tmp);
-            }
+            },
             None => (),
         };
     }
@@ -172,11 +183,14 @@ fn batch_add_write<G: AffineCurve>(
 }
 
 #[inline]
-pub(super) fn batch_add<G: AffineCurve>(
+pub(super) fn batch_add<G: AffineReprExt>(
     num_buckets: usize,
     bases: &[G],
     bucket_positions: &mut [BucketPosition],
-) -> Vec<G> {
+) -> Vec<G>
+where
+    G::BaseField: Half,
+{
     // assert_eq!(bases.len(), bucket_positions.len());
     assert!(!bases.is_empty());
 
@@ -200,7 +214,9 @@ pub(super) fn batch_add<G: AffineCurve>(
     // In the first loop, copy the results of the first in-place addition tree to the vector `new_bases`.
     while global_counter < num_scalars {
         let current_bucket = bucket_positions[global_counter].bucket_index;
-        while global_counter + 1 < num_scalars && bucket_positions[global_counter + 1].bucket_index == current_bucket {
+        while global_counter + 1 < num_scalars
+            && bucket_positions[global_counter + 1].bucket_index == current_bucket
+        {
             global_counter += 1;
             local_counter += 1;
         }
@@ -218,13 +234,17 @@ pub(super) fn batch_add<G: AffineCurve>(
                     bucket_positions[global_counter - (local_counter - 1) + 2 * i].scalar_index,
                     bucket_positions[global_counter - (local_counter - 1) + 2 * i + 1].scalar_index,
                 ));
-                bucket_positions[new_scalar_length + i] =
-                    BucketPosition { bucket_index: current_bucket, scalar_index: (new_scalar_length + i) as u32 };
+                bucket_positions[new_scalar_length + i] = BucketPosition {
+                    bucket_index: current_bucket,
+                    scalar_index: (new_scalar_length + i) as u32,
+                };
             }
             if is_odd {
                 instr.push((bucket_positions[global_counter].scalar_index, !0u32));
-                bucket_positions[new_scalar_length + half] =
-                    BucketPosition { bucket_index: current_bucket, scalar_index: (new_scalar_length + half) as u32 };
+                bucket_positions[new_scalar_length + half] = BucketPosition {
+                    bucket_index: current_bucket,
+                    scalar_index: (new_scalar_length + half) as u32,
+                };
             }
             // Reset the local_counter and update state
             new_scalar_length += half + (local_counter % 2);
@@ -242,8 +262,10 @@ pub(super) fn batch_add<G: AffineCurve>(
             }
         } else {
             instr.push((bucket_positions[global_counter].scalar_index, !0u32));
-            bucket_positions[new_scalar_length] =
-                BucketPosition { bucket_index: current_bucket, scalar_index: new_scalar_length as u32 };
+            bucket_positions[new_scalar_length] = BucketPosition {
+                bucket_index: current_bucket,
+                scalar_index: new_scalar_length as u32,
+            };
             new_scalar_length += 1;
         }
         global_counter += 1;
@@ -281,7 +303,8 @@ pub(super) fn batch_add<G: AffineCurve>(
                 for i in 0..half {
                     instr.push((
                         bucket_positions[global_counter - (local_counter - 1) + 2 * i].scalar_index,
-                        bucket_positions[global_counter - (local_counter - 1) + 2 * i + 1].scalar_index,
+                        bucket_positions[global_counter - (local_counter - 1) + 2 * i + 1]
+                            .scalar_index,
                     ));
                     bucket_positions[new_scalar_length + i] =
                         bucket_positions[global_counter - (local_counter - 1) + 2 * i];
@@ -317,20 +340,24 @@ pub(super) fn batch_add<G: AffineCurve>(
         new_scalar_length = 0;
     }
 
-    let mut res = vec![Zero::zero(); num_buckets];
+    let mut res = vec![G::zero(); num_buckets];
     for bucket_position in bucket_positions.iter().take(num_scalars) {
-        res[bucket_position.bucket_index as usize] = new_bases[bucket_position.scalar_index as usize];
+        res[bucket_position.bucket_index as usize] =
+            new_bases[bucket_position.scalar_index as usize];
     }
     res
 }
 
 #[inline]
-fn batched_window<G: AffineCurve>(
+fn batched_window<G: AffineReprExt>(
     bases: &[G],
-    scalars: &[<G::ScalarField as PrimeField>::BigInteger],
+    scalars: &[<G::ScalarField as PrimeField>::BigInt],
     w_start: usize,
     c: usize,
-) -> (G::Projective, usize) {
+) -> (G::Group, usize)
+where
+    G::BaseField: Half,
+{
     // We don't need the "zero" bucket, so we only have 2^c - 1 buckets
     let window_size = if (w_start % c) != 0 { w_start % c } else { c };
     let num_buckets = (1 << window_size) - 1;
@@ -347,29 +374,40 @@ fn batched_window<G: AffineCurve>(
             // We mod the remaining bits by the window size.
             let scalar = (scalar.as_ref()[0] % (1 << c)) as i32;
 
-            BucketPosition { bucket_index: (scalar - 1) as u32, scalar_index: scalar_index as u32 }
+            BucketPosition {
+                bucket_index: (scalar - 1) as u32,
+                scalar_index: scalar_index as u32,
+            }
         })
         .collect();
 
     let buckets = batch_add(num_buckets, bases, &mut bucket_positions);
 
-    let mut res = G::Projective::zero();
-    let mut running_sum = G::Projective::zero();
+    let mut res = G::Group::zero();
+    let mut running_sum = G::Group::zero();
     for b in buckets.into_iter().rev() {
-        running_sum.add_assign_mixed(&b);
+        running_sum += &b;
         res += &running_sum;
     }
 
     (res, window_size)
 }
 
-pub fn msm<G: AffineCurve>(bases: &[G], scalars: &[<G::ScalarField as PrimeField>::BigInteger]) -> G::Projective {
+pub fn msm<G: AffineReprExt>(
+    bases: &[G],
+    scalars: &[<G::ScalarField as PrimeField>::BigInt],
+) -> G::Group
+where
+    G::BaseField: Half,
+{
     if bases.len() < 15 {
-        let num_bits = G::ScalarField::size_in_bits();
-        let bigint_size = <G::ScalarField as PrimeField>::BigInteger::NUM_LIMBS * 64;
-        let mut bits =
-            scalars.iter().map(|s| BitIteratorBE::new(s.as_ref()).skip(bigint_size - num_bits)).collect::<Vec<_>>();
-        let mut sum = G::Projective::zero();
+        let num_bits = G::ScalarField::MODULUS_BIT_SIZE as usize;
+        let bigint_size = <G::ScalarField as PrimeField>::BigInt::NUM_LIMBS * 64;
+        let mut bits = scalars
+            .iter()
+            .map(|s| BitIteratorBE::new(s.as_ref()).skip(bigint_size - num_bits))
+            .collect::<Vec<_>>();
+        let mut sum = G::Group::zero();
 
         let mut encountered_one = false;
         for _ in 0..num_bits {
@@ -378,7 +416,7 @@ pub fn msm<G: AffineCurve>(bases: &[G], scalars: &[<G::ScalarField as PrimeField
             }
             for (base, bits) in bases.iter().zip(&mut bits) {
                 if let Some(true) = bits.next() {
-                    sum.add_assign_mixed(base);
+                    sum += base;
                     encountered_one = true;
                 }
             }
@@ -389,27 +427,33 @@ pub fn msm<G: AffineCurve>(bases: &[G], scalars: &[<G::ScalarField as PrimeField
         // Determine the bucket size `c` (chosen empirically).
         let c = match scalars.len() < 32 {
             true => 1,
-            false => crate::msm::ln_without_floats(scalars.len()) + 2,
+            false => super::ln_without_floats(scalars.len()) + 2,
         };
 
-        let num_bits = <G::ScalarField as PrimeField>::size_in_bits();
+        let num_bits = <G::ScalarField as PrimeField>::MODULUS_BIT_SIZE as usize;
 
         // Each window is of size `c`.
         // We divide up the bits 0..num_bits into windows of size `c`, and
         // in parallel process each such window.
-        let window_sums: Vec<_> =
-            cfg_into_iter!(0..num_bits).step_by(c).map(|w_start| batched_window(bases, scalars, w_start, c)).collect();
+        let window_sums: Vec<_> = cfg_into_iter!(0..num_bits)
+            .step_by(c)
+            .map(|w_start| batched_window(bases, scalars, w_start, c))
+            .collect();
 
         // We store the sum for the lowest window.
         let (lowest, window_sums) = window_sums.split_first().unwrap();
 
         // We're traversing windows from high to low.
-        window_sums.iter().rev().fold(G::Projective::zero(), |mut total, (sum_i, window_size)| {
-            total += sum_i;
-            for _ in 0..*window_size {
-                total.double_in_place();
-            }
-            total
-        }) + lowest.0
+        window_sums
+            .iter()
+            .rev()
+            .fold(G::Group::zero(), |mut total, (sum_i, window_size)| {
+                total += sum_i;
+                for _ in 0..*window_size {
+                    total.double_in_place();
+                }
+                total
+            })
+            + lowest.0
     }
 }

@@ -162,12 +162,7 @@ fn process_stage0_requests(
                         _,
                         MerkleTreeCircuit,
                         _,
-                    >(
-                        &mut rng,
-                        tree_params.clone(),
-                        &g16_pk,
-                        stage0_req.clone(),
-                    )
+                    >(&mut rng, tree_params.clone(), &g16_pk, stage0_req.clone())
                 })
             },
         )
@@ -325,10 +320,7 @@ fn show_portal_constraint_tradeoff(c: &mut Criterion) {
                         MerkleTreeCircuit,
                         _,
                     >(
-                        &mut rng,
-                        tree_params.clone(),
-                        &first_leaf_pk,
-                        stage0_req,
+                        &mut rng, tree_params.clone(), &first_leaf_pk, stage0_req
                     );
                 })
             },

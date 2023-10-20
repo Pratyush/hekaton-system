@@ -1,5 +1,4 @@
-use ark_std::{vec::Vec, boxed::Box};
-
+use ark_std::{boxed::Box, vec::Vec};
 
 pub struct ExecutionPool<'a, T> {
     #[cfg(feature = "parallel")]
@@ -36,7 +35,8 @@ impl<'a, T> ExecutionPool<'a, T> {
         #[cfg(feature = "parallel")]
         {
             use rayon::prelude::*;
-            let task_pool_size = (rayon::current_num_threads() as f64 / self.jobs.len() as f64).ceil() as usize;
+            let task_pool_size =
+                (rayon::current_num_threads() as f64 / self.jobs.len() as f64).ceil() as usize;
             execute_with_max_available_threads(|| {
                 self.jobs
                     .into_par_iter()

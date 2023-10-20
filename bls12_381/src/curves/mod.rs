@@ -2,10 +2,13 @@ use ark_ec::bls12::{Bls12, Bls12Config, TwistType};
 
 use crate::{Fq, Fq12Config, Fq2Config, Fq6Config};
 
+#[allow(unused)]
 pub mod g1;
+#[allow(unused)]
 pub mod g2;
 pub(crate) mod util;
 
+#[allow(unused)]
 mod msm;
 
 #[cfg(test)]

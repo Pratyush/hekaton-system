@@ -1,15 +1,47 @@
-use ark_std::{vec, vec::Vec};
+// Copyright (C) 2019-2023 Aleo Systems Inc.
+// This file is part of the snarkVM library.
+
+// The snarkVM library is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+
+// The snarkVM library is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU General Public License for more details.
+
+// You should have received a copy of the GNU General Public License
+// along with the snarkVM library. If not, see <https://www.gnu.org/licenses/>.
+
+pub mod batched;
+pub mod ext_traits;
+
+#[cfg(target_arch = "x86_64")]
+pub mod prefetch;
+
+use ark_ff::{BigInteger, PrimeField};
+
+/// The result of this function is only approximately `ln(a)`
+/// [`Explanation of usage`]
+///
+/// [`Explanation of usage`]: https://github.com/scipr-lab/zexe/issues/79#issue-556220473
+fn ln_without_floats(a: usize) -> usize {
+    // log2(a) * ln(2)
+    (ark_std::log2(a) * 69 / 100) as usize
+}
+
 use ark_ec::VariableBaseMSM;
-use ark_ff::{PrimeField, BigInteger};
+use ark_std::{vec, vec::Vec};
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
+#[allow(unused)]
 pub(crate) fn msm_bigint_wnaf<V: VariableBaseMSM>(
     bases: &[V::MulBase],
     bigints: &[<V::ScalarField as PrimeField>::BigInt],
 ) -> V {
-
     let size = ark_std::cmp::min(bases.len(), bigints.len());
     let scalars = &bigints[..size];
     let bases = &bases[..size];
@@ -32,18 +64,11 @@ pub(crate) fn msm_bigint_wnaf<V: VariableBaseMSM>(
 }
 
 // Compute msm using windowed non-adjacent form
+#[allow(unused)]
 pub(crate) fn msm_bigint_wnaf_helper<V: VariableBaseMSM>(
     bases: &[V::MulBase],
     bigints: &[<V::ScalarField as PrimeField>::BigInt],
 ) -> V {
-    /// The result of this function is only approximately `ln(a)`
-    /// [`Explanation of usage`]
-    ///
-    /// [`Explanation of usage`]: https://github.com/scipr-lab/zexe/issues/79#issue-556220473
-    fn ln_without_floats(a: usize) -> usize {
-        // log2(a) * ln(2)
-        (ark_std::log2(a) * 69 / 100) as usize
-    }
     let size = ark_std::cmp::min(bases.len(), bigints.len());
     let scalars = &bigints[..size];
     let bases = &bases[..size];
@@ -56,7 +81,7 @@ pub(crate) fn msm_bigint_wnaf_helper<V: VariableBaseMSM>(
 
     let num_bits = V::ScalarField::MODULUS_BIT_SIZE as usize;
     let digits_count = (num_bits + c - 1) / c;
-    
+
     let scalar_digits = scalars
         .iter()
         .flat_map(|s| make_digits(s, c, num_bits))
@@ -104,6 +129,7 @@ pub(crate) fn msm_bigint_wnaf_helper<V: VariableBaseMSM>(
 }
 
 // From: https://github.com/arkworks-rs/gemini/blob/main/src/kzg/msm/variable_base.rs#L20
+#[allow(unused)]
 fn make_digits(a: &impl BigInteger, w: usize, num_bits: usize) -> impl Iterator<Item = i64> + '_ {
     let scalar = a.as_ref();
     let radix: u64 = 1 << w;

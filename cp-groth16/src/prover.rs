@@ -81,7 +81,6 @@ impl<E: Pairing, QAP: R1CSToQAP> CPGroth16<E, QAP> {
         #[cfg(feature = "parallel")]
         println!("num_threads: {}", rayon::current_num_threads());
 
-
         let lc_time = start_timer!(|| "Inlining LCs");
         cs.finalize();
         end_timer!(lc_time);
@@ -92,15 +91,13 @@ impl<E: Pairing, QAP: R1CSToQAP> CPGroth16<E, QAP> {
                     .map(|e| e.into_bigint())
                     .collect::<Vec<_>>();
 
-
         let current_witness = cs.current_stage_witness_assignment();
         let c_acc_time = start_timer!(|| "Compute C");
         let witness_map_time = start_timer!(|| "R1CS to QAP witness map");
         let h = cs.map(QAP::witness_map::<E::ScalarField, D<E::ScalarField>>)?;
         end_timer!(witness_map_time);
-        
-        let mut pool = crate::parallel::ExecutionPool::<ResultWrapper<E>>::with_capacity(5);
 
+        let mut pool = crate::parallel::ExecutionPool::<ResultWrapper<E>>::with_capacity(5);
 
         pool.add_job(|| {
             let h_time = start_timer!(|| format!("Compute H with size {}", h.len()));
@@ -111,18 +108,16 @@ impl<E: Pairing, QAP: R1CSToQAP> CPGroth16<E, QAP> {
         });
 
         pool.add_job(|| {
-            let l_aux_time = start_timer!(|| format!("Compute L with size {}", current_witness.len()));
+            let l_aux_time =
+                start_timer!(|| format!("Compute L with size {}", current_witness.len()));
             assert_eq!(current_witness.len(), pk.last_ck().len());
             let l_aux_acc = E::G1::msm(&pk.last_ck(), &current_witness).unwrap();
             end_timer!(l_aux_time);
             ResultWrapper::G1(l_aux_acc)
         });
 
-        
-
         // Compute C
 
-        
         let r_s_delta_g = pk.last_delta_g() * (r * s);
 
         end_timer!(c_acc_time);
@@ -131,13 +126,13 @@ impl<E: Pairing, QAP: R1CSToQAP> CPGroth16<E, QAP> {
         pool.add_job(|| {
             let a_acc_time = start_timer!(|| "Compute A");
             let r_delta_g = pk.last_delta_g() * r;
-            
+
             let a_g = Self::calculate_coeff(r_delta_g, &pk.a_g, pk.vk.alpha_g, &assignment);
-            
+
             end_timer!(a_acc_time);
             ResultWrapper::G1(a_g)
         });
-                // Compute B in G1 if needed
+        // Compute B in G1 if needed
         pool.add_job(|| {
             let b_g = if r.is_zero() {
                 E::G1::zero()
@@ -145,14 +140,13 @@ impl<E: Pairing, QAP: R1CSToQAP> CPGroth16<E, QAP> {
                 let b_g1_acc_time = start_timer!(|| "Compute B in G1");
                 let s_g = pk.last_delta_g() * s;
                 let b_g = Self::calculate_coeff(s_g, &pk.b_g, pk.beta_g, &assignment);
-                
+
                 end_timer!(b_g1_acc_time);
-                
+
                 b_g
             };
             ResultWrapper::G1(b_g)
         });
-        
 
         pool.add_job(|| {
             // Compute B in G2
@@ -163,7 +157,8 @@ impl<E: Pairing, QAP: R1CSToQAP> CPGroth16<E, QAP> {
             ResultWrapper::G2(b_h)
         });
 
-        let [h_acc, l_aux_acc, a_g, b_g, b_h]: [ResultWrapper<E>; 5] = pool.execute_all().try_into().unwrap();
+        let [h_acc, l_aux_acc, a_g, b_g, b_h]: [ResultWrapper<E>; 5] =
+            pool.execute_all().try_into().unwrap();
         let h_acc = h_acc.unwrap_g1();
         let l_aux_acc = l_aux_acc.unwrap_g1();
         let a_g = a_g.unwrap_g1();
@@ -172,9 +167,7 @@ impl<E: Pairing, QAP: R1CSToQAP> CPGroth16<E, QAP> {
         let r_b_g = b_g * r;
         let s_a_g = a_g * s;
 
-        
         drop(assignment);
-
 
         let c_time = start_timer!(|| "Finish C");
         let mut c_g = s_a_g;

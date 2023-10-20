@@ -5,9 +5,9 @@ use ark_ec::{
     short_weierstrass::{Affine, SWCurveConfig},
     AffineRepr, Group,
 };
-use ark_ff::{MontFp, PrimeField, Zero, Field};
+use ark_ff::{Field, MontFp, PrimeField, Zero};
 use ark_serialize::{Compress, SerializationError};
-use ark_std::{ops::Neg, One, cfg_into_iter, vec::Vec};
+use ark_std::{cfg_into_iter, ops::Neg, vec::Vec, One};
 
 use crate::{
     util::{
@@ -151,7 +151,7 @@ impl SWCurveConfig for Config {
                 let bigints = cfg_into_iter!(scalars)
                     .map(|s| s.into_bigint())
                     .collect::<Vec<_>>();
-                super::msm::msm_bigint_wnaf(bases, &bigints)
+                super::msm::batched::msm(bases, &bigints)
             })
             .ok_or(bases.len().min(scalars.len()))
     }

@@ -1,7 +1,9 @@
 use core::ops::Range;
 
 use ark_ff::Field;
-use ark_relations::r1cs::{ConstraintSystem, ConstraintSystemRef, SynthesisError, OptimizationGoal, SynthesisMode};
+use ark_relations::r1cs::{
+    ConstraintSystem, ConstraintSystemRef, OptimizationGoal, SynthesisError, SynthesisMode,
+};
 
 /// Represents a constraint system whose variables come from a number of distinct allocation
 /// stages. Each allocation stage happens separately, and adds to the total instance variable

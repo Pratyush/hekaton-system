@@ -18,8 +18,8 @@
 macro_rules! prefetch_slice {
     ($curve: ident, $slice_1: ident, $slice_2: ident, $prefetch_iter: ident) => {
         if let Some((idp_1, idp_2)) = $prefetch_iter.next() {
-            $crate::msm::variable_base::prefetch::prefetch::<$curve>(&$slice_1[*idp_1 as usize]);
-            $crate::msm::variable_base::prefetch::prefetch::<$curve>(&$slice_2[*idp_2 as usize]);
+            $crate::curves::msm::prefetch::prefetch::<$curve>(&$slice_1[*idp_1 as usize]);
+            $crate::curves::msm::prefetch::prefetch::<$curve>(&$slice_2[*idp_2 as usize]);
         }
     };
 
@@ -34,16 +34,16 @@ macro_rules! prefetch_slice {
 macro_rules! prefetch_slice_write {
     ($curve: ident, $slice_1: ident, $slice_2: ident, $prefetch_iter: ident) => {
         if let Some((idp_1, idp_2)) = $prefetch_iter.next() {
-            $crate::msm::variable_base::prefetch::prefetch::<$curve>(&$slice_1[*idp_1 as usize]);
+            $crate::curves::msm::prefetch::prefetch::<$curve>(&$slice_1[*idp_1 as usize]);
             if *idp_2 != !0u32 {
-                $crate::msm::variable_base::prefetch::prefetch::<$curve>(&$slice_2[*idp_2 as usize]);
+                $crate::curves::msm::prefetch::prefetch::<$curve>(&$slice_2[*idp_2 as usize]);
             }
         }
     };
 }
 
 const fn n_lines<T>() -> isize {
-    ((std::mem::size_of::<T>() - 1) / 64 + 1) as isize
+    ((core::mem::size_of::<T>() - 1) / 64 + 1) as isize
 }
 
 #[macro_export]

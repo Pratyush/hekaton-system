@@ -40,7 +40,10 @@ fn main() {
         root_process.scatter_into_root(&v, &mut x);
     } else {
         root_process.scatter_into(&mut x);
-        println!("Rank {rank} waiting for 5 seconds? {}", now.elapsed().as_secs_f64());
+        println!(
+            "Rank {rank} waiting for 5 seconds? {}",
+            now.elapsed().as_secs_f64()
+        );
     }
     assert_eq!(x, rank);
     println!("Rank {} received value: {}.", rank, x);
@@ -58,7 +61,10 @@ fn main() {
     if rank == root_rank {
         let mut a = vec![0u64; size.try_into().unwrap()];
         root_process.gather_into_root(&i, &mut a[..]);
-        println!("Root waiting for 2 seconds? {}", now.elapsed().as_secs_f64());
+        println!(
+            "Root waiting for 2 seconds? {}",
+            now.elapsed().as_secs_f64()
+        );
         println!("Root gathered sequence: {:?}.", a);
         assert!(a
             .iter()

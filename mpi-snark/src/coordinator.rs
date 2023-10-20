@@ -1,6 +1,5 @@
 use crate::data_structures::{
-    AggProof, ProvingKeys, Stage0RequestRef, Stage0Response,
-    Stage1RequestRef, Stage1Response,
+    AggProof, ProvingKeys, Stage0RequestRef, Stage0Response, Stage1RequestRef, Stage1Response,
 };
 
 use distributed_prover::{

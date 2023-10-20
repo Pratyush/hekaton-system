@@ -1,4 +1,4 @@
-use ark_std::{ops::Neg, cfg_into_iter, vec::Vec};
+use ark_std::{cfg_into_iter, ops::Neg, vec::Vec};
 
 use ark_ec::{
     bls12,
@@ -7,12 +7,10 @@ use ark_ec::{
     short_weierstrass::{Affine, Projective, SWCurveConfig},
     AffineRepr, CurveGroup, Group,
 };
-use ark_ff::{Field, MontFp, Zero, PrimeField};
+use ark_ff::{Field, MontFp, PrimeField, Zero};
 use ark_serialize::{Compress, SerializationError};
 
-use super::{
-    util::{serialize_fq, EncodingFlags, G2_SERIALIZED_SIZE},
-};
+use super::util::{serialize_fq, EncodingFlags, G2_SERIALIZED_SIZE};
 use crate::{
     util::{read_g2_compressed, read_g2_uncompressed},
     *,
@@ -194,7 +192,7 @@ impl SWCurveConfig for Config {
                 let bigints = cfg_into_iter!(scalars)
                     .map(|s| s.into_bigint())
                     .collect::<Vec<_>>();
-                super::msm::msm_bigint_wnaf(bases, &bigints)
+                super::msm::batched::msm(bases, &bigints)
             })
             .ok_or(bases.len().min(scalars.len()))
     }
