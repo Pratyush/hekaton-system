@@ -17,6 +17,7 @@ distributed-prover = { path = "../distributed-prover", default-features = false,
 rayon = { version = "1" }
 rand = "0.8.5"
 clap = { version = "4.4.6", default-features = false, features = ["derive"] }
+mimalloc = { version = "0.1", default-features = false }
 
 [features]
 default = []#"print-trace"]
