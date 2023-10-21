@@ -22,6 +22,11 @@ use std::{
     path::PathBuf,
 };
 
+use mimalloc::MiMalloc;
+
+#[global_allocator]
+static GLOBAL: MiMalloc = MiMalloc;
+
 macro_rules! start_timer_buf {
     ($buf:ident, $msg:expr) => {{
         use std::time::Instant;
