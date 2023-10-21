@@ -156,7 +156,7 @@ fn setup(
 }
 
 fn work(num_workers: usize, proving_keys: ProvingKeys) {
-    let universe = mpi::initialize().unwrap();
+    let (universe, _) = mpi::initialize_with_threading(mpi::Threading::Funneled).unwrap();
     let world = universe.world();
     let root_rank = 0;
     let root_process = world.process_at_rank(root_rank);
