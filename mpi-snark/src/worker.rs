@@ -1,5 +1,5 @@
 use crate::data_structures::{
-    G16Com, G16ComRandomness, G16ProvingKey, ProvingKeys, Stage0Request, Stage0Response,
+    G16Com, G16ComRandomness, ProvingKeys, Stage0Request, Stage0Response,
     Stage1Request, Stage1Response,
 };
 
