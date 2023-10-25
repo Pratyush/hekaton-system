@@ -242,11 +242,16 @@ fn work(num_workers: usize, proving_keys: ProvingKeys) {
         let _proof = coordinator_state.aggregate(&responses);
         end_timer_buf!(log, start);
     } else {
+
+        println!("Rayon num threads in worker {rank}: {}", rayon::current_num_threads());
         // Worker code
+        let start = start_timer_buf!(log, || format!("Worker {rank}: Initializing worker state"));
         let mut worker_states =
             std::iter::from_fn(|| Some(WorkerState::new(num_subcircuits, &proving_keys)))
                 .take(num_subcircuits_per_worker)
+                .par_bridge()
                 .collect::<Vec<_>>();
+        end_timer_buf!(log, start);
 
         /***************************************************************************/
         /***************************************************************************/
@@ -258,7 +263,7 @@ fn work(num_workers: usize, proving_keys: ProvingKeys) {
         // Compute Stage 0 response
         let start = start_timer_buf!(log, || format!("Worker {rank}: Processing stage0 requests"));
         let responses = requests
-            .iter()
+            .par_iter()
             .zip(&mut worker_states)
             .map(|(req, state)| state.stage_0(req))
             .collect::<Vec<_>>();
@@ -282,7 +287,7 @@ fn work(num_workers: usize, proving_keys: ProvingKeys) {
         // Compute Stage 1 response
         let start = start_timer_buf!(log, || format!("Worker {rank}: Processing stage1 request"));
         let responses = requests
-            .iter()
+            .par_iter()
             .zip(worker_states)
             .map(|(req, state)| state.stage_1(req))
             .collect::<Vec<_>>();
