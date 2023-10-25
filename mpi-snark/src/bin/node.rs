@@ -267,6 +267,7 @@ fn work(num_workers: usize, proving_keys: ProvingKeys) {
             .zip(&mut worker_states)
             .map(|(req, state)| {
                 rayon::ThreadPoolBuilder::new()
+                    .num_threads(1)
                     .build()
                     .unwrap()
                     .install(||
