@@ -3,7 +3,8 @@
 set -eu
 
 MEM_PER_CPU="3800M"
-CPUS_PER_TASK="8"
+CPUS_FOR_COORDINATOR="16"
+CPUS_PER_TASK="1"
 
 HELPSTR="\
 Usage:\n\
@@ -24,20 +25,46 @@ DATETIME=$(printf '%(%Y%m%d.%H%M%S)T\n' -1)
 OUT_FILENAME="bench_out-${JOB_DESC}-${DATETIME}.txt"
 ERR_FILENAME="bench_err-${JOB_DESC}-${DATETIME}.txt"
 
-sbatch \
-	--wait \
-	--time 20:00 \
-	--account imiers-prj-cmsc \
-	--ntasks=$(($NUM_WORKERS + 2)) \
-	--job-name $JOB_DESC \
-	--mem-per-cpu=$MEM_PER_CPU \
-	--cpus-per-task=$CPUS_PER_TASK \
-       	--out=$OUT_FILENAME \
-	--error=$ERR_FILENAME \
-	./bench_job.slurm $KEYFILE_PATH $NUM_WORKERS $CPUS_PER_TASK
+#sbatch \
+#	--wait \
+#	--time 20:00 \
+#	--account imiers-prj-cmsc \
+#	--job-name $JOB_DESC \
+#       	--out=$OUT_FILENAME \
+#	--error=$ERR_FILENAME \
+#	--ntasks=1 \
+#	--mem-per-cpu=$MEM_PER_CPU \
+#	--cpus-per-task=$CPUS_FOR_COORDINATOR \
+#	: \
+#	--ntasks=$NUM_WORKERS \
+#	--mem-per-cpu=$MEM_PER_CPU \
+#	--cpus-per-task=1 \
+#	./bench_job.slurm $KEYFILE_PATH $NUM_WORKERS $CPUS_PER_TASK
+
+#srun \
+#	--time 20:00 \
+#	--account imiers-prj-cmsc \
+#	--job-name $JOB_DESC \
+#       	--out=$OUT_FILENAME \
+#	--error=$ERR_FILENAME \
+#	--ntasks=1 \
+#	--mem-per-cpu=$MEM_PER_CPU \
+#	--cpus-per-task=$CPUS_FOR_COORDINATOR \
+#	./bench_job.slurm $KEYFILE_PATH $NUM_WORKERS $CPUS_PER_TASK
+#	: \
+#       	--out="$OUT_FILENAME-2" \
+#	--error="$ERR_FILENAME-2" \
+#	--ntasks=$NUM_WORKERS \
+#	--mem-per-cpu=$MEM_PER_CPU \
+#	--cpus-per-task=$CPUS_PER_TASK \
+#	./bench_job $KEYFILE_PATH $NUM_WORKERS $CPUS_PER_TASK
+
+
+srun --time 20:00 --account imiers-prj-cmsc --job-name $JOB_DESC --out=$OUT_FILENAME --error=$ERR_FILENAME --ntasks=1 --mem-per-cpu=$MEM_PER_CPU --cpus-per-task=$CPUS_FOR_COORDINATOR ./bench_job.slurm $KEYFILE_PATH $NUM_WORKERS $CPUS_PER_TASK : --ntasks=$NUM_WORKERS --mem-per-cpu=$MEM_PER_CPU --cpus-per-task=$CPUS_PER_TASK ./bench_job.slurm $KEYFILE_PATH $NUM_WORKERS $CPUS_PER_TASK
 
 echo "JOB DESC: ${JOB_DESC}" >> $OUT_FILENAME
 echo "NUM WORKERS: ${NUM_WORKERS}" >> $OUT_FILENAME
 echo "MEGS PER CPU: ${MEM_PER_CPU}" >> $OUT_FILENAME
 echo "CPUS PER TASK: ${CPUS_PER_TASK}" >> $OUT_FILENAME
+echo "CPUS FOR COORDINATOR: ${CPUS_FOR_COORDINATOR}" >> $OUT_FILENAME
 echo "${@:0}" >> $OUT_FILENAME
