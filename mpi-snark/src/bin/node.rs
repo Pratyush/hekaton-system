@@ -265,7 +265,13 @@ fn work(num_workers: usize, proving_keys: ProvingKeys) {
         let responses = requests
             .par_iter()
             .zip(&mut worker_states)
-            .map(|(req, state)| state.stage_0(req))
+            .map(|(req, state)| {
+                rayon::ThreadPoolBuilder::new()
+                    .build()
+                    .unwrap()
+                    .install(||
+                state.stage_0(req))
+            })
             .collect::<Vec<_>>();
         end_timer_buf!(log, start);
         println!("Finished worker scatter 0 for rank {rank}");
@@ -289,7 +295,14 @@ fn work(num_workers: usize, proving_keys: ProvingKeys) {
         let responses = requests
             .par_iter()
             .zip(worker_states)
-            .map(|(req, state)| state.stage_1(req))
+            .map(|(req, state)| {
+                rayon::ThreadPoolBuilder::new()
+                    .num_threads(1)
+                    .build()
+                    .unwrap()
+                    .install(||
+                state.stage_1(req))
+            })
             .collect::<Vec<_>>();
         end_timer_buf!(log, start);
         println!("Finished worker scatter 1 for rank {rank}");
