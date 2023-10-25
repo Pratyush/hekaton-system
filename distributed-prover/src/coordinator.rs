@@ -4,9 +4,8 @@ use crate::{
         ExecTreeLeaf, ExecTreeParams, MerkleRoot, SerializedLeaf, SerializedLeafVar, TreeConfig,
         TreeConfigGadget,
     },
-    portal_manager::SetupPortalManager,
     subcircuit_circuit::SubcircuitWithPortalsProver,
-    util::{G16Com, G16ComSeed, G16Proof, G16ProvingKey},
+    util::{G16Com, G16ComSeed, G16ProvingKey},
     worker::{Stage0Response, Stage1Response},
     CircuitWithPortals, RomTranscriptEntry, RunningEvals,
 };
@@ -20,7 +19,6 @@ use ark_crypto_primitives::{
 };
 use ark_ec::pairing::Pairing;
 use ark_ff::{PrimeField, ToConstraintField};
-use ark_relations::r1cs::{ConstraintSystem, ConstraintSystemRef};
 use ark_serialize::{
     CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Write,
 };

@@ -1,3 +1,4 @@
+#![allow(warnings)]
 use distributed_prover::tree_hash_circuit::MerkleTreeCircuitParams;
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};

@@ -23,7 +23,7 @@ NUM_PORTALS=$3
 JOB_DESC="nc=${NUM_SUBCIRCUITS}_ns=${NUM_SHA2_ITERS}_np=${NUM_PORTALS}"
 OUT_FILENAME="pks-${JOB_DESC}.bin"
 
-cargo build --release
+env RUSTFLAGS="-Awarnings" cargo build --release
 ../target/release/node setup \
 	--num-subcircuits $NUM_SUBCIRCUITS \
 	--num-sha2-iters $NUM_SHA2_ITERS \
