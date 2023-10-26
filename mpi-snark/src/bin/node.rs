@@ -1,4 +1,5 @@
 #![allow(warnings)]
+use ark_std::{cfg_into_iter, cfg_iter};
 use distributed_prover::tree_hash_circuit::MerkleTreeCircuitParams;
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -24,6 +25,9 @@ use std::{
 };
 
 use mimalloc::MiMalloc;
+
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
@@ -56,8 +60,6 @@ macro_rules! end_timer_buf {
         ));
     }};
 }
-
-use rayon::prelude::*;
 
 #[derive(Parser)]
 struct Args {
@@ -97,7 +99,7 @@ enum Command {
 }
 
 fn main() {
-    println!("Rayon num threads: {}", rayon::current_num_threads());
+    println!("Rayon num threads: {}", current_num_threads());
 
     let args = Args::parse();
 
@@ -204,8 +206,7 @@ fn work(num_workers: usize, proving_keys: ProvingKeys) {
         let default_response = vec![Stage0Response::default(); num_subcircuits_per_worker];
         let responses_chunked: Vec<Vec<_>> =
             gather_responses(&mut log, "stage0", size, &root_process, default_response);
-        let responses = responses_chunked
-            .into_par_iter()
+        let responses = cfg_into_iter!(responses_chunked)
             .flatten()
             .collect::<Vec<_>>();
         println!("Finished coordinator gather 0");
@@ -231,8 +232,7 @@ fn work(num_workers: usize, proving_keys: ProvingKeys) {
         let default_response = vec![Stage1Response::default(); num_subcircuits_per_worker];
         let responses_chunked: Vec<Vec<_>> =
             gather_responses(&mut log, "stage1", size, &root_process, default_response);
-        let responses = responses_chunked
-            .into_par_iter()
+        let responses = cfg_into_iter!(responses_chunked)
             .flatten()
             .collect::<Vec<_>>();
         println!("Finished coordinator gather 1");
@@ -243,14 +243,15 @@ fn work(num_workers: usize, proving_keys: ProvingKeys) {
         let _proof = coordinator_state.aggregate(&responses);
         end_timer_buf!(log, start);
     } else {
-
-        println!("Rayon num threads in worker {rank}: {}", rayon::current_num_threads());
+        println!(
+            "Rayon num threads in worker {rank}: {}",
+            current_num_threads()
+        );
         // Worker code
         let start = start_timer_buf!(log, || format!("Worker {rank}: Initializing worker state"));
-        let mut worker_states =
-            std::iter::from_fn(|| Some(WorkerState::new(num_subcircuits, &proving_keys)))
+        let mut worker_states = std::iter::from_fn(|| Some(WorkerState::new(num_subcircuits, &proving_keys)))
                 .take(num_subcircuits_per_worker)
-                .par_bridge()
+                // .par_bridge()
                 .collect::<Vec<_>>();
         end_timer_buf!(log, start);
 
@@ -263,18 +264,18 @@ fn work(num_workers: usize, proving_keys: ProvingKeys) {
 
         // Compute Stage 0 response
         let start = start_timer_buf!(log, || format!("Worker {rank}: Processing stage0 requests"));
-        let responses = requests
-            .par_iter()
-            .zip(&mut worker_states)
-            .map(|(req, state)| {
-                rayon::ThreadPoolBuilder::new()
-                    .num_threads(1)
-                    .build()
-                    .unwrap()
-                    .install(||
-                state.stage_0(req))
-            })
-            .collect::<Vec<_>>();
+        let responses = execute_in_pool_with_all_threads(|| {
+            let pool_size = if current_num_threads() > requests.len() {
+                current_num_threads() / requests.len()
+            } else {
+                1
+            };
+            dbg!(pool_size);
+            cfg_iter!(requests)
+                .zip(&mut worker_states)
+                .map(|(req, state)| execute_in_pool(|| state.stage_0(req), pool_size))
+                .collect::<Vec<_>>()
+        });
         end_timer_buf!(log, start);
         println!("Finished worker scatter 0 for rank {rank}");
 
@@ -294,18 +295,17 @@ fn work(num_workers: usize, proving_keys: ProvingKeys) {
 
         // Compute Stage 1 response
         let start = start_timer_buf!(log, || format!("Worker {rank}: Processing stage1 request"));
-        let responses = requests
-            .par_iter()
-            .zip(worker_states)
-            .map(|(req, state)| {
-                rayon::ThreadPoolBuilder::new()
-                    .num_threads(1)
-                    .build()
-                    .unwrap()
-                    .install(||
-                state.stage_1(req))
-            })
-            .collect::<Vec<_>>();
+        let responses = execute_in_pool_with_all_threads(|| {
+            let pool_size = if current_num_threads() > requests.len() {
+                current_num_threads() / requests.len()
+            } else {
+                1
+            };
+            cfg_iter!(requests)
+                .zip(worker_states)
+                .map(|(req, state)| execute_in_pool(|| state.stage_1(req), pool_size))
+                .collect::<Vec<_>>()
+        });
         end_timer_buf!(log, start);
         println!("Finished worker scatter 1 for rank {rank}");
 
@@ -413,4 +413,34 @@ fn send_responses<'a, C: 'a + Communicator, T: CanonicalSerialize>(
     ));
     root_process.gather_varcount_into(&responses_bytes);
     end_timer_buf!(log, start);
+}
+
+#[cfg(feature = "parallel")]
+fn execute_in_pool_with_all_threads<T: Send>(f: impl FnOnce() -> T + Send) -> T {
+    execute_in_pool(f, rayon::current_num_threads())
+}
+
+#[cfg(feature = "parallel")]
+fn execute_in_pool<T: Send>(f: impl FnOnce() -> T + Send, num_threads: usize) -> T {
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(num_threads)
+        .build()
+        .unwrap();
+    pool.install(f)
+}
+#[cfg(not(feature = "parallel"))]
+fn execute_in_pool<T: Send>(f: impl FnOnce() -> T + Send, num_threads: usize) -> T {
+    f()
+}
+#[cfg(not(feature = "parallel"))]
+fn execute_in_pool_with_all_threads<T: Send>(f: impl FnOnce() -> T + Send) -> T {
+    f()
+}
+
+#[cfg(feature = "parallel")]
+use rayon::current_num_threads;
+
+#[cfg(not(feature = "parallel"))]
+fn current_num_threads() -> usize {
+    1
 }

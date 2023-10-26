@@ -9,8 +9,9 @@ keywords = ["cryptography", "crypto", "zero-knowledge", "snark"]
 categories = ["cryptography", "no-std"]
 
 [dependencies]
-ark-bls12-381 = { path = "../bls12_381" }
+ark-bls12-381 = { path = "../bls12_381", default-features = false, features = ["curve"] }
 ark-ff = {version = "0.4", default-features = false }
+ark-ec = {version = "0.4", default-features = false }
 ark-poly = { version = "0.4.0" }
 ark-r1cs-std = { version = "0.4", default-features = false }
 ark-relations = { version = "0.4", default-features = false }
@@ -20,9 +21,8 @@ rand = "0.8"
 ark-cp-groth16 = { path = "../cp-groth16", default-features = false }
 ark-std = "0.4.0"
 ark-crypto-primitives = { version = "0.4", default-features = false, features = ["merkle_tree", "r1cs"] }
-ark-ec = "0.4.2"
 rand_chacha = "0.3.1"
-rayon = "1.8.0"
+rayon = { version = "1.8.0" }
 merlin = "3.0.0"
 
 [dev-dependencies]
@@ -36,7 +36,7 @@ default = ["asm", "parallel"]
 print-trace = ["ark-std/print-trace"]
 std = ["ark-ff/std", "ark-poly/std", "ark-r1cs-std/std", "ark-serialize/std", "ark-relations/std"]
 asm = ["ark-ff/asm"]
-parallel = ["ark-ff/parallel", "ark-poly/parallel", "ark-r1cs-std/parallel", ]
+parallel = ["ark-ff/parallel", "ark-ec/parallel", "ark-bls12-381/parallel", "ark-poly/parallel", "ark-r1cs-std/parallel", ]
 
 [[bench]]
 name = "microbenchmarks"

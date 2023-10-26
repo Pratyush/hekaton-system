@@ -1,6 +1,6 @@
 use crate::data_structures::{
-    G16Com, G16ComRandomness, ProvingKeys, Stage0Request, Stage0Response,
-    Stage1Request, Stage1Response,
+    G16Com, G16ComRandomness, ProvingKeys, Stage0Request, Stage0Response, Stage1Request,
+    Stage1Response,
 };
 
 use distributed_prover::{

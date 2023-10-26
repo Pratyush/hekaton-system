@@ -7,7 +7,7 @@ use ark_ec::{
 use ark_ff::{Field, PrimeField, UniformRand};
 use ark_poly::{univariate::DensePolynomial, DenseUVPolynomial};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use ark_std::One;
+use ark_std::{cfg_iter, One};
 use rand::RngCore;
 use rayon::prelude::*;
 
@@ -17,12 +17,10 @@ pub(crate) fn pairing_miller_affine<E: Pairing>(
 ) -> MillerLoopOutput<E> {
     assert_eq!(left.len(), right.len());
 
-    let left = left
-        .par_iter()
+    let left = cfg_iter!(left)
         .map(|e| E::G1Prepared::from(*e))
         .collect::<Vec<_>>();
-    let right = right
-        .par_iter()
+    let right = cfg_iter!(right)
         .map(|e| E::G2Prepared::from(*e))
         .collect::<Vec<_>>();
 
@@ -37,8 +35,7 @@ pub(crate) fn pairing<E: Pairing>(left: &[E::G1Affine], right: &[E::G2Affine]) -
 
 /// Multiplies a set of group elements by a same-sized set of scalars. outputs the vec of results
 pub fn scalar_pairing<G: AffineRepr>(gp: &[G], scalars: &[G::ScalarField]) -> Vec<G> {
-    let proj_results = gp
-        .par_iter()
+    let proj_results = cfg_iter!(gp)
         .zip(scalars)
         .map(|(si, ri)| *si * *ri)
         .collect::<Vec<_>>();
