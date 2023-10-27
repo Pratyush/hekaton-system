@@ -324,8 +324,12 @@ fn work(num_workers: usize, proving_keys: ProvingKeys) {
             };
             dbg!(pool_size);
             dbg!(chunk_size);
+            #[cfg(feature = "parallel")]
+            let state_chunks = cfg_into_iter!(worker_states).chunks(chunk_size);
+            #[cfg(not(feature = "parallel"))]
+            let state_chunks = &(cfg_into_iter!(worker_states).chunks(chunk_size));
             cfg_chunks!(requests, chunk_size)
-                .zip(cfg_into_iter!(worker_states).chunks(chunk_size))
+                .zip(state_chunks)
                 .flat_map(|(reqs, states)| 
                     reqs
                         .into_iter()
