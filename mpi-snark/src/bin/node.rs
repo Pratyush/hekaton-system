@@ -1,5 +1,5 @@
 #![allow(warnings)]
-use ark_std::{cfg_into_iter, cfg_iter, cfg_chunks};
+use ark_std::{cfg_into_iter, cfg_iter, cfg_chunks, cfg_chunks_mut};
 use distributed_prover::tree_hash_circuit::MerkleTreeCircuitParams;
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -28,6 +28,8 @@ use mimalloc::MiMalloc;
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
+#[cfg(not(feature = "parallel"))]
+use itertools::Itertools;
 
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
@@ -279,8 +281,8 @@ fn work(num_workers: usize, proving_keys: ProvingKeys) {
             };
             dbg!(pool_size);
             dbg!(chunk_size);
-            requests.par_chunks(chunk_size)
-                .zip(worker_states.par_chunks_mut(chunk_size))
+            cfg_chunks!(requests, chunk_size)
+                .zip(cfg_chunks_mut!(worker_states, chunk_size))
                 .flat_map(|(reqs, states)| 
                     reqs
                         .into_iter()
@@ -322,8 +324,8 @@ fn work(num_workers: usize, proving_keys: ProvingKeys) {
             };
             dbg!(pool_size);
             dbg!(chunk_size);
-            requests.par_chunks(chunk_size)
-                .zip(worker_states.into_par_iter().chunks(chunk_size))
+            cfg_chunks!(requests, chunk_size)
+                .zip(cfg_into_iter!(worker_states).chunks(chunk_size))
                 .flat_map(|(reqs, states)| 
                     reqs
                         .into_iter()
