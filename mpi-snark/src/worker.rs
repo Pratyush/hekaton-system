@@ -106,3 +106,11 @@ impl<'a> WorkerState<'a> {
 ///  However, no other thread has access to the `WorkerState` of another thread,
 ///  and so we don't have any mutable access issues.
 unsafe impl<'a> Send for WorkerState<'a> {}
+
+/// Safety: This is only safe because:
+/// * In `node.rs`, `WorkerState` is only ever accessed by one thread at a time
+/// * `WorkerState` is only `!Send` because it contains a `CommitterState`, and
+///  `CommitterState` is `!Send` because it contains `ConstraintSystemRef`s.
+///  However, no other thread has access to the `WorkerState` of another thread,
+///  and so we don't have any mutable access issues.
+unsafe impl<'a> Sync for WorkerState<'a> {}

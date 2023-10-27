@@ -1,5 +1,5 @@
 #![allow(warnings)]
-use ark_std::{cfg_into_iter, cfg_iter};
+use ark_std::{cfg_into_iter, cfg_iter, cfg_chunks};
 use distributed_prover::tree_hash_circuit::MerkleTreeCircuitParams;
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -270,10 +270,22 @@ fn work(num_workers: usize, proving_keys: ProvingKeys) {
             } else {
                 1
             };
+            let chunk_size = if requests.len() > current_num_threads() {
+                current_num_threads()
+            } else {
+                current_num_threads()
+            };
             dbg!(pool_size);
-            cfg_iter!(requests)
-                .zip(&mut worker_states)
-                .map(|(req, state)| execute_in_pool(|| state.stage_0(req), pool_size))
+            dbg!(chunk_size);
+            requests.par_chunks(chunk_size)
+                .zip(worker_states.par_chunks_mut(chunk_size))
+                .flat_map(|(reqs, states)| 
+                    reqs
+                        .into_iter()
+                        .zip(states)
+                        .map(|(req, state)| execute_in_pool(|| state.stage_0(req), pool_size))
+                        .collect::<Vec<_>>()
+                )
                 .collect::<Vec<_>>()
         });
         end_timer_buf!(log, start);
@@ -301,9 +313,22 @@ fn work(num_workers: usize, proving_keys: ProvingKeys) {
             } else {
                 1
             };
-            cfg_iter!(requests)
-                .zip(worker_states)
-                .map(|(req, state)| execute_in_pool(|| state.stage_1(req), pool_size))
+            let chunk_size = if requests.len() > current_num_threads() {
+                requests.len() / current_num_threads()
+            } else {
+                current_num_threads()
+            };
+            dbg!(pool_size);
+            dbg!(chunk_size);
+            requests.par_chunks(chunk_size)
+                .zip(worker_states.into_par_iter().chunks(chunk_size))
+                .flat_map(|(reqs, states)| 
+                    reqs
+                        .into_iter()
+                        .zip(states)
+                        .map(|(req, state)| execute_in_pool(|| state.stage_1(req), pool_size))
+                        .collect::<Vec<_>>()
+                )
                 .collect::<Vec<_>>()
         });
         end_timer_buf!(log, start);
