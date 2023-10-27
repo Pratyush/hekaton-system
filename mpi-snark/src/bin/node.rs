@@ -273,7 +273,7 @@ fn work(num_workers: usize, proving_keys: ProvingKeys) {
                 1
             };
             let chunk_size = if requests.len() > current_num_threads() {
-                current_num_threads()
+                current_num_threads() / requests.len()
             } else {
                 current_num_threads()
             };
