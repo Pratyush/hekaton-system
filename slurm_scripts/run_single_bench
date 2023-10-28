@@ -3,12 +3,11 @@
 set -eu
 
 MEM_PER_CPU="3800M"
-CPUS_FOR_COORDINATOR="16"
-CPUS_PER_TASK="1"
+CORES_PER_TASK="1"
 
 HELPSTR="\
 Usage:\n\
-run_single_bench <proving_keys_bin> <num_workers> \
+run_single_bench <proving_keys_bin> <num_worker_cores> \
 "
 
 if [ -z ${1+x} ] || [ -z ${2+x} ]; then
@@ -17,7 +16,8 @@ if [ -z ${1+x} ] || [ -z ${2+x} ]; then
 fi
 
 KEYFILE_PATH=$1
-NUM_WORKERS=$2
+NUM_WORKER_CORES=$2
+NUM_WORKER_TASKS=$(($NUM_WORKER_CORES / $CORES_PER_TASK))
 
 JOB_DESC=$(basename $KEYFILE_PATH | cut -d- -f2 | cut -d. -f1)
 
@@ -25,21 +25,17 @@ DATETIME=$(printf '%(%Y%m%d.%H%M%S)T\n' -1)
 OUT_FILENAME="bench_out-${JOB_DESC}-${DATETIME}.txt"
 ERR_FILENAME="bench_err-${JOB_DESC}-${DATETIME}.txt"
 
-#sbatch \
-#	--wait \
-#	--time 20:00 \
-#	--account imiers-prj-cmsc \
-#	--job-name $JOB_DESC \
-#       	--out=$OUT_FILENAME \
-#	--error=$ERR_FILENAME \
-#	--ntasks=1 \
-#	--mem-per-cpu=$MEM_PER_CPU \
-#	--cpus-per-task=$CPUS_FOR_COORDINATOR \
-#	: \
-#	--ntasks=$NUM_WORKERS \
-#	--mem-per-cpu=$MEM_PER_CPU \
-#	--cpus-per-task=1 \
-#	./bench_job.slurm $KEYFILE_PATH $NUM_WORKERS $CPUS_PER_TASK
+sbatch \
+	--wait \
+	--time 20:00 \
+	--account imiers-prj-cmsc \
+	--job-name $JOB_DESC \
+       	--out=$OUT_FILENAME \
+	--error=$ERR_FILENAME \
+	--ntasks=$(($NUM_WORKER_TASKS + 1)) \
+	--mem-per-cpu=$MEM_PER_CPU \
+	--cpus-per-task=$CORES_PER_TASK \
+	./bench_job.slurm $KEYFILE_PATH $NUM_WORKER_TASKS $CORES_PER_TASK
 
 #srun \
 #	--time 20:00 \
@@ -50,21 +46,25 @@ ERR_FILENAME="bench_err-${JOB_DESC}-${DATETIME}.txt"
 #	--ntasks=1 \
 #	--mem-per-cpu=$MEM_PER_CPU \
 #	--cpus-per-task=$CPUS_FOR_COORDINATOR \
-#	./bench_job.slurm $KEYFILE_PATH $NUM_WORKERS $CPUS_PER_TASK
+#	./bench_job.slurm $KEYFILE_PATH $NUM_WORKERS $CORES_PER_TASK
 #	: \
 #       	--out="$OUT_FILENAME-2" \
 #	--error="$ERR_FILENAME-2" \
 #	--ntasks=$NUM_WORKERS \
 #	--mem-per-cpu=$MEM_PER_CPU \
-#	--cpus-per-task=$CPUS_PER_TASK \
-#	./bench_job $KEYFILE_PATH $NUM_WORKERS $CPUS_PER_TASK
+#	--cpus-per-task=$CORES_PER_TASK \
+#	./bench_job $KEYFILE_PATH $NUM_WORKERS $CORES_PER_TASK
 
 
-srun --time 20:00 --account imiers-prj-cmsc --job-name $JOB_DESC --out=$OUT_FILENAME --error=$ERR_FILENAME --ntasks=1 --mem-per-cpu=$MEM_PER_CPU --cpus-per-task=$CPUS_FOR_COORDINATOR ./bench_job.slurm $KEYFILE_PATH $NUM_WORKERS $CPUS_PER_TASK : --ntasks=$NUM_WORKERS --mem-per-cpu=$MEM_PER_CPU --cpus-per-task=$CPUS_PER_TASK ./bench_job.slurm $KEYFILE_PATH $NUM_WORKERS $CPUS_PER_TASK
+#srun --time 20:00 --account imiers-prj-cmsc --partition=standard --job-name $JOB_DESC \
+#	--out=$OUT_FILENAME --error=$ERR_FILENAME \
+#	--ntasks=1 --mem-per-cpu=$MEM_PER_CPU --cpus-per-task=$CPUS_FOR_COORDINATOR \
+#	./bench_job.slurm $KEYFILE_PATH $NUM_WORKERS $CORES_PER_TASK : \
+#       	--ntasks=$NUM_WORKERS --mem-per-cpu=$MEM_PER_CPU --cpus-per-task=$CORES_PER_TASK \
+#	./bench_job.slurm $KEYFILE_PATH $NUM_WORKERS $CORES_PER_TASK $CPUS_FOR_COORDINATOR
 
 echo "JOB DESC: ${JOB_DESC}" >> $OUT_FILENAME
-echo "NUM WORKERS: ${NUM_WORKERS}" >> $OUT_FILENAME
-echo "MEGS PER CPU: ${MEM_PER_CPU}" >> $OUT_FILENAME
-echo "CPUS PER TASK: ${CPUS_PER_TASK}" >> $OUT_FILENAME
-echo "CPUS FOR COORDINATOR: ${CPUS_FOR_COORDINATOR}" >> $OUT_FILENAME
+echo "NUM WORKER TASKS: ${NUM_WORKER_TASKS}" >> $OUT_FILENAME
+echo "MEM PER CORE: ${MEM_PER_CPU}" >> $OUT_FILENAME
+echo "CORES PER TASK: ${CORES_PER_TASK}" >> $OUT_FILENAME
 echo "${@:0}" >> $OUT_FILENAME

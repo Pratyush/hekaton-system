@@ -4,7 +4,7 @@ set -eu
 
 HELPSTR="\
 Usage:\n\
-bench_job.slurm <keyfile_path> <num_workers> <cores_per_worker> \
+bench_job.slurm <keyfile_path> <num_workers> <cores_per_task> \
 "
 
 if [ -z ${1+x} ] || [ -z ${2+x} ] || [ -z ${3+x} ]; then
@@ -14,16 +14,9 @@ fi
 
 KEYFILE_PATH=$1
 NUM_WORKERS=$2
-CPUS_PER_WORKER=$3
+CORES_PER_TASK=$3
 
-#export RAYON_NUM_THREADS=$CPUS_PER_WORKER
-
-FILENAME=$(basename $KEYFILE_PATH)
-
-if [ -e "/tmp/$FILENAME" ]; then
-	cp $KEYFILE_PATH /tmp/$FILENAME
-fi
-cp $KEYFILE_PATH /tmp/$FILENAME
+export RAYON_NUM_THREADS="$CORES_PER_TASK"
 
 module load openmpi
 #srun ./node work --key-file $KEYFILE_PATH --num-workers $NUM_WORKERS echo hello world hi
@@ -35,4 +28,4 @@ module load openmpi
 #	--key-file $KEYFILE_PATH \
 #	--num-workers $NUM_WORKERS
 
-./node work --key-file $KEYFILE_PATH --num-workers $NUM_WORKERS
+srun ./node work --key-file $KEYFILE_PATH --num-workers $NUM_WORKERS
