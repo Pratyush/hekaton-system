@@ -1,15 +1,15 @@
 #![allow(warnings)]
-use ark_std::{cfg_into_iter, cfg_iter, cfg_chunks, cfg_chunks_mut};
+use ark_std::{cfg_chunks, cfg_chunks_mut, cfg_into_iter, cfg_iter};
 use distributed_prover::tree_hash_circuit::MerkleTreeCircuitParams;
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use clap::{Parser, Subcommand};
-use mpi::traits::*;
 use mpi::{
     datatype::{Partition, PartitionMut},
     topology::Process,
     Count,
 };
+use mpi::{request, traits::*};
 use mpi_snark::{
     construct_partitioned_buffer_for_scatter, construct_partitioned_mut_buffer_for_gather,
     coordinator::{generate_g16_pks, CoordinatorState},
@@ -21,15 +21,15 @@ use mpi_snark::{
 use std::{
     fs::File,
     io::{Read, Write},
+    num::NonZeroUsize,
     path::PathBuf,
 };
 
 use mimalloc::MiMalloc;
 
-#[cfg(feature = "parallel")]
-use rayon::prelude::*;
-#[cfg(not(feature = "parallel"))]
+use crossbeam::thread;
 use itertools::Itertools;
+use rayon::prelude::*;
 
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
@@ -247,9 +247,10 @@ fn work(num_workers: usize, proving_keys: ProvingKeys) {
         let _proof = coordinator_state.aggregate(&responses);
         end_timer_buf!(log, start);
     } else {
+        let current_num_threads = current_num_threads();
         println!(
             "Rayon num threads in worker {rank}: {}",
-            current_num_threads()
+            current_num_threads
         );
         // Worker code
         let start = start_timer_buf!(log, || format!("Worker {rank}: Initializing worker state"));
@@ -268,29 +269,8 @@ fn work(num_workers: usize, proving_keys: ProvingKeys) {
 
         // Compute Stage 0 response
         let start = start_timer_buf!(log, || format!("Worker {rank}: Processing stage0 requests"));
-        let responses = execute_in_pool_with_all_threads(|| {
-            let pool_size = if current_num_threads() > requests.len() {
-                current_num_threads() / requests.len()
-            } else {
-                1
-            };
-            let chunk_size = if requests.len() >= current_num_threads() {
-                requests.len() / current_num_threads() 
-            } else {
-                current_num_threads()
-            };
-            dbg!(pool_size);
-            dbg!(chunk_size);
-            cfg_chunks!(requests, chunk_size)
-                .zip(cfg_chunks_mut!(worker_states, chunk_size))
-                .flat_map(|(reqs, states)| 
-                    reqs
-                        .into_iter()
-                        .zip(states)
-                        .map(|(req, state)| execute_in_pool(|| state.stage_0(req), pool_size))
-                        .collect::<Vec<_>>()
-                )
-                .collect::<Vec<_>>()
+        let responses = compute_responses(&requests, &mut worker_states, |req, state| {
+            state.stage_0(req)
         });
         end_timer_buf!(log, start);
         println!("Finished worker scatter 0 for rank {rank}");
@@ -311,34 +291,8 @@ fn work(num_workers: usize, proving_keys: ProvingKeys) {
 
         // Compute Stage 1 response
         let start = start_timer_buf!(log, || format!("Worker {rank}: Processing stage1 request"));
-        let responses = execute_in_pool_with_all_threads(|| {
-            let pool_size = if current_num_threads() > requests.len() {
-                current_num_threads() / requests.len()
-            } else {
-                1
-            };
-            let chunk_size = if requests.len() >= current_num_threads() {
-                requests.len() / current_num_threads()
-            } else {
-                current_num_threads()
-            };
-            dbg!(pool_size);
-            dbg!(chunk_size);
-            #[cfg(feature = "parallel")]
-            let state_chunks = cfg_into_iter!(worker_states).chunks(chunk_size);
-            #[cfg(not(feature = "parallel"))]
-            let state_chunks = &(cfg_into_iter!(worker_states).chunks(chunk_size));
-            cfg_chunks!(requests, chunk_size)
-                .zip(state_chunks)
-                .flat_map(|(reqs, states)| 
-                    reqs
-                        .into_iter()
-                        .zip(states)
-                        .map(|(req, state)| execute_in_pool(|| state.stage_1(req), pool_size))
-                        .collect::<Vec<_>>()
-                )
-                .collect::<Vec<_>>()
-        });
+        let responses =
+            compute_responses(&requests, worker_states, |req, state| state.stage_1(req));
         end_timer_buf!(log, start);
         println!("Finished worker scatter 1 for rank {rank}");
 
@@ -449,11 +403,6 @@ fn send_responses<'a, C: 'a + Communicator, T: CanonicalSerialize>(
 }
 
 #[cfg(feature = "parallel")]
-fn execute_in_pool_with_all_threads<T: Send>(f: impl FnOnce() -> T + Send) -> T {
-    execute_in_pool(f, rayon::current_num_threads())
-}
-
-#[cfg(feature = "parallel")]
 fn execute_in_pool<T: Send>(f: impl FnOnce() -> T + Send, num_threads: usize) -> T {
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(num_threads)
@@ -476,4 +425,61 @@ use rayon::current_num_threads;
 #[cfg(not(feature = "parallel"))]
 fn current_num_threads() -> usize {
     1
+}
+
+fn pool_and_chunk_size(num_threads: usize, num_requests: usize) -> (usize, usize) {
+    let pool_size = if num_threads > num_requests {
+        num_threads / num_requests
+    } else {
+        1
+    };
+    let chunk_size = if num_requests >= num_threads {
+        num_requests / num_threads
+    } else {
+        num_threads
+    };
+    dbg!((pool_size, chunk_size))
+}
+
+fn compute_responses<'a, R, W, U, F>(
+    requests: &'a [R],
+    worker_states: impl IntoIterator<Item = W>,
+    stage_fn: F,
+) -> Vec<U>
+where
+    R: 'a + Send + Sync,
+    W: Send + Sync,
+    U: Send + Sync,
+    F: Send + Sync + Fn(&'a R, W) -> U,
+{
+    let (pool_size, chunk_size) = pool_and_chunk_size(current_num_threads(), requests.len());
+    thread::scope(|s| {
+        let mut thread_results = Vec::new();
+        let worker_state_chunks: Vec<Vec<_>> = worker_states
+            .into_iter()
+            .chunks(chunk_size)
+            .into_iter()
+            .map(|c| c.into_iter().collect())
+            .collect();
+        for (reqs, states) in requests.chunks(chunk_size).zip(worker_state_chunks) {
+            let result = s.spawn(|_| {
+                execute_in_pool(
+                    || {
+                        reqs.into_iter()
+                            .zip(states)
+                            .map(|(req, state)| stage_fn(req, state))
+                            .collect::<Vec<_>>()
+                    },
+                    pool_size,
+                )
+            });
+            thread_results.push(result);
+        }
+        thread_results
+            .into_iter()
+            .map(|t| t.join().unwrap())
+            .flatten()
+            .collect::<Vec<_>>()
+    })
+    .unwrap()
 }

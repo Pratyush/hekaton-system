@@ -19,11 +19,11 @@ CPUS_PER_WORKER=$3
 export RAYON_NUM_THREADS=$CPUS_PER_WORKER
 
 FILENAME=$(basename $KEYFILE_PATH)
-cp $KEYFILE_PATH /tmp/$FILENAME
+ln -s ../target/$KEYFILE_PATH /tmp/$FILENAME || true
 
 env RUSTFLAGS="-Awarnings" cargo build --release --features all_parallel
 mpirun -n $(($NUM_WORKERS + 1)) \
 	--use-hwthread-cpus \
 	../target/release/node work \
-	--key-file $KEYFILE_PATH \
+	--key-file ../target/$KEYFILE_PATH \
 	--num-workers $NUM_WORKERS \

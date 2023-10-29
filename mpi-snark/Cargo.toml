@@ -19,6 +19,7 @@ rand = "0.8.5"
 clap = { version = "4.4.6", default-features = false, features = ["derive"] }
 mimalloc = { version = "0.1", default-features = false }
 itertools = "0.11"
+crossbeam = {version = "0.8", optional = true }
 
 [features]
 default = []#"print-trace"]
@@ -31,7 +32,7 @@ all_parallel = [
     "distributed-prover/parallel", 
     "parallel"
 ]
-parallel = ["rayon"]
+parallel = ["crossbeam", "rayon"]
 
 
 [profile.release]
