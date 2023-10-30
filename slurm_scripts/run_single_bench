@@ -3,7 +3,7 @@
 set -eu
 
 MEM_PER_CPU="3800M"
-CORES_PER_TASK="1"
+CORES_PER_TASK="64"
 
 HELPSTR="\
 Usage:\n\
