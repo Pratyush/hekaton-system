@@ -270,7 +270,7 @@ fn work(num_workers: usize, proving_keys: ProvingKeys) {
 
         // Compute Stage 0 response
         let start = start_timer_buf!(log, || format!("Worker {rank}: Processing stage0 requests"));
-        let responses = compute_responses(&requests, &mut worker_states, |req, state| {
+        let responses = compute_responses(current_num_threads, &requests, &mut worker_states, |req, state| {
             state.stage_0(req)
         });
         end_timer_buf!(log, start);
@@ -293,7 +293,7 @@ fn work(num_workers: usize, proving_keys: ProvingKeys) {
         // Compute Stage 1 response
         let start = start_timer_buf!(log, || format!("Worker {rank}: Processing stage1 request"));
         let responses =
-            compute_responses(&requests, worker_states, |req, state| state.stage_1(req));
+            compute_responses(current_num_threads, &requests, worker_states, |req, state| state.stage_1(req));
         end_timer_buf!(log, start);
         println!("Finished worker scatter 1 for rank {rank}");
 
@@ -444,6 +444,7 @@ fn pool_and_chunk_size(num_threads: usize, num_requests: usize) -> (usize, usize
 
 #[cfg(feature = "parallel")]
 fn compute_responses<'a, R, W, U, F>(
+    num_threads: usize,
     requests: &'a [R],
     worker_states: impl IntoIterator<Item = W>,
     stage_fn: F,
@@ -454,7 +455,7 @@ where
     U: Send + Sync,
     F: Send + Sync + Fn(&'a R, W) -> U,
 {
-    let (pool_size, chunk_size) = pool_and_chunk_size(current_num_threads(), requests.len());
+    let (pool_size, chunk_size) = pool_and_chunk_size(num_threads, requests.len());
     thread::scope(|s| {
         let mut thread_results = Vec::new();
         let chunks = worker_states.into_iter().chunks(chunk_size);
@@ -475,6 +476,7 @@ where
             });
             thread_results.push(result);
         }
+        // ark_std::thread::sleep(std::time::Duration::from_secs(20));
         thread_results
             .into_iter()
             .map(|t| t.join().unwrap())
