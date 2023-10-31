@@ -464,19 +464,20 @@ where
             .map(|c| c.into_iter().collect::<Vec<_>>());
         for (reqs, states) in requests.chunks(chunk_size).zip(worker_state_chunks) {
             let result = s.spawn(|_| {
-                // execute_in_pool(
-                    // || {
-                        reqs.into_iter()
-                            .zip(states)
-                            .map(|(req, state)| execute_in_pool(|| stage_fn(req, state), 1))
-                            .collect::<Vec<_>>()
-                    // },
-                //     pool_size,
-                // )
+                let f = || {
+                    reqs.into_iter()
+                        .zip(states)
+                        .map(|(req, state)| execute_in_pool(|| stage_fn(req, state), 1))
+                        .collect::<Vec<_>>()
+                };
+                if pool_size > 1 {
+                    execute_in_pool(f, pool_size)
+                } else {
+                    f()
+                }
             });
             thread_results.push(result);
         }
-        // ark_std::thread::sleep(std::time::Duration::from_secs(20));
         thread_results
             .into_iter()
             .map(|t| t.join().unwrap())
