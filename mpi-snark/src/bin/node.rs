@@ -43,7 +43,7 @@ macro_rules! start_timer_buf {
         let start_info = "Start:";
 
         println!("{:8} {}", start_info, msg);
-        //$buf.push(format!("{:8} {}", start_info, msg));
+        $buf.push(format!("{:8} {}", start_info, msg));
         (msg.to_string(), Instant::now())
     }};
 }
@@ -57,12 +57,12 @@ macro_rules! end_timer_buf {
         let message = format!("{}", $time.0);
 
         println!("{:8} {} {}μs", end_info, message, final_time.as_micros());
-        //$buf.push(format!(
-        //    "{:8} {} {}μs",
-        //    end_info,
-        //    message,
-        //    final_time.as_micros()
-        //));
+        $buf.push(format!(
+           "{:8} {} {}μs",
+           end_info,
+           message,
+           final_time.as_micros()
+        ));
     }};
 }
 
