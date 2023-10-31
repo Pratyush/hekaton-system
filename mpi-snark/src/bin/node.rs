@@ -255,7 +255,6 @@ fn work(num_workers: usize, proving_keys: ProvingKeys) {
         let start = start_timer_buf!(log, || format!("Worker {rank}: Initializing worker state"));
         let mut worker_states = std::iter::from_fn(|| Some(WorkerState::new(num_subcircuits, &proving_keys)))
                 .take(num_subcircuits_per_worker)
-                // .par_bridge()
                 .collect::<Vec<_>>();
         end_timer_buf!(log, start);
 
@@ -464,7 +463,7 @@ where
                     || {
                         reqs.into_iter()
                             .zip(states)
-                            .map(|(req, state)| stage_fn(req, state))
+                            .map(|(req, state)| execute_in_pool(|| stage_fn(req, state), 1))
                             .collect::<Vec<_>>()
                     },
                     pool_size,
@@ -479,4 +478,35 @@ where
             .collect::<Vec<_>>()
     })
     .unwrap()
+}
+
+#[cfg(not(feature = "parallel"))]
+fn compute_responses<'a, R, W, U, F>(
+    requests: &'a [R],
+    worker_states: impl IntoIterator<Item = W>,
+    stage_fn: F,
+) -> Vec<U>
+where
+    R: 'a + Send + Sync,
+    W: Send + Sync,
+    U: Send + Sync,
+    F: Send + Sync + Fn(&'a R, W) -> U,
+{
+    let (pool_size, chunk_size) = pool_and_chunk_size(current_num_threads(), requests.len());
+    let mut thread_results = Vec::new();
+    let chunks = worker_states.into_iter().chunks(chunk_size);
+    let worker_state_chunks = chunks
+        .into_iter()
+        .map(|c| c.into_iter().collect::<Vec<_>>());
+    for (reqs, states) in requests.chunks(chunk_size).zip(worker_state_chunks) {
+        let result = reqs.into_iter()
+                        .zip(states)
+                        .map(|(req, state)| stage_fn(req, state))
+                        .collect::<Vec<_>>();
+        thread_results.push(result);
+    }
+    thread_results
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
 }
