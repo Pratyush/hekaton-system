@@ -14,12 +14,12 @@ ark-bls12-381 = { path = "../bls12_381" }
 ark-cp-groth16 = { path = "../cp-groth16", default-features = false }
 mpi = { version = "0.7.0" }
 distributed-prover = { path = "../distributed-prover", default-features = false, features = ["asm"] }
-rayon = { version = "1", optional = true }
 rand = "0.8.5"
-clap = { version = "4.4.6", default-features = false, features = ["derive"] }
 itertools = "0.11"
 crossbeam = {version = "0.8", optional = true }
+rayon = { version = "1", optional = true }
 mimalloc = { version = "0.1" }
+clap = { version = "4.4.6", default-features = false, features = ["derive"] }
 
 [features]
 default = []#"print-trace"]

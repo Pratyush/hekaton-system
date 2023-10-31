@@ -26,8 +26,10 @@ use std::{
     path::PathBuf,
 };
 
+#[cfg(feature = "parallel")]
 use crossbeam::thread;
 use itertools::Itertools;
+#[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 #[global_allocator]
@@ -253,7 +255,8 @@ fn work(num_workers: usize, proving_keys: ProvingKeys) {
         );
         // Worker code
         let start = start_timer_buf!(log, || format!("Worker {rank}: Initializing worker state"));
-        let mut worker_states = std::iter::from_fn(|| Some(WorkerState::new(num_subcircuits, &proving_keys)))
+        let mut worker_states =
+            std::iter::from_fn(|| Some(WorkerState::new(num_subcircuits, &proving_keys)))
                 .take(num_subcircuits_per_worker)
                 .collect::<Vec<_>>();
         end_timer_buf!(log, start);
@@ -439,6 +442,7 @@ fn pool_and_chunk_size(num_threads: usize, num_requests: usize) -> (usize, usize
     dbg!((pool_size, chunk_size))
 }
 
+#[cfg(feature = "parallel")]
 fn compute_responses<'a, R, W, U, F>(
     requests: &'a [R],
     worker_states: impl IntoIterator<Item = W>,
@@ -499,14 +503,12 @@ where
         .into_iter()
         .map(|c| c.into_iter().collect::<Vec<_>>());
     for (reqs, states) in requests.chunks(chunk_size).zip(worker_state_chunks) {
-        let result = reqs.into_iter()
-                        .zip(states)
-                        .map(|(req, state)| stage_fn(req, state))
-                        .collect::<Vec<_>>();
+        let result = reqs
+            .into_iter()
+            .zip(states)
+            .map(|(req, state)| stage_fn(req, state))
+            .collect::<Vec<_>>();
         thread_results.push(result);
     }
-    thread_results
-        .into_iter()
-        .flatten()
-        .collect::<Vec<_>>()
+    thread_results.into_iter().flatten().collect::<Vec<_>>()
 }
