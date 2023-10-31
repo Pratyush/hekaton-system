@@ -4,6 +4,7 @@ use distributed_prover::tree_hash_circuit::MerkleTreeCircuitParams;
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use clap::{Parser, Subcommand};
+use mimalloc::MiMalloc;
 use mpi::{
     datatype::{Partition, PartitionMut},
     topology::Process,
@@ -28,6 +29,9 @@ use std::{
 use crossbeam::thread;
 use itertools::Itertools;
 use rayon::prelude::*;
+
+#[global_allocator]
+static GLOBAL: MiMalloc = MiMalloc;
 
 macro_rules! start_timer_buf {
     ($buf:ident, $msg:expr) => {{
