@@ -103,7 +103,7 @@ where
     }
 
     pub fn prove(
-        &mut self,
+        mut self,
         comms: &[Comm<E>],
         comm_rands: &[CommRandomness<E>],
         rng: &mut impl Rng,
@@ -113,7 +113,7 @@ where
     //     E::G2: VariableBaseMSMExt,
     {
         let ProofWithoutComms { a, b, c } = CPGroth16::<E>::prove_last_stage_with_zk(
-            &mut self.cs,
+            self.cs,
             &mut self.circuit,
             &self.pk,
             rng,

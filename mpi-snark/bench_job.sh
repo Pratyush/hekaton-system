@@ -16,12 +16,12 @@ KEYFILE_PATH=$1
 NUM_WORKERS=$2
 CPUS_PER_WORKER=$3
 
-export RAYON_NUM_THREADS=$CPUS_PER_WORKER
+export RAYON_NUM_THREADS=$(($CPUS_PER_WORKER + 1))
 
 FILENAME=$(basename $KEYFILE_PATH)
 ln -s ../target/$KEYFILE_PATH /tmp/$FILENAME || true
 
-env RUSTFLAGS="-Awarnings" cargo build --release --features all_parallel
+env RUSTFLAGS="-Awarnings" cargo build --release --features parallel
 mpirun -n $(($NUM_WORKERS + 1)) \
 	--use-hwthread-cpus \
 	../target/release/node work \

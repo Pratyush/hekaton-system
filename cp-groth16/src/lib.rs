@@ -171,11 +171,11 @@ mod tests {
             let (comm, rand) = cb.commit(&mut rng).unwrap();
             let point = F::rand(&mut rng);
             cb.circuit.add_point(point);
+            let inputs = [point, cb.circuit.evaluation.unwrap()];
             let proof = cb.prove(&[comm], &[rand], &mut rng).unwrap();
 
             // Verify
             let pvk = prepare_verifying_key(&pk.vk());
-            let inputs = [point, cb.circuit.evaluation.unwrap()];
             assert!(verify_proof(&pvk, &proof, &inputs).unwrap());
         }
     }
@@ -304,11 +304,11 @@ mod tests {
             let mut cb = CommitmentBuilder::<_, E, QAP>::new(circuit, &pk);
             let point = F::rand(&mut rng);
             cb.circuit.add_point(point);
+            let inputs = [point, cb.circuit.evaluation.unwrap()];
             let proof = cb.prove(&[], &[], &mut rng).unwrap();
 
             // Verify
             let pvk = prepare_verifying_key(&pk.vk());
-            let inputs = [point, cb.circuit.evaluation.unwrap()];
             assert!(verify_proof(&pvk, &proof, &inputs).unwrap());
         }
     }

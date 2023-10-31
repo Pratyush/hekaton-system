@@ -18,7 +18,7 @@ impl<E: Pairing, QAP: R1CSToQAP> CPGroth16<E, QAP> {
     /// This method samples randomness for zero knowledges via `rng`.
     #[inline]
     pub fn prove_last_stage_with_zk<C>(
-        cs: &mut MultiStageConstraintSystem<E::ScalarField>,
+        cs: MultiStageConstraintSystem<E::ScalarField>,
         circuit: &mut C,
         pk: &ProvingKey<E>,
         rng: &mut impl Rng,
@@ -37,7 +37,7 @@ impl<E: Pairing, QAP: R1CSToQAP> CPGroth16<E, QAP> {
     /// Create a Groth16 proof that is *not* zero-knowledge.
     #[inline]
     pub fn prove_last_stage_without_zk<C>(
-        cs: &mut MultiStageConstraintSystem<E::ScalarField>,
+        cs: MultiStageConstraintSystem<E::ScalarField>,
         circuit: &mut C,
         pk: &ProvingKey<E>,
     ) -> R1CSResult<ProofWithoutComms<E>>
@@ -56,7 +56,7 @@ impl<E: Pairing, QAP: R1CSToQAP> CPGroth16<E, QAP> {
     /// R1CS-to-QAP reduction.
     #[inline]
     pub fn prove_last_stage<C>(
-        cs: &mut MultiStageConstraintSystem<E::ScalarField>,
+        mut cs: MultiStageConstraintSystem<E::ScalarField>,
         circuit: &mut C,
         pk: &ProvingKey<E>,
         r: E::ScalarField,
@@ -74,7 +74,7 @@ impl<E: Pairing, QAP: R1CSToQAP> CPGroth16<E, QAP> {
         // Synthesize the circuit.
         let synthesis_time = start_timer!(|| "Constraint synthesis");
         // We're generating the last stage of constraints.
-        circuit.generate_constraints(circuit.last_stage(), cs)?;
+        circuit.generate_constraints(circuit.last_stage(), &mut cs)?;
         debug_assert!(cs.is_satisfied()?);
         end_timer!(synthesis_time);
 
@@ -87,28 +87,6 @@ impl<E: Pairing, QAP: R1CSToQAP> CPGroth16<E, QAP> {
                     .skip(1) // we're skipping the one-variable
                     .map(|e| e.into_bigint())
                     .collect::<Vec<_>>();
-
-        let current_witness = cs.current_stage_witness_assignment();
-        let c_acc_time = start_timer!(|| "Compute C");
-        let witness_map_time = start_timer!(|| "R1CS to QAP witness map");
-        let h = cs.map(QAP::witness_map::<E::ScalarField, D<E::ScalarField>>)?;
-        end_timer!(witness_map_time);
-
-        let h_time = start_timer!(|| format!("Compute H with size {}", h.len()));
-        assert_eq!(h.len(), pk.h_g.len() + 1);
-        let h_acc = E::G1::msm(&pk.h_g, &h[..pk.h_g.len()]).unwrap();
-        end_timer!(h_time);
-
-        let l_aux_time = start_timer!(|| format!("Compute L with size {}", current_witness.len()));
-        assert_eq!(current_witness.len(), pk.last_ck().len());
-        let l_aux_acc = E::G1::msm(&pk.last_ck(), &current_witness).unwrap();
-        end_timer!(l_aux_time);
-
-        // Compute C
-
-        let r_s_delta_g = pk.last_delta_g() * (r * s);
-
-        end_timer!(c_acc_time);
 
         // Compute A
         let a_acc_time = start_timer!(|| "Compute A");
@@ -135,11 +113,39 @@ impl<E: Pairing, QAP: R1CSToQAP> CPGroth16<E, QAP> {
         let s_h = pk.last_delta_h() * s;
         let b_h = Self::calculate_coeff(s_h, &pk.b_h, pk.vk.beta_h, &assignment);
         end_timer!(b_g2_acc_time);
+        drop(assignment);
+
+        let current_witness = cs.current_stage_witness_assignment();
+
+        let l_aux_time = start_timer!(|| format!("Compute L with size {}", current_witness.len()));
+        assert_eq!(current_witness.len(), pk.last_ck().len());
+        let l_aux_acc = E::G1::msm(&pk.last_ck(), &current_witness).unwrap();
+        end_timer!(l_aux_time);
+        drop(current_witness);
+
+        let c_acc_time = start_timer!(|| "Compute C");
+        let witness_map_time = start_timer!(|| "R1CS to QAP witness map");
+        let h = cs.map(QAP::witness_map::<E::ScalarField, D<E::ScalarField>>)?;
+        drop(cs);
+        end_timer!(witness_map_time);
+
+        let h_time = start_timer!(|| format!("Compute H with size {}", h.len()));
+        assert_eq!(h.len(), pk.h_g.len() + 1);
+        let h_acc = E::G1::msm(&pk.h_g, &h[..pk.h_g.len()]).unwrap();
+        end_timer!(h_time);
+        drop(h);
+
+        // Compute C
+
+        let r_s_delta_g = pk.last_delta_g() * (r * s);
+
+        end_timer!(c_acc_time);
+
+        
 
         let r_b_g = b_g * r;
         let s_a_g = a_g * s;
 
-        drop(assignment);
 
         let c_time = start_timer!(|| "Finish C");
         let mut c_g = s_a_g;
@@ -165,7 +171,6 @@ impl<E: Pairing, QAP: R1CSToQAP> CPGroth16<E, QAP> {
     ) -> G::Group
     where
         G::Group: VariableBaseMSM,
-        // G::Group: VariableBaseMSMExt,
     {
         let el = query[0];
         let acc = G::Group::msm_bigint(&query[1..], assignment);

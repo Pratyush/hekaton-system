@@ -25,14 +25,9 @@ use std::{
     path::PathBuf,
 };
 
-use mimalloc::MiMalloc;
-
 use crossbeam::thread;
 use itertools::Itertools;
 use rayon::prelude::*;
-
-#[global_allocator]
-static GLOBAL: MiMalloc = MiMalloc;
 
 macro_rules! start_timer_buf {
     ($buf:ident, $msg:expr) => {{
@@ -247,7 +242,7 @@ fn work(num_workers: usize, proving_keys: ProvingKeys) {
         let _proof = coordinator_state.aggregate(&responses);
         end_timer_buf!(log, start);
     } else {
-        let current_num_threads = current_num_threads();
+        let current_num_threads = current_num_threads() - 1;
         println!(
             "Rayon num threads in worker {rank}: {}",
             current_num_threads

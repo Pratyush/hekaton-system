@@ -17,7 +17,6 @@ distributed-prover = { path = "../distributed-prover", default-features = false,
 rayon = { version = "1", optional = true }
 rand = "0.8.5"
 clap = { version = "4.4.6", default-features = false, features = ["derive"] }
-mimalloc = { version = "0.1", default-features = false }
 itertools = "0.11"
 crossbeam = {version = "0.8", optional = true }
 
@@ -33,15 +32,3 @@ all_parallel = [
     "parallel"
 ]
 parallel = ["crossbeam", "rayon"]
-
-
-[profile.release]
-opt-level = 3
-lto = "thin"
-incremental = true
-panic = 'abort'
-
-
-[patch.crates-io.ark-serialize]
-git = "https://github.com/rozbb/algebra.git"
-branch = "canonicalserialize-vecdeque"

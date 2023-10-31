@@ -170,6 +170,7 @@ fn main() {
     let point = F::rand(&mut rng);
     cb.circuit.add_point(point);
     let start = ark_std::time::Instant::now();
+    let inputs = [point, cb.circuit.evaluation.unwrap()];
     let proof = cb.prove(&[comm], &[rand], &mut rng).unwrap();
     println!(
         "proving time for BLS12-381: {} s",
@@ -177,6 +178,5 @@ fn main() {
     );
     // Verify
     let pvk = prepare_verifying_key(&pk.vk());
-    let inputs = [point, cb.circuit.evaluation.unwrap()];
     assert!(verify_proof(&pvk, &proof, &inputs).unwrap());
 }
