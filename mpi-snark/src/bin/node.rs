@@ -454,12 +454,10 @@ where
     let (pool_size, chunk_size) = pool_and_chunk_size(current_num_threads(), requests.len());
     thread::scope(|s| {
         let mut thread_results = Vec::new();
-        let worker_state_chunks: Vec<Vec<_>> = worker_states
+        let chunks = worker_states.into_iter().chunks(chunk_size);
+        let worker_state_chunks = chunks
             .into_iter()
-            .chunks(chunk_size)
-            .into_iter()
-            .map(|c| c.into_iter().collect())
-            .collect();
+            .map(|c| c.into_iter().collect::<Vec<_>>());
         for (reqs, states) in requests.chunks(chunk_size).zip(worker_state_chunks) {
             let result = s.spawn(|_| {
                 execute_in_pool(
