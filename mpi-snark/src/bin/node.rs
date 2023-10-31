@@ -464,15 +464,15 @@ where
             .map(|c| c.into_iter().collect::<Vec<_>>());
         for (reqs, states) in requests.chunks(chunk_size).zip(worker_state_chunks) {
             let result = s.spawn(|_| {
-                execute_in_pool(
-                    || {
+                // execute_in_pool(
+                    // || {
                         reqs.into_iter()
                             .zip(states)
                             .map(|(req, state)| execute_in_pool(|| stage_fn(req, state), 1))
                             .collect::<Vec<_>>()
-                    },
-                    pool_size,
-                )
+                    // },
+                //     pool_size,
+                // )
             });
             thread_results.push(result);
         }
