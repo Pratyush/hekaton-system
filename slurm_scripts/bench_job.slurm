@@ -16,16 +16,7 @@ KEYFILE_PATH=$1
 NUM_WORKERS=$2
 CPUS_PER_WORKER=$3
 
-export RAYON_NUM_THREADS=$CPUS_PER_WORKER
 
 module load openmpi
-module load llvm
-cd /home/micro/horizontally-scalable-snarks-system/mpi-snark
-env RUSTFLAGS="-Awarnings" cargo build --release --features all_parallel
-cd -
 
-mpirun -n $(($NUM_WORKERS + 1)) \
-	--use-hwthread-cpus \
-	/home/micro/horizontally-scalable-snarks-system/target/release/node work \
-	--key-file $KEYFILE_PATH \
-	--num-workers $NUM_WORKERS \
+srun mytask.sh $KEYFILE_PATH $NUM_WORKERS $CPUS_PER_WORKER
