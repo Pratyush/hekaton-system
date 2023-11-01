@@ -16,7 +16,9 @@ KEYFILE_PATH=$1
 NUM_WORKERS=$2
 CPUS_PER_WORKER=$3
 
+echo "Job ID: $SLURM_JOB_ID"
 
 module load openmpi
 
+#sleep 20
 srun mytask.sh $KEYFILE_PATH $NUM_WORKERS $CPUS_PER_WORKER

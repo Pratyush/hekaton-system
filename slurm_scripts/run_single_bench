@@ -1,9 +1,15 @@
 #!/bin/bash
 
-set -eu
+set -eux
 
-MEM_PER_CPU="3800M"
-CORES_PER_TASK="8"
+MEM_PER_CPU="4000M"
+CORES_PER_TASK="32"
+EXCLUSIVE=1
+
+EXCLUSIVE_STR="--exclusive"
+if [ ! $EXCLUSIVE ]; then
+	EXCLUSIVE_STR=""
+fi
 
 HELPSTR="\
 Usage:\n\
@@ -34,8 +40,9 @@ sbatch \
 	--error=$ERR_FILENAME \
 	--ntasks=$(($NUM_WORKER_TASKS + 1)) \
 	--mem-per-cpu=$MEM_PER_CPU \
-	--cpus-per-task=$CORES_PER_TASK \
-	./bench_job.slurm $KEYFILE_PATH $NUM_WORKER_TASKS $CORES_PER_TASK
+	--cpus-per-task=$(($CORES_PER_TASK + 1)) \
+	$EXCLUSIVE_STR \
+	./bench_job.slurm $KEYFILE_PATH $NUM_WORKER_TASKS $(($CORES_PER_TASK + 1))
 
 #srun \
 #	--time 20:00 \
@@ -68,3 +75,9 @@ echo "NUM WORKER TASKS: ${NUM_WORKER_TASKS}" >> $OUT_FILENAME
 echo "MEM PER CORE: ${MEM_PER_CPU}" >> $OUT_FILENAME
 echo "CORES PER TASK: ${CORES_PER_TASK}" >> $OUT_FILENAME
 echo "${@:0}" >> $OUT_FILENAME
+
+if [ $EXCLUSIVE ]; then
+	echo "EXCLUSIVE: true" >> $OUT_FILENAME
+else
+	echo "EXCLUSIVE: false" >> $OUT_FILENAME
+fi
