@@ -489,6 +489,7 @@ where
 
 #[cfg(not(feature = "parallel"))]
 fn compute_responses<'a, R, W, U, F>(
+    num_threads: usize,
     requests: &'a [R],
     worker_states: impl IntoIterator<Item = W>,
     stage_fn: F,
