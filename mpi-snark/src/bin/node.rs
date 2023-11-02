@@ -15,8 +15,10 @@ use mpi_snark::{
     construct_partitioned_buffer_for_scatter, construct_partitioned_mut_buffer_for_gather,
     coordinator::{generate_g16_pks, CoordinatorState},
     data_structures::{ProvingKeys, Stage0Response, Stage1Response},
-    deserialize_flattened_bytes, serialize_to_vec,
+    deserialize_flattened_bytes, deserialize_from_packed_bytes, serialize_to_packed_vec,
+    serialize_to_vec,
     worker::WorkerState,
+    Packed,
 };
 
 use std::{
@@ -58,10 +60,10 @@ macro_rules! end_timer_buf {
 
         println!("{:8} {} {}μs", end_info, message, final_time.as_micros());
         $buf.push(format!(
-           "{:8} {} {}μs",
-           end_info,
-           message,
-           final_time.as_micros()
+            "{:8} {} {}μs",
+            end_info,
+            message,
+            final_time.as_micros()
         ));
     }};
 }
@@ -270,9 +272,12 @@ fn work(num_workers: usize, proving_keys: ProvingKeys) {
 
         // Compute Stage 0 response
         let start = start_timer_buf!(log, || format!("Worker {rank}: Processing stage0 requests"));
-        let responses = compute_responses(current_num_threads, &requests, &mut worker_states, |req, state| {
-            state.stage_0(req)
-        });
+        let responses = compute_responses(
+            current_num_threads,
+            &requests,
+            &mut worker_states,
+            |req, state| state.stage_0(req),
+        );
         end_timer_buf!(log, start);
         println!("Finished worker scatter 0 for rank {rank}");
 
@@ -292,8 +297,12 @@ fn work(num_workers: usize, proving_keys: ProvingKeys) {
 
         // Compute Stage 1 response
         let start = start_timer_buf!(log, || format!("Worker {rank}: Processing stage1 request"));
-        let responses =
-            compute_responses(current_num_threads, &requests, worker_states, |req, state| state.stage_1(req));
+        let responses = compute_responses(
+            current_num_threads,
+            &requests,
+            worker_states,
+            |req, state| state.stage_1(req),
+        );
         end_timer_buf!(log, start);
         println!("Finished worker scatter 1 for rank {rank}");
 
@@ -329,32 +338,6 @@ fn scatter_requests<'a, C: 'a + Communicator>(
     end_timer_buf!(log, start);
 }
 
-fn gather_responses<'a, C, T>(
-    log: &mut Vec<String>,
-    stage: &str,
-    size: Count,
-    root_process: &Process<'a, C>,
-    default_response: T,
-) -> Vec<T>
-where
-    C: 'a + Communicator,
-    T: CanonicalSerialize + CanonicalDeserialize + Default,
-{
-    let mut response_bytes = vec![];
-    let mut response_bytes_buf =
-        construct_partitioned_mut_buffer_for_gather!(size, default_response, &mut response_bytes);
-    // Root does not send anything, it only receives.
-    let start = start_timer_buf!(log, || format!("Coord: Gathering {stage} responses"));
-    root_process.gather_varcount_into_root(&[0u8; 0], &mut response_bytes_buf);
-    end_timer_buf!(log, start);
-
-    let start = start_timer_buf!(log, || format!("Coord: Deserializing {stage} responses"));
-    let ret = deserialize_flattened_bytes!(response_bytes, default_response, T).unwrap();
-    end_timer_buf!(log, start);
-
-    ret
-}
-
 fn receive_requests<'a, C: 'a + Communicator, T: CanonicalDeserialize>(
     log: &mut Vec<String>,
     rank: i32,
@@ -367,14 +350,14 @@ fn receive_requests<'a, C: 'a + Communicator, T: CanonicalDeserialize>(
     let start = start_timer_buf!(log, || format!(
         "Worker {rank}: Receiving scattered {stage} request of size {size}"
     ));
-    let mut request_bytes = vec![0u8; size as usize];
-    root_process.scatter_varcount_into(&mut request_bytes);
+    let mut request_ser = vec![Packed::zero(); size as usize];
+    root_process.scatter_varcount_into(&mut request_ser);
     end_timer_buf!(log, start);
 
     let start = start_timer_buf!(log, || format!(
         "Worker {rank}: Deserializing {stage} request"
     ));
-    let ret = T::deserialize_uncompressed_unchecked(&request_bytes[..]).unwrap();
+    let ret = deserialize_from_packed_bytes(&request_ser[..]).unwrap();
     end_timer_buf!(log, start);
 
     ret
@@ -401,6 +384,32 @@ fn send_responses<'a, C: 'a + Communicator, T: CanonicalSerialize>(
     ));
     root_process.gather_varcount_into(&responses_bytes);
     end_timer_buf!(log, start);
+}
+
+fn gather_responses<'a, C, T>(
+    log: &mut Vec<String>,
+    stage: &str,
+    size: Count,
+    root_process: &Process<'a, C>,
+    default_response: T,
+) -> Vec<T>
+where
+    C: 'a + Communicator,
+    T: CanonicalSerialize + CanonicalDeserialize + Default,
+{
+    let mut response_bytes = vec![];
+    let mut response_bytes_buf =
+        construct_partitioned_mut_buffer_for_gather!(size, default_response, &mut response_bytes);
+    // Root does not send anything, it only receives.
+    let start = start_timer_buf!(log, || format!("Coord: Gathering {stage} responses"));
+    root_process.gather_varcount_into_root(&[0u8; 0], &mut response_bytes_buf);
+    end_timer_buf!(log, start);
+
+    let start = start_timer_buf!(log, || format!("Coord: Deserializing {stage} responses"));
+    let ret = deserialize_flattened_bytes!(response_bytes, default_response, T).unwrap();
+    end_timer_buf!(log, start);
+
+    ret
 }
 
 #[cfg(feature = "parallel")]
