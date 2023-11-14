@@ -420,6 +420,7 @@ fn execute_in_pool<T: Send>(f: impl FnOnce() -> T + Send, num_threads: usize) ->
         .unwrap();
     pool.install(f)
 }
+
 #[cfg(not(feature = "parallel"))]
 fn execute_in_pool<T: Send>(f: impl FnOnce() -> T + Send, num_threads: usize) -> T {
     f()
@@ -473,17 +474,10 @@ where
             .map(|c| c.into_iter().collect::<Vec<_>>());
         for (reqs, states) in requests.chunks(chunk_size).zip(worker_state_chunks) {
             let result = s.spawn(|_| {
-                let f = || {
-                    reqs.into_iter()
-                        .zip(states)
-                        .map(|(req, state)| execute_in_pool(|| stage_fn(req, state), 1))
-                        .collect::<Vec<_>>()
-                };
-                if pool_size > 1 {
-                    execute_in_pool(f, pool_size)
-                } else {
-                    f()
-                }
+                reqs.into_iter()
+                    .zip(states)
+                    .map(|(req, state)| execute_in_pool(|| stage_fn(req, state), pool_size))
+                    .collect::<Vec<_>>()
             });
             thread_results.push(result);
         }
