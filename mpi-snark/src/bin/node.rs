@@ -447,7 +447,7 @@ fn pool_and_chunk_size(num_threads: usize, num_requests: usize) -> (usize, usize
     let chunk_size = if num_requests >= num_threads {
         num_requests / num_threads
     } else {
-        num_threads
+        1
     };
     dbg!((pool_size, chunk_size))
 }
