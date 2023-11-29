@@ -80,6 +80,7 @@ fn main() {
 
 fn work(proving_keys: ProvingKeys) {
     let tmp_dir = mktemp::Temp::new_dir().unwrap().to_path_buf();
+    std::fs::create_dir(&tmp_dir);
     let circ_params = proving_keys.circ_params.clone();
     let num_subcircuits = 2 * circ_params.num_leaves;
 
@@ -105,7 +106,8 @@ fn work(proving_keys: ProvingKeys) {
 
         cfg_iter!(stage0_reqs).enumerate().for_each(|(i, req)| {
             let filename = format!("stage0_req_{i}.bin");
-            let mut file = File::create(tmp_dir.join(filename)).unwrap();
+            let path = tmp_dir.join(filename);
+            let mut file = File::create(path).unwrap();
             req.serialize_uncompressed(&mut file).unwrap();
         });
 
@@ -156,4 +158,6 @@ fn work(proving_keys: ProvingKeys) {
     let _proof = coordinator_state.aggregate(&stage1_resps);
 
     end_timer!(very_start);
+
+    std::fs::remove_dir_all(&tmp_dir);
 }
