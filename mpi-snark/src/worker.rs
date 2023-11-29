@@ -47,8 +47,7 @@ impl<'a> WorkerState<'a> {
         }
     }
 
-    pub fn stage_0(&mut self, stage0_req: &Stage0Request) -> Stage0Response {
-        let mut rng = thread_rng();
+    pub fn stage_0(&mut self, mut rng: impl Rng, stage0_req: &Stage0Request) -> Stage0Response {
         let subcircuit_idx = stage0_req.subcircuit_idx;
         let num_subcircuits = self.num_subcircuits;
 

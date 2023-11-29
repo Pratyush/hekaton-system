@@ -276,7 +276,7 @@ fn work(num_workers: usize, proving_keys: ProvingKeys) {
             current_num_threads,
             &requests,
             &mut worker_states,
-            |req, state| state.stage_0(req),
+            |req, state| state.stage_0(rand::thread_rng(), req),
         );
         end_timer_buf!(log, start);
         println!("Finished worker scatter 0 for rank {rank}");
