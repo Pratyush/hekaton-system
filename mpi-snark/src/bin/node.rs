@@ -14,7 +14,7 @@ use mpi::{request, traits::*};
 use mpi_snark::{
     construct_partitioned_buffer_for_scatter, construct_partitioned_mut_buffer_for_gather,
     coordinator::{generate_g16_pks, CoordinatorState},
-    data_structures::{ProvingKeys, Stage0Response, Stage1Response},
+    data_structures::{ProvingKeys, Stage0Request, Stage0Response, Stage1Request, Stage1Response},
     deserialize_flattened_bytes, deserialize_from_packed_bytes, serialize_to_packed_vec,
     serialize_to_vec,
     worker::WorkerState,
@@ -191,7 +191,7 @@ fn work(num_workers: usize, proving_keys: ProvingKeys) {
         // Initial broadcast
 
         let start = start_timer_buf!(log, || format!("Coord: construct coordinator state"));
-        let mut coordinator_state = CoordinatorState::new(proving_keys);
+        let mut coordinator_state = CoordinatorState::new(&proving_keys);
         end_timer_buf!(log, start);
 
         /***************************************************************************/
@@ -268,7 +268,8 @@ fn work(num_workers: usize, proving_keys: ProvingKeys) {
         // Stage 0
 
         // Receive Stage 0 request
-        let requests: Vec<_> = receive_requests(&mut log, rank, "stage0", &root_process);
+        let requests: Vec<Stage0Request> =
+            receive_requests(&mut log, rank, "stage0", &root_process);
 
         // Compute Stage 0 response
         let start = start_timer_buf!(log, || format!("Worker {rank}: Processing stage0 requests"));
@@ -276,7 +277,7 @@ fn work(num_workers: usize, proving_keys: ProvingKeys) {
             current_num_threads,
             &requests,
             &mut worker_states,
-            |req, state| state.stage_0(rand::thread_rng(), req),
+            |req, state| state.stage_0(rand::thread_rng(), &req.to_ref()),
         );
         end_timer_buf!(log, start);
         println!("Finished worker scatter 0 for rank {rank}");
@@ -293,7 +294,8 @@ fn work(num_workers: usize, proving_keys: ProvingKeys) {
         // Stage 1
 
         // Receive Stage 1 request
-        let requests: Vec<_> = receive_requests(&mut log, rank, "stage1", &root_process);
+        let requests: Vec<Stage1Request> =
+            receive_requests(&mut log, rank, "stage1", &root_process);
 
         // Compute Stage 1 response
         let start = start_timer_buf!(log, || format!("Worker {rank}: Processing stage1 request"));
@@ -301,7 +303,7 @@ fn work(num_workers: usize, proving_keys: ProvingKeys) {
             current_num_threads,
             &requests,
             worker_states,
-            |req, state| state.stage_1(req),
+            |req, state| state.stage_1(rand::thread_rng(), &req.to_ref()),
         );
         end_timer_buf!(log, start);
         println!("Finished worker scatter 1 for rank {rank}");

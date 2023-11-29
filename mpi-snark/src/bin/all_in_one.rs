@@ -1,21 +1,14 @@
 #![allow(warnings)]
 use ark_std::{cfg_chunks, cfg_chunks_mut, cfg_into_iter, cfg_iter};
-use distributed_prover::tree_hash_circuit::MerkleTreeCircuitParams;
+use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha12Rng;
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use clap::{Parser, Subcommand};
 use mimalloc::MiMalloc;
-use mpi::{
-    datatype::{Partition, PartitionMut},
-    topology::Process,
-    Count,
-};
-use mpi::{request, traits::*};
 use mpi_snark::{
-    construct_partitioned_buffer_for_scatter, construct_partitioned_mut_buffer_for_gather,
     coordinator::{generate_g16_pks, CoordinatorState},
-    data_structures::{ProvingKeys, Stage0Response, Stage1Response},
+    data_structures::{ProvingKeys, Stage0Request, Stage0Response, Stage1Response},
     deserialize_flattened_bytes, deserialize_from_packed_bytes, serialize_to_packed_vec,
     serialize_to_vec,
     worker::WorkerState,
@@ -38,21 +31,20 @@ use rayon::prelude::*;
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
 
-macro_rules! start_timer_buf {
-    ($buf:ident, $msg:expr) => {{
+macro_rules! start_timer {
+    ($msg:expr) => {{
         use std::time::Instant;
 
         let msg = $msg();
         let start_info = "Start:";
 
         println!("{:8} {}", start_info, msg);
-        $buf.push(format!("{:8} {}", start_info, msg));
         (msg.to_string(), Instant::now())
     }};
 }
 
-macro_rules! end_timer_buf {
-    ($buf:ident, $time:expr) => {{
+macro_rules! end_timer {
+    ($time:expr) => {{
         let time = $time.1;
         let final_time = time.elapsed();
 
@@ -60,12 +52,6 @@ macro_rules! end_timer_buf {
         let message = format!("{}", $time.0);
 
         println!("{:8} {} {}μs", end_info, message, final_time.as_micros());
-        $buf.push(format!(
-            "{:8} {} {}μs",
-            end_info,
-            message,
-            final_time.as_micros()
-        ));
     }};
 }
 
@@ -77,7 +63,8 @@ struct Args {
 }
 
 fn main() {
-    println!("Rayon num threads: {}", current_num_threads());
+    #[cfg(feature = "parallel")]
+    println!("Rayon num threads: {}", rayon::current_num_threads());
 
     let Args { key_file } = Args::parse();
 
@@ -92,65 +79,81 @@ fn main() {
 }
 
 fn work(proving_keys: ProvingKeys) {
+    let tmp_dir = mktemp::Temp::new_dir().unwrap().to_path_buf();
     let circ_params = proving_keys.circ_params.clone();
     let num_subcircuits = 2 * circ_params.num_leaves;
 
-    let mut log = Vec::new();
-    let very_start = start_timer_buf!(log, || format!("Node {rank}: Beginning work"));
+    let very_start = start_timer!(|| format!("Beginning work"));
 
-    let start = start_timer_buf!(log, || format!("Coord: construct coordinator state"));
-    let mut coordinator_state = CoordinatorState::new(proving_keys);
-    end_timer_buf!(log, start);
-
-    // Stage0 requests
-    let start = start_timer_buf!(log, || format!("Coord: Generating stage0 requests"));
-    let stage0_reqs = coordinator_state.stage_0();
-    end_timer_buf!(log, start);
+    let start = start_timer!(|| format!("Construct coordinator state"));
+    let mut coordinator_state = CoordinatorState::new(&proving_keys);
+    end_timer!(start);
 
     // Stage0 responses
     // Each commitment comes with a seed so we can reconstruct the commitment in stage1
-    let (stage0_resps, stage0_seeds) = cfg_iter!(stage0_reqs)
-        .map(|req| {
-            // Per-worker seed
-            let mut seed: [u8; 32] = rand::thread_rng().gen();
-            let mut rng = ChaCha12Rng::from_seed(seed);
+    let (stage0_resps, stage0_seeds): (Vec<Stage0Response>, Vec<[u8; 32]>) = {
+        // Stage0 requests
+        let start = start_timer!(|| format!("Generating stage0 requests"));
+        // TODO: Don't put all stage0 requests in memory at once
+        let stage0_reqs = coordinator_state.stage_0();
+        end_timer!(start);
 
-            let start =
-                start_timer_buf!(log, || format!("Worker {rank}: Processing stage0 requests"));
+        // Save stage0 requests to file. This is for two reasons:
+        // 1) they're big
+        // 2) they are a reference to coordinator_state.stage0_state, which is consumed by stage_1, but
+        //    then later needed by WorkerState::stage_0 when reconstructing the committing state
 
-            // Make a new state for each worker and compute the commimtent
-            let resp = WorkerState::new(num_subcircuits, &proving_keys).stage_0(&mut rng, req);
+        cfg_iter!(stage0_reqs).enumerate().for_each(|(i, req)| {
+            let filename = format!("stage0_req_{i}.bin");
+            let mut file = File::create(tmp_dir.join(filename)).unwrap();
+            req.serialize_uncompressed(&mut file).unwrap();
+        });
 
-            end_timer_buf!(log, start);
-            (resp, seed)
-        })
-        .unzip()
-        .collect();
+        cfg_into_iter!(stage0_reqs)
+            .enumerate()
+            .map(|(i, req)| {
+                // Per-worker seed
+                let mut seed: [u8; 32] = rand::thread_rng().gen();
+                let mut rng = ChaCha12Rng::from_seed(seed);
+
+                let start = start_timer!(|| format!("Processing stage0 request #{i}"));
+
+                // Make a new state for each worker and compute the commimtent
+                let resp = WorkerState::new(num_subcircuits, &proving_keys).stage_0(&mut rng, &req);
+
+                end_timer!(start);
+                (resp, seed)
+            })
+            .unzip()
+    };
 
     // Stage1 requests
-    let start = start_timer_buf!(log, || format!("Coord: Processing stage0 responses"));
+    let start = start_timer!(|| format!("Processing stage0 responses"));
     let stage1_reqs = coordinator_state.stage_1(&stage0_resps);
-    end_timer_buf!(log, start);
+    end_timer!(start);
 
     // Stage1 responses
-    let stage1_resps = cfg_into_iter!(stage0_reqs)
-        .zip(cfg_into_iter!(stage1_reqs))
+    let stage1_resps = cfg_into_iter!(stage1_reqs)
+        .enumerate()
         .zip(cfg_into_iter!(stage0_seeds))
-        .map(|((req0, req1), seed)| {
+        .map(|((i, req1), seed)| {
             // Per-worker seed
             let mut seed: [u8; 32] = rand::thread_rng().gen();
             let mut rng = ChaCha12Rng::from_seed(seed);
 
-            let state = WorkerState::new(num_subcircuits, &proving_keys);
-            state.stage_0(&mut rng, req);
-            state.stage_1(req)
-        })
-        .collect();
+            // Load up the stage0 req
+            let filename = format!("stage0_req_{i}.bin");
+            let mut file = File::open(tmp_dir.join(filename)).unwrap();
+            let req0 = Stage0Request::deserialize_uncompressed_unchecked(&mut file).unwrap();
 
-    let start = start_timer_buf!(log, || format!("Coord: Aggregating"));
+            let mut state = WorkerState::new(num_subcircuits, &proving_keys);
+            state.stage_0(&mut rng, &req0.to_ref());
+            state.stage_1(&mut rng, &req1)
+        })
+        .collect::<Vec<_>>();
+
+    let start = start_timer!(|| format!("Aggregating"));
     let _proof = coordinator_state.aggregate(&stage1_resps);
 
-    end_timer_buf!(log, very_start);
-
-    println!("Rank {rank} log: {}", log.join(";"));
+    end_timer!(very_start);
 }

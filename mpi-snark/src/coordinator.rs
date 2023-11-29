@@ -17,16 +17,16 @@ use ark_bls12_381::{Bls12_381 as E, Fr};
 use ark_std::{end_timer, start_timer};
 use rand::thread_rng;
 
-pub struct CoordinatorState {
-    g16_pks: ProvingKeys,
+pub struct CoordinatorState<'a> {
+    g16_pks: &'a ProvingKeys,
     agg_pk: AggProvingKey<E>,
     circ_params: MerkleTreeCircuitParams,
     stage0_state: Option<CoordinatorStage0State<E, MerkleTreeCircuit>>,
     stage1_state: Option<CoordinatorStage1State<TreeConfig, E, MerkleTreeCircuit>>,
 }
 
-impl CoordinatorState {
-    pub fn new(g16_pks: ProvingKeys) -> Self {
+impl<'a> CoordinatorState<'a> {
+    pub fn new(g16_pks: &'a ProvingKeys) -> CoordinatorState<'a> {
         CoordinatorState {
             circ_params: g16_pks.circ_params.clone(),
             agg_pk: generate_agg_key(&g16_pks),

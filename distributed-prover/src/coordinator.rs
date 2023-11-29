@@ -269,7 +269,7 @@ impl<F: PrimeField> Stage0Request<F> {
 
 #[derive(Clone)]
 pub struct Stage0RequestRef<'a, F: PrimeField> {
-    subcircuit_idx: usize,
+    pub subcircuit_idx: usize,
     pub time_ordered_subtrace: &'a Vec<RomTranscriptEntry<F>>,
     pub addr_ordered_subtrace: &'a Vec<RomTranscriptEntry<F>>,
 }
@@ -579,6 +579,24 @@ where
     pub(crate) root: MerkleRoot<C>,
     pub(crate) serialized_witnesses: Vec<u8>,
     pub(crate) circ_params: P::Parameters,
+}
+
+impl<C, F, P> Stage1Request<C, F, P>
+where
+    C: TreeConfig,
+    F: PrimeField,
+    P: CircuitWithPortals<F>,
+{
+    pub fn to_ref<'a>(&'a self) -> Stage1RequestRef<'a, C, F, P> {
+        Stage1RequestRef {
+            subcircuit_idx: self.subcircuit_idx,
+            cur_leaf: self.cur_leaf.clone(),
+            next_leaf_membership: self.next_leaf_membership.clone(),
+            root: self.root.clone(),
+            serialized_witnesses: self.serialized_witnesses.as_slice(),
+            circ_params: &self.circ_params,
+        }
+    }
 }
 
 #[derive(Clone)]

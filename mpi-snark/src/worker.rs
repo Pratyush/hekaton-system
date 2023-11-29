@@ -1,5 +1,5 @@
 use crate::data_structures::{
-    G16Com, G16ComRandomness, ProvingKeys, Stage0Request, Stage0Response, Stage1Request,
+    G16Com, G16ComRandomness, ProvingKeys, Stage0RequestRef, Stage0Response, Stage1RequestRef,
     Stage1Response,
 };
 
@@ -16,7 +16,7 @@ use distributed_prover::{
 
 use ark_bls12_381::{Bls12_381 as E, Fr};
 use ark_cp_groth16::committer::CommitmentBuilder as G16CommitmentBuilder;
-use rand::thread_rng;
+use rand::Rng;
 
 type CommitterState<'a> = G16CommitmentBuilder<
     'a,
@@ -47,7 +47,7 @@ impl<'a> WorkerState<'a> {
         }
     }
 
-    pub fn stage_0(&mut self, mut rng: impl Rng, stage0_req: &Stage0Request) -> Stage0Response {
+    pub fn stage_0(&mut self, mut rng: impl Rng, stage0_req: &Stage0RequestRef) -> Stage0Response {
         let subcircuit_idx = stage0_req.subcircuit_idx;
         let num_subcircuits = self.num_subcircuits;
 
@@ -76,7 +76,7 @@ impl<'a> WorkerState<'a> {
             &mut rng,
             self.tree_params.clone(),
             g16_pk,
-            stage0_req.clone(),
+            stage0_req.to_owned(),
         );
 
         self.cb = Some(cb);
@@ -84,16 +84,14 @@ impl<'a> WorkerState<'a> {
         resp
     }
 
-    pub fn stage_1(self, stage1_req: &Stage1Request) -> Stage1Response {
-        let mut rng = thread_rng();
-
+    pub fn stage_1(self, mut rng: impl Rng, stage1_req: &Stage1RequestRef) -> Stage1Response {
         // Use the builder to respond
         process_stage1_request_with_cb(
             &mut rng,
             self.cb.unwrap(),
             self.com,
             self.com_rand,
-            stage1_req.clone(),
+            stage1_req.to_owned(),
         )
     }
 }
