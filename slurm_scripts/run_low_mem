@@ -1,0 +1,64 @@
+#!/bin/bash
+
+set -eux
+
+MEM_PER_CPU="4000M"
+EXCLUSIVE=0
+
+EXCLUSIVE_STR="--exclusive"
+if [ ! $EXCLUSIVE ]; then
+	EXCLUSIVE_STR=""
+fi
+
+HELPSTR="\
+Usage:\n\
+run_low_mem <proving_keys_bin> <mem_in_gigs> <num_cores_to_use> \
+"
+
+if [ -z ${1+x} ] || [ -z ${2+x} ] || [ -z ${3+x} ]; then
+    echo -e "$HELPSTR"
+    exit 1
+fi
+
+KEYFILE_PATH=$1
+MEM_IN_GIGS=$2
+NUM_CORES_TO_USE=$3
+TOT_NUM_CORES=$(($MEM_IN_GIGS / 4))
+
+JOB_DESC=$(basename $KEYFILE_PATH | cut -d- -f2 | cut -d. -f1)
+
+DATETIME=$(printf '%(%Y%m%d.%H%M%S)T\n' -1)
+OUT_FILENAME="bench_lowmem_out-${JOB_DESC}-${DATETIME}.txt"
+ERR_FILENAME="bench_lowmem_err-${JOB_DESC}-${DATETIME}.txt"
+
+SBATCH_STDOUT=$(\
+srun \
+	--account imiers-prj-cmsc \
+	--job-name $JOB_DESC \
+       	--out=$OUT_FILENAME \
+	--error=$ERR_FILENAME \
+	--ntasks=1 \
+	--mem-per-cpu=$MEM_PER_CPU \
+	--cpus-per-task=$TOT_NUM_CORES \
+	$EXCLUSIVE_STR \
+	low_mem_task.sh $KEYFILE_PATH $NUM_CORES_TO_USE \
+	2>&1 \
+) || { echo "FAILED"; exit 1; }
+echo "sbatch stdout: $SBATCH_STDOUT" 
+
+sleep 1
+JOB_ID=$(head -n1 <<< $SBATCH_STDOUT | grep -Po -m 1 '\d+')
+MAX_RSS=$(sacct -j $JOB_ID -o maxrss | tail -n1 | tr -d '[:blank:]')
+
+echo "JOB DESC: ${JOB_DESC}" >> $OUT_FILENAME
+echo "MEM PER CORE: ${MEM_PER_CPU}" >> $OUT_FILENAME
+echo "TOT NUM CORES: ${TOT_NUM_CORES}" >> $OUT_FILENAME
+echo "NUM CORES USED: ${NUM_CORES_TO_USE}" >> $OUT_FILENAME
+echo "MAX RSS: ${MAX_RSS}" >> $OUT_FILENAME
+echo "${@:0}" >> $OUT_FILENAME
+
+if [ $EXCLUSIVE ]; then
+	echo "EXCLUSIVE: true" >> $OUT_FILENAME
+else
+	echo "EXCLUSIVE: false" >> $OUT_FILENAME
+fi

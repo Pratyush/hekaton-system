@@ -70,10 +70,8 @@ fn main() {
 
     // Deserialize the proving keys
     let proving_keys = {
-        let mut buf = Vec::new();
         let mut f = File::open(&key_file).expect(&format!("couldn't open file {:?}", key_file));
-        let _ = f.read_to_end(&mut buf);
-        ProvingKeys::deserialize_uncompressed_unchecked(&mut buf.as_slice()).unwrap()
+        ProvingKeys::deserialize_uncompressed_unchecked(&mut f).unwrap()
     };
     work(proving_keys);
 }
