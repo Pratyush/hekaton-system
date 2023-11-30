@@ -60,23 +60,31 @@ struct Args {
     /// Path to the coordinator key package
     #[clap(long, value_name = "DIR")]
     key_file: PathBuf,
+
+    /// Max number of Groth16 proofs that should be performed concurrently. This is to limit memory
+    /// usage.
+    #[clap(long, value_name = "NUM")]
+    num_concurrent_proofs: usize,
 }
 
 fn main() {
     #[cfg(feature = "parallel")]
     println!("Rayon num threads: {}", rayon::current_num_threads());
 
-    let Args { key_file } = Args::parse();
+    let Args {
+        key_file,
+        num_concurrent_proofs,
+    } = Args::parse();
 
     // Deserialize the proving keys
     let proving_keys = {
         let mut f = File::open(&key_file).expect(&format!("couldn't open file {:?}", key_file));
         ProvingKeys::deserialize_uncompressed_unchecked(&mut f).unwrap()
     };
-    work(proving_keys);
+    work(proving_keys, num_concurrent_proofs);
 }
 
-fn work(proving_keys: ProvingKeys) {
+fn work(proving_keys: ProvingKeys, num_concurrent_proofs: usize) {
     let tmp_dir = mktemp::Temp::new_dir().unwrap().to_path_buf();
     std::fs::create_dir(&tmp_dir);
     let circ_params = proving_keys.circ_params.clone();
@@ -133,9 +141,10 @@ fn work(proving_keys: ProvingKeys) {
     end_timer!(start);
 
     // Stage1 responses
-    let stage1_resps = cfg_into_iter!(stage1_reqs)
+    let chunk_size = num_subcircuits / num_concurrent_proofs;
+    let stage1_resps = cfg_into_iter!(stage1_reqs, chunk_size)
         .enumerate()
-        .zip(cfg_into_iter!(stage0_seeds))
+        .zip(cfg_into_iter!(stage0_seeds, chunk_size))
         .map(|((i, req1), seed)| {
             // Per-worker seed
             let mut seed: [u8; 32] = rand::thread_rng().gen();
