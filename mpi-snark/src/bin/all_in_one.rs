@@ -157,7 +157,10 @@ fn work(proving_keys: ProvingKeys, num_concurrent_proofs: usize) {
 
             let mut state = WorkerState::new(num_subcircuits, &proving_keys);
             state.stage_0(&mut rng, &req0.to_ref());
-            state.stage_1(&mut rng, &req1)
+            let start = start_timer!(|| format!("Processing stage1 request #{i}"));
+            let resp = state.stage_1(&mut rng, &req1);
+            end_timer!(start);
+            resp
         })
         .collect::<Vec<_>>();
 

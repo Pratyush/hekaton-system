@@ -1,10 +1,8 @@
 #!/bin/bash
 
 KEYFILE_PATH=$1
-NUM_CORES_TO_USE=$2
-
-export RAYON_NUM_THREADS=$NUM_CORES_TO_USE
-
+NUM_CONCURRENT_PROOFS=$2
 
 /home/micro/horizontally-scalable-snarks-system/target/release/all_in_one \
 	--key-file $KEYFILE_PATH \
+	--num-concurrent-proofs $NUM_CONCURRENT_PROOFS

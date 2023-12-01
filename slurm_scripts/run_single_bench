@@ -7,7 +7,7 @@ CORES_PER_TASK="32"
 EXCLUSIVE=1
 
 EXCLUSIVE_STR="--exclusive"
-if [ ! $EXCLUSIVE ]; then
+if [ $EXCLUSIVE == 0 ]; then
 	EXCLUSIVE_STR=""
 fi
 
@@ -76,7 +76,7 @@ echo "MEM PER CORE: ${MEM_PER_CPU}" >> $OUT_FILENAME
 echo "CORES PER TASK: ${CORES_PER_TASK}" >> $OUT_FILENAME
 echo "${@:0}" >> $OUT_FILENAME
 
-if [ $EXCLUSIVE ]; then
+if [ $EXCLUSIVE == 1 ]; then
 	echo "EXCLUSIVE: true" >> $OUT_FILENAME
 else
 	echo "EXCLUSIVE: false" >> $OUT_FILENAME

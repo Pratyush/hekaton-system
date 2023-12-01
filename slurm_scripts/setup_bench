@@ -2,9 +2,6 @@
 
 set -eu
 
-MEM_PER_CPU="3800M"
-CPUS_PER_TASK="16"
-
 HELPSTR="\
 Usage:\n\
 setup_bench <num_subcircuits> <num_sha2_iters> <num_portals>\
@@ -21,11 +18,19 @@ NUM_PORTALS=$3
 
 # nc=num subcircuits, ns=num sha2 iters, np=num portals
 JOB_DESC="nc=${NUM_SUBCIRCUITS}_ns=${NUM_SHA2_ITERS}_np=${NUM_PORTALS}"
-OUT_FILENAME="pks-${JOB_DESC}.bin"
 
-module load openmpi
-/home/micro/horizontally-scalable-snarks-system/target/release/node setup \
-	--num-subcircuits $NUM_SUBCIRCUITS \
-	--num-sha2-iters $NUM_SHA2_ITERS \
-	--num-portals $NUM_PORTALS \
-	--key-out $OUT_FILENAME
+DATETIME=$(printf '%(%Y%m%d.%H%M%S)T\n' -1)
+LOG_OUT="setup_out-${JOB_DESC}-${DATETIME}.txt"
+LOG_ERR="setup_err-${JOB_DESC}-${DATETIME}.txt"
+KEYFILE_OUT="pks-${JOB_DESC}.bin"
+
+
+srun \
+	--time 1:00:00 \
+	--account imiers-prj-cmsc \
+       	--out=$LOG_OUT \
+	--error=$LOG_ERR \
+	--ntasks=1 \
+	--mem-per-cpu=4000 \
+	--cpus-per-task=128 \
+	setup_task.sh $NUM_SUBCIRCUITS $NUM_SHA2_ITERS $NUM_PORTALS $KEYFILE_OUT
