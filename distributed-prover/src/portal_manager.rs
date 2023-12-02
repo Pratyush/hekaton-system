@@ -51,7 +51,7 @@ impl<F: PrimeField> SetupPortalManager<F> {
 
     /// Makes a subtrace and updates the constraint system. The constraint system needs to be
     /// updated with an empty one otherwise it gets too big and we run out of memory
-    pub(crate) fn start_subtrace(&mut self, cs: ConstraintSystemRef<F>) {
+    pub fn start_subtrace(&mut self, cs: ConstraintSystemRef<F>) {
         self.subtraces.push(Vec::new());
         self.cs = cs;
     }
