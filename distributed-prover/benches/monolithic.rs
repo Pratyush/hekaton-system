@@ -149,10 +149,11 @@ fn main() {
             let circ_params = gen_test_circuit_params(num_subcircuits, num_sha2_iters, num_portals);
 
             // Generate the CRS
-            println!("Building monolithic circuit [nc={num_subcircuits}]");
-            let start = start_timer!(|| format!(
-                "Monolith: Building PK [nt={num_threads},nc={num_subcircuits}]"
-            ));
+            let start = start_timer!(|| {
+                format!(
+                "Monolith: Building PK [nt={num_threads},ns={num_sha2_iters},np={num_portals},nc={num_subcircuits}]"
+            )
+            });
             let circuit = MonolithicCircuit::new(&circ_params);
             let pk = Groth16::<E, LibsnarkReduction>::generate_random_parameters_with_reduction(
                 circuit, &mut rng,
@@ -161,9 +162,11 @@ fn main() {
             end_timer!(start);
 
             // Compute the proof
-            let start = start_timer!(|| format!(
-                "Monolith: Computing proof [nt={num_threads},nc={num_subcircuits}]"
-            ));
+            let start = start_timer!(|| {
+                format!(
+                "Monolith: Computing proof [nt={num_threads},ns={num_sha2_iters},np={num_portals},nc={num_subcircuits}]"
+            )
+            });
             let circuit = MonolithicCircuit::new(&circ_params);
             Groth16::<E, LibsnarkReduction>::create_random_proof_with_reduction(
                 circuit, &pk, &mut rng,
