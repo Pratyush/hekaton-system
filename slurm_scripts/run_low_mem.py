@@ -15,7 +15,11 @@ def run(*cmd):
     return subprocess.check_output(cmd).decode("utf-8")
 
 def run_capture_stderr(*cmd):
-    return subprocess.check_output(cmd, stderr=subprocess.STDOUT).decode("utf-8")
+    try:
+        return subprocess.check_output(cmd, stderr=subprocess.STDOUT).decode("utf-8")
+    except Exception as e:
+        print("Fatal error")
+        exit(e.output)
 
 exclusive_str = "--exclusive" if exclusive else ""
 help_str = "\

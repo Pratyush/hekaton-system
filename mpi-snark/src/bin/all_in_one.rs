@@ -166,6 +166,7 @@ fn work(proving_keys: ProvingKeys, num_concurrent_proofs: usize) {
 
     let start = start_timer!(|| format!("Aggregating"));
     let _proof = coordinator_state.aggregate(&stage1_resps);
+    end_timer!(start);
 
     end_timer!(very_start);
 

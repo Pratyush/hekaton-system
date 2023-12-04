@@ -33,7 +33,7 @@ ERR_FILENAME="bench_err-${JOB_DESC}-${DATETIME}.txt"
 
 sbatch \
 	--wait \
-	--time 30:00 \
+	--time 2:00:00 \
 	--account imiers-prj-cmsc \
 	--job-name $JOB_DESC \
        	--out=$OUT_FILENAME \

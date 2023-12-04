@@ -91,19 +91,15 @@ impl MonolithicCircuit {
 impl PortalManager<F> for MonolithicPortalManager {
     /// Gets the value from the map, witnesses it, and adds the entry to the trace
     fn get(&mut self, name: &str) -> Result<FpVar<F>, SynthesisError> {
-        Ok(FpVar::Constant(F::from(0u8)))
-        /*
         Ok(self
             .0
             .get(name)
             .expect(&format!("cannot get portal wire '{name}'"))
             .clone())
-        */
     }
 
     /// Sets the value in the map and adds the entry to the trace
     fn set(&mut self, name: String, val: &FpVar<F>) -> Result<(), SynthesisError> {
-        /*
         // This is ROM. You cannot overwrite values
         assert!(
             self.0.get(&name).is_none(),
@@ -112,7 +108,6 @@ impl PortalManager<F> for MonolithicPortalManager {
 
         // Log the concrete (not ZK) entry
         self.0.insert(name.to_string(), val.clone());
-        */
 
         Ok(())
     }
@@ -128,51 +123,54 @@ impl ConstraintSynthesizer<F> for MonolithicCircuit {
                 .generate_constraints(cs.clone(), subcircuit_idx, &mut pm)?;
         }
 
+        println!("Monolith: Total #constraints {} [nc={}]", cs.num_constraints(), num_subcircuits);
+
         Ok(())
     }
 }
 
 fn main() {
-    let mut rng = rand::thread_rng();
-
     let num_sha2_iters = 33;
     let num_portals = 11_538;
 
-    for num_subcircuits in [128, 256] {
-        for num_threads in [1, 4, 16, 64] {
-            // Set the thread pool size
+    for num_subcircuits in [16, 32, 64, 128, 256].into_iter().rev() {
+        for num_threads in [1, 4, 16, 64].into_iter().rev() {
+            // Do all of the following in a thread pool of the appropriate size
             rayon::ThreadPoolBuilder::new()
                 .num_threads(num_threads)
-                .build_global()
+                .build()
+                .unwrap()
+                .install(|| {
+
+                let mut rng = rand::thread_rng();
+                let circ_params = gen_test_circuit_params(num_subcircuits, num_sha2_iters, num_portals);
+
+                // Generate the CRS
+                let start = start_timer!(|| {
+                    format!(
+                    "Monolith: Building PK [nt={num_threads},ns={num_sha2_iters},np={num_portals},nc={num_subcircuits}]"
+                )
+                });
+                let circuit = MonolithicCircuit::new(&circ_params);
+                let pk = Groth16::<E, LibsnarkReduction>::generate_random_parameters_with_reduction(
+                    circuit, &mut rng,
+                )
                 .unwrap();
+                end_timer!(start);
 
-            let circ_params = gen_test_circuit_params(num_subcircuits, num_sha2_iters, num_portals);
-
-            // Generate the CRS
-            let start = start_timer!(|| {
-                format!(
-                "Monolith: Building PK [nt={num_threads},ns={num_sha2_iters},np={num_portals},nc={num_subcircuits}]"
-            )
+                // Compute the proof
+                let start = start_timer!(|| {
+                    format!(
+                    "Monolith: Computing proof [nt={num_threads},ns={num_sha2_iters},np={num_portals},nc={num_subcircuits}]"
+                )
+                });
+                let circuit = MonolithicCircuit::new(&circ_params);
+                Groth16::<E, LibsnarkReduction>::create_random_proof_with_reduction(
+                    circuit, &pk, &mut rng,
+                )
+                .unwrap();
+                end_timer!(start);
             });
-            let circuit = MonolithicCircuit::new(&circ_params);
-            let pk = Groth16::<E, LibsnarkReduction>::generate_random_parameters_with_reduction(
-                circuit, &mut rng,
-            )
-            .unwrap();
-            end_timer!(start);
-
-            // Compute the proof
-            let start = start_timer!(|| {
-                format!(
-                "Monolith: Computing proof [nt={num_threads},ns={num_sha2_iters},np={num_portals},nc={num_subcircuits}]"
-            )
-            });
-            let circuit = MonolithicCircuit::new(&circ_params);
-            Groth16::<E, LibsnarkReduction>::create_random_proof_with_reduction(
-                circuit, &pk, &mut rng,
-            )
-            .unwrap();
-            end_timer!(start);
         }
     }
 }
