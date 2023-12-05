@@ -8,6 +8,7 @@ use distributed_prover::{
     poseidon_util::{
         gen_merkle_params, PoseidonTreeConfig as TreeConfig, PoseidonTreeConfigVar as TreeConfigVar,
     },
+    subcircuit_circuit::SubcircuitWithPortalsProver,
     tree_hash_circuit::{MerkleTreeCircuit, MerkleTreeCircuitParams},
     util::{cli_filenames::*, deserialize_from_path, serialize_to_path, G16ProvingKey},
     worker::{Stage0Response, Stage1Response},
@@ -17,11 +18,12 @@ use distributed_prover::{
 use std::collections::HashMap;
 
 use ark_bls12_381::{Bls12_381 as E, Fr as F};
+use ark_cp_groth16::{MultiStageConstraintSynthesizer, MultiStageConstraintSystem};
 use ark_groth16::{r1cs_to_qap::LibsnarkReduction, Groth16};
 use ark_r1cs_std::{alloc::AllocVar, fields::fp::FpVar};
 use ark_relations::{
     ns,
-    r1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError},
+    r1cs::{ConstraintSynthesizer, ConstraintSystem, ConstraintSystemRef, SynthesisError},
 };
 
 macro_rules! start_timer {
@@ -123,13 +125,81 @@ impl ConstraintSynthesizer<F> for MonolithicCircuit {
                 .generate_constraints(cs.clone(), subcircuit_idx, &mut pm)?;
         }
 
-        println!("Monolith: Total #constraints {} [nc={}]", cs.num_constraints(), num_subcircuits);
+        println!(
+            "Monolith: Total #constraints {} [nc={}]",
+            cs.num_constraints(),
+            num_subcircuits
+        );
 
         Ok(())
     }
 }
 
-fn main() {
+fn circuit_overhead() {
+    let num_sha2_iters = 33;
+    let num_portals = 11_538;
+    let tree_params = gen_merkle_params();
+
+    for num_subcircuits in [16, 32, 64, 128, 256].into_iter().rev() {
+        for num_sha2_iters in 1..34 {
+            for num_portals in (500..=13_000).step_by(1000) {
+                let circ_params =
+                    gen_test_circuit_params(num_subcircuits, num_sha2_iters, num_portals);
+                let mut wrapped_subcirc =
+                    SubcircuitWithPortalsProver::<F, _, TreeConfig, TreeConfigVar>::new(
+                        tree_params.clone(),
+                        num_subcircuits,
+                    );
+                wrapped_subcirc.circ = Some(<MerkleTreeCircuit as CircuitWithPortals<F>>::new(
+                    &circ_params,
+                ));
+                let subtraces = CircuitWithPortals::<F>::get_portal_subtraces(
+                    wrapped_subcirc.circ.as_ref().unwrap(),
+                );
+                let mut pm = MonolithicPortalManager::default();
+
+                for subcircuit_idx in [0, 1] {
+                    // Set the index and the underlying circuit
+                    let subtrace = &subtraces[subcircuit_idx];
+                    wrapped_subcirc.subcircuit_idx = subcircuit_idx;
+                    wrapped_subcirc.time_ordered_subtrace = subtrace.clone();
+                    wrapped_subcirc.addr_ordered_subtrace = subtrace.clone();
+                    wrapped_subcirc.subcircuit_idx = subcircuit_idx;
+
+                    let mut mcs = MultiStageConstraintSystem::<F>::default();
+                    wrapped_subcirc.generate_constraints(0, &mut mcs).unwrap();
+                    wrapped_subcirc.generate_constraints(1, &mut mcs).unwrap();
+                    println!(
+                        "Subcircuit {}: Wrapped constraint number is {} [nc={},ns={},np={}]",
+                        subcircuit_idx,
+                        mcs.num_constraints(),
+                        num_subcircuits,
+                        num_sha2_iters,
+                        num_portals
+                    );
+
+                    let cs = ConstraintSystem::new_ref();
+
+                    let mut unwrapped_subcirc = MonolithicCircuit::new(&circ_params);
+                    unwrapped_subcirc
+                        .0
+                        .generate_constraints(cs.clone(), subcircuit_idx, &mut pm)
+                        .unwrap();
+                    println!(
+                        "Subcircuit {}: Unwrapped constraint number is {} [nc={},ns={},np={}]",
+                        subcircuit_idx,
+                        cs.num_constraints(),
+                        num_subcircuits,
+                        num_sha2_iters,
+                        num_portals
+                    );
+                }
+            }
+        }
+    }
+}
+
+fn monolithic_proving_time() {
     let num_sha2_iters = 33;
     let num_portals = 11_538;
 
@@ -146,12 +216,12 @@ fn main() {
                 let circ_params = gen_test_circuit_params(num_subcircuits, num_sha2_iters, num_portals);
 
                 // Generate the CRS
+                let circuit = MonolithicCircuit::new(&circ_params);
                 let start = start_timer!(|| {
                     format!(
                     "Monolith: Building PK [nt={num_threads},ns={num_sha2_iters},np={num_portals},nc={num_subcircuits}]"
                 )
                 });
-                let circuit = MonolithicCircuit::new(&circ_params);
                 let pk = Groth16::<E, LibsnarkReduction>::generate_random_parameters_with_reduction(
                     circuit, &mut rng,
                 )
@@ -173,4 +243,9 @@ fn main() {
             });
         }
     }
+}
+
+fn main() {
+    circuit_overhead();
+    monolithic_proving_time();
 }

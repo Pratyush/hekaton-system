@@ -40,8 +40,8 @@ where
     pub tree_params: ExecTreeParams<C>,
 
     // Stage 0 committed values
-    pub(crate) time_ordered_subtrace: Vec<RomTranscriptEntry<F>>,
-    pub(crate) addr_ordered_subtrace: Vec<RomTranscriptEntry<F>>,
+    pub time_ordered_subtrace: Vec<RomTranscriptEntry<F>>,
+    pub addr_ordered_subtrace: Vec<RomTranscriptEntry<F>>,
     pub(crate) time_ordered_subtrace_var: Vec<RomTranscriptEntryVar<F>>,
     pub(crate) addr_ordered_subtrace_var: Vec<RomTranscriptEntryVar<F>>,
 
@@ -91,7 +91,7 @@ where
     CG: TreeConfigGadget<C, F>,
 {
     // Makes a new struct with subcircuit idx 0, no subtraces, and an empty Merkle auth path
-    pub(crate) fn new(tree_params: ExecTreeParams<C>, num_subcircuits: usize) -> Self {
+    pub fn new(tree_params: ExecTreeParams<C>, num_subcircuits: usize) -> Self {
         // Create an auth path of the correct length
         let auth_path_len = log2(num_subcircuits) - 1;
         let mut auth_path = MerklePath::default();
