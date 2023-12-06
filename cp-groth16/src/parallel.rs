@@ -1,3 +1,4 @@
+#![allow(unused)]
 use ark_std::{boxed::Box, vec::Vec};
 
 pub struct ExecutionPool<'a, T> {

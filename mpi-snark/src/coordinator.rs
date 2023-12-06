@@ -2,10 +2,10 @@ use crate::data_structures::{
     AggProof, ProvingKeys, Stage0RequestRef, Stage0Response, Stage1RequestRef, Stage1Response,
 };
 
+use ark_ip_proofs::tipa::TIPA;
 use distributed_prover::{
-    aggregation::{AggProvingKey, SuperComCommittingKey},
+    aggregation::AggProvingKey,
     coordinator::{CoordinatorStage0State, CoordinatorStage1State, G16ProvingKeyGenerator},
-    kzg::KzgComKey,
     poseidon_util::{
         gen_merkle_params, PoseidonTreeConfig as TreeConfig, PoseidonTreeConfigVar as TreeConfigVar,
     },
@@ -19,7 +19,7 @@ use rand::thread_rng;
 
 pub struct CoordinatorState<'a> {
     g16_pks: &'a ProvingKeys,
-    agg_pk: AggProvingKey<E>,
+    agg_pk: AggProvingKey<'a, E>,
     circ_params: MerkleTreeCircuitParams,
     stage0_state: Option<CoordinatorStage0State<E, MerkleTreeCircuit>>,
     stage1_state: Option<CoordinatorStage1State<TreeConfig, E, MerkleTreeCircuit>>,
@@ -58,7 +58,7 @@ impl<'a> CoordinatorState<'a> {
 
         // Consume the stage0 state and the responses
         self.stage1_state = Some(self.stage0_state.take().unwrap().process_stage0_responses(
-            &self.agg_pk.ipp_ck,
+            &self.agg_pk.tipp_pk,
             tree_params,
             &stage0_resps,
         ));
@@ -146,9 +146,9 @@ fn generate_agg_key(g16_pks: &ProvingKeys) -> AggProvingKey<E> {
     let start = start_timer!(|| format!("Generating aggregation key "));
     let agg_pk = {
         // Need some intermediate keys
-        let super_com_key = SuperComCommittingKey::<E>::gen(&mut rng, num_subcircuits);
-        let kzg_ck = KzgComKey::gen(&mut rng, num_subcircuits);
-        AggProvingKey::new(super_com_key, kzg_ck, pk_fetcher)
+        let (tipp_pk, _tipp_vk) =
+            TIPA::<E, sha2::Sha256>::setup(num_subcircuits, &mut rng).unwrap();
+        AggProvingKey::new(tipp_pk, pk_fetcher)
     };
     end_timer!(start);
     agg_pk

@@ -1,17 +1,10 @@
 use distributed_prover::{
-    aggregation::{AggProvingKey, SuperComCommittingKey},
-    coordinator::{
-        CoordinatorStage0State, FinalAggState, G16ProvingKeyGenerator, Stage0Request, Stage1Request,
-    },
-    kzg::KzgComKey,
-    portal_manager::{PortalManager, SetupPortalManager},
+    portal_manager::PortalManager,
     poseidon_util::{
         gen_merkle_params, PoseidonTreeConfig as TreeConfig, PoseidonTreeConfigVar as TreeConfigVar,
     },
     subcircuit_circuit::SubcircuitWithPortalsProver,
     tree_hash_circuit::{MerkleTreeCircuit, MerkleTreeCircuitParams},
-    util::{cli_filenames::*, deserialize_from_path, serialize_to_path, G16ProvingKey},
-    worker::{Stage0Response, Stage1Response},
     CircuitWithPortals,
 };
 
@@ -20,10 +13,9 @@ use std::collections::HashMap;
 use ark_bls12_381::{Bls12_381 as E, Fr as F};
 use ark_cp_groth16::{MultiStageConstraintSynthesizer, MultiStageConstraintSystem};
 use ark_groth16::{r1cs_to_qap::LibsnarkReduction, Groth16};
-use ark_r1cs_std::{alloc::AllocVar, fields::fp::FpVar};
-use ark_relations::{
-    ns,
-    r1cs::{ConstraintSynthesizer, ConstraintSystem, ConstraintSystemRef, SynthesisError},
+use ark_r1cs_std::fields::fp::FpVar;
+use ark_relations::r1cs::{
+    ConstraintSynthesizer, ConstraintSystem, ConstraintSystemRef, SynthesisError,
 };
 
 macro_rules! start_timer {
@@ -136,8 +128,8 @@ impl ConstraintSynthesizer<F> for MonolithicCircuit {
 }
 
 fn circuit_overhead() {
-    let num_sha2_iters = 33;
-    let num_portals = 11_538;
+    // let num_sha2_iters = 33;
+    // let num_portals = 11_538;
     let tree_params = gen_merkle_params();
 
     for num_subcircuits in [16, 32, 64, 128, 256].into_iter().rev() {

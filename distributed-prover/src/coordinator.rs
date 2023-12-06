@@ -1,5 +1,5 @@
 use crate::{
-    aggregation::{AggProof, AggProvingKey, IppCom, SuperComCommittingKey},
+    aggregation::{AggProvingKey, IppCom},
     eval_tree::{
         ExecTreeLeaf, ExecTreeParams, MerkleRoot, SerializedLeaf, SerializedLeafVar, TreeConfig,
         TreeConfigGadget,
@@ -19,6 +19,10 @@ use ark_crypto_primitives::{
 };
 use ark_ec::pairing::Pairing;
 use ark_ff::{PrimeField, ToConstraintField};
+use ark_ip_proofs::{
+    ip_commitment::{snarkpack::TIPPCommitment, IPCommitment},
+    tipa::{Proof, ProverKey},
+};
 use ark_serialize::{
     CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Write,
 };
@@ -364,7 +368,7 @@ where
     /// Processes the stage 0 repsonses and move to stage 1
     pub fn process_stage0_responses<C>(
         self,
-        super_com_key: &SuperComCommittingKey<E>,
+        tipp_pk: &ProverKey<E>,
         tree_params: ExecTreeParams<C>,
         responses: &[Stage0Response<E>],
     ) -> CoordinatorStage1State<C, E, P>
@@ -385,7 +389,8 @@ where
 
         // Commit to the commitments. These are in G1, so it's a "left" commitment. Don't worry
         // about what that means
-        let super_com = super_com_key.commit_left(&coms);
+        let coms_group = coms.iter().map(|&com| com.into()).collect::<Vec<_>>();
+        let super_com = TIPPCommitment::commit_only_left(&tipp_pk.pk.ck, &coms_group).unwrap();
 
         CoordinatorStage1State::new(
             tree_params,
@@ -444,7 +449,7 @@ impl<E: Pairing> FinalAggState<E> {
         &self,
         agg_ck: &AggProvingKey<E>,
         resps: &[Stage1Response<E>],
-    ) -> AggProof<E> {
+    ) -> Proof<E> {
         // Collect the Groth16 proofs
         let g16_proofs = {
             // Sort responses by subcircuit idx

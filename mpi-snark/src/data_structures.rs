@@ -1,3 +1,4 @@
+use ark_ip_proofs::tipa::Proof;
 use distributed_prover::{
     poseidon_util::PoseidonTreeConfig as TreeConfig,
     tree_hash_circuit::{MerkleTreeCircuit, MerkleTreeCircuitParams},
@@ -12,7 +13,7 @@ pub type G16Proof = distributed_prover::util::G16Proof<E>;
 pub type G16ProvingKey = distributed_prover::util::G16ProvingKey<E>;
 pub type G16Com = distributed_prover::util::G16Com<E>;
 pub type G16ComRandomness = distributed_prover::util::G16ComRandomness<E>;
-pub type AggProof = distributed_prover::aggregation::AggProof<E>;
+pub type AggProof = Proof<E>;
 
 pub type Stage0Request = distributed_prover::coordinator::Stage0Request<Fr>;
 

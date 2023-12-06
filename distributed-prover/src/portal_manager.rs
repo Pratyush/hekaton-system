@@ -1,6 +1,6 @@
 use crate::{RomTranscriptEntry, RomTranscriptEntryVar, RunningEvalsVar};
 
-use std::{cmp::Ordering, collections::HashMap};
+use ark_std::collections::HashMap;
 
 use ark_ff::PrimeField;
 use ark_r1cs_std::{

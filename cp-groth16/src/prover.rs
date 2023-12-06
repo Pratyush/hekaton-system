@@ -141,11 +141,8 @@ impl<E: Pairing, QAP: R1CSToQAP> CPGroth16<E, QAP> {
 
         end_timer!(c_acc_time);
 
-        
-
         let r_b_g = b_g * r;
         let s_a_g = a_g * s;
-
 
         let c_time = start_timer!(|| "Finish C");
         let mut c_g = s_a_g;

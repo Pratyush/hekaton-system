@@ -8,10 +8,8 @@ use std::{
 
 use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use ark_std::{end_timer, start_timer};
 use rand::SeedableRng;
 use rand_chacha::ChaCha12Rng;
-use rayon::prelude::*;
 
 pub use ark_cp_groth16::{
     committer::CommitmentBuilder as G16CommitmentBuilder,
@@ -95,10 +93,10 @@ pub mod cli_filenames {
 /// Serializes the given value to "DIR/FILENAMEPREFIX_INDEX". The "_INDEX" part is ommitted if no
 /// index is given.
 pub fn serialize_to_path<T: CanonicalSerialize>(
-    val: &T,
-    dir: &PathBuf,
-    filename_prefix: &str,
-    index: Option<usize>,
+    _val: &T,
+    _dir: &PathBuf,
+    _filename_prefix: &str,
+    _index: Option<usize>,
 ) -> io::Result<()> {
     // let idx_str = if let Some(i) = index {
     //     format!("_{i}")
@@ -125,10 +123,10 @@ pub fn serialize_to_path<T: CanonicalSerialize>(
 /// Serializes the given value to "DIR/FILENAMEPREFIX_INDEX1", "DIR/FILENAMEPREFIX_INDEX2", etc..
 /// The "_INDEX" part is ommitted if no index is given.
 pub fn serialize_to_paths<T: CanonicalSerialize>(
-    val: &T,
-    dir: &PathBuf,
-    filename_prefix: &str,
-    indices: core::ops::Range<usize>,
+    _val: &T,
+    _dir: &PathBuf,
+    _filename_prefix: &str,
+    _indices: core::ops::Range<usize>,
 ) -> io::Result<()> {
     // let start0 = start_timer!(|| "Serializing value");
     // let mut buf = Vec::new();
@@ -166,9 +164,9 @@ pub fn serialize_to_paths<T: CanonicalSerialize>(
 /// Deserializes "DIR/FILENAMEPREFIX_INDEX" to the given type. The "_INDEX" part is ommitted if no
 /// index is given.
 pub fn deserialize_from_path<T: CanonicalDeserialize>(
-    dir: &PathBuf,
-    filename_prefix: &str,
-    index: Option<usize>,
+    _dir: &PathBuf,
+    _filename_prefix: &str,
+    _index: Option<usize>,
 ) -> io::Result<T> {
     // let idx_str = if let Some(i) = index {
     //     format!("_{i}")

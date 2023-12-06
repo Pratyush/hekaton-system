@@ -112,12 +112,8 @@ where
     //     E::G1: VariableBaseMSMExt,
     //     E::G2: VariableBaseMSMExt,
     {
-        let ProofWithoutComms { a, b, c } = CPGroth16::<E>::prove_last_stage_with_zk(
-            self.cs,
-            &mut self.circuit,
-            &self.pk,
-            rng,
-        )?;
+        let ProofWithoutComms { a, b, c } =
+            CPGroth16::<E>::prove_last_stage_with_zk(self.cs, &mut self.circuit, &self.pk, rng)?;
 
         // Compute Σ [κᵢηᵢ] and subtract it from C
         // We use unchecked here because we don't care about if `deltas_g.len() == comm_rands.len()`

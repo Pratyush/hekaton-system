@@ -16,7 +16,6 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 pub mod aggregation;
 pub mod coordinator;
 pub mod eval_tree;
-pub mod kzg;
 pub mod pairing_ops;
 pub mod portal_manager;
 pub mod poseidon_util;
@@ -29,7 +28,7 @@ use portal_manager::PortalManager;
 
 #[macro_export]
 macro_rules! par {
-    ($(let $name:ident = $f:expr),+) => {
+    ($(let $name:ident = $f:expr);+) => {
         $(
             let mut $name = None;
         )+
@@ -68,14 +67,6 @@ impl<F: PrimeField> Default for RunningEvals<F> {
 }
 
 impl<F: PrimeField> RunningEvals<F> {
-    fn to_bytes(&self) -> Vec<u8> {
-        [
-            self.time_ordered_eval.into_bigint().to_bytes_le(),
-            self.addr_ordered_eval.into_bigint().to_bytes_le(),
-        ]
-        .concat()
-    }
-
     /// Updates the running evaluation of the time-ordered transcript polyn
     fn update_time_ordered(&mut self, entry: &RomTranscriptEntry<F>) {
         // Unpack challenges
@@ -222,14 +213,6 @@ pub struct RomTranscriptEntry<F: PrimeField> {
 }
 
 impl<F: PrimeField> RomTranscriptEntry<F> {
-    fn to_bytes(&self) -> Vec<u8> {
-        [
-            self.addr.to_le_bytes().to_vec(),
-            self.val.into_bigint().to_bytes_le(),
-        ]
-        .concat()
-    }
-
     /// Returns an entry that always gets serialized as (0, 0). This is to pad the head of the
     /// address-sorted transcript
     fn padding() -> Self {

@@ -6,7 +6,6 @@ members = [
     "mpi-snark",
     "distributed-prover",
 
-    "snarkpack",
     "tinyram-emu",
     "tinyram-constraints",
 ]
@@ -38,9 +37,11 @@ incremental = true
 debug-assertions = true
 debug = true
 
-#[patch.crates-io.ark-serialize]
-#git = "https://github.com/rozbb/algebra.git"
-#branch = "canonicalserialize-vecdeque"
+# [patch."https://www.github.com/arkworks-rs/ripp".ark-ip-proofs]
+# path = "../ripp/ip_proofs"
+
+# [patch."https://www.github.com/arkworks-rs/ripp".ark-inner-products]
+# path = "../ripp/inner_products"
 
 # [patch.crates-io.ark-r1cs-std]
 # git = "https://github.com/arkworks-rs/r1cs-std.git"

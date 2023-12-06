@@ -1,7 +1,7 @@
+use ark_ip_proofs::tipa::TIPA;
 use distributed_prover::{
-    aggregation::{AggProvingKey, SuperComCommittingKey},
+    aggregation::AggProvingKey,
     coordinator::{CoordinatorStage0State, FinalAggState, G16ProvingKeyGenerator},
-    kzg::KzgComKey,
     poseidon_util::{
         gen_merkle_params, PoseidonTreeConfig as TreeConfig, PoseidonTreeConfigVar as TreeConfigVar,
     },
@@ -10,6 +10,7 @@ use distributed_prover::{
     worker::{Stage0Response, Stage1Response},
     CircuitWithPortals,
 };
+use sha2::Sha256;
 
 use std::{io, path::PathBuf};
 
@@ -165,10 +166,8 @@ fn generate_g16_pks(
         let start =
             start_timer!(|| format!("Generating aggregation key with params {circ_params}"));
         let agg_ck = {
-            // Need some intermediate keys
-            let super_com_key = SuperComCommittingKey::<E>::gen(&mut rng, num_subcircuits);
-            let kzg_ck = KzgComKey::gen(&mut rng, num_subcircuits);
-            AggProvingKey::new(super_com_key, kzg_ck, pk_fetcher)
+            let (tipp_pk, _tipp_vk) = TIPA::<E, Sha256>::setup(num_subcircuits, &mut rng).unwrap();
+            AggProvingKey::new(tipp_pk, pk_fetcher)
         };
         end_timer!(start);
 
@@ -296,10 +295,8 @@ fn generate_g16_pks(
     // Construct the aggregator commitment key
     let start = start_timer!(|| format!("Generating aggregation key with params {circ_params}"));
     let agg_ck = {
-        // Need some intermediate keys
-        let super_com_key = SuperComCommittingKey::<E>::gen(&mut rng, num_subcircuits);
-        let kzg_ck = KzgComKey::gen(&mut rng, num_subcircuits);
-        AggProvingKey::new(super_com_key, kzg_ck, pk_fetcher)
+        let (tipp_pk, _tipp_vk) = TIPA::<E, Sha256>::setup(num_subcircuits, &mut rng).unwrap();
+        AggProvingKey::new(tipp_pk, pk_fetcher)
     };
     end_timer!(start);
 
@@ -398,7 +395,7 @@ fn process_stage0_resps(coord_state_dir: &PathBuf, req_dir: &PathBuf, resp_dir: 
             None,
         )
         .unwrap();
-        agg_ck.ipp_ck
+        agg_ck.tipp_pk
     };
 
     // Collect all the repsonses into a single vec. They're tiny, so this is fine.

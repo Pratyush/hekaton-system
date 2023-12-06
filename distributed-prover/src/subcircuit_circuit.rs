@@ -278,7 +278,7 @@ mod test {
     use super::*;
 
     use crate::{
-        aggregation::{AggProvingKey, SuperComCommittingKey},
+        aggregation::AggProvingKey,
         coordinator::{CoordinatorStage0State, G16ProvingKeyGenerator, Stage1Request},
         poseidon_util::{
             gen_merkle_params, PoseidonTreeConfig as TestParams,
@@ -288,10 +288,12 @@ mod test {
         util::{G16Com, G16ComSeed},
         worker::{process_stage0_request, process_stage1_request, Stage0Response},
     };
+    use sha2::Sha256;
 
     use ark_bls12_381::{Bls12_381 as E, Fr};
     use ark_cp_groth16::verifier::{prepare_verifying_key, verify_proof};
     use ark_ff::UniformRand;
+    use ark_ip_proofs::tipa::TIPA;
     use ark_std::test_rng;
 
     // Checks that the SubcircuitWithPortalsProver is satisfied when the correct inputs are given
@@ -311,7 +313,7 @@ mod test {
 
         // Make the stage0 coordinator state. The value of the commitment key doesn't really matter
         // since we don't test aggregation here.
-        let super_com_key = SuperComCommittingKey::<E>::gen(&mut rng, num_subcircuits);
+        let (tipp_pk, _tipp_vk) = TIPA::<_, Sha256>::setup(num_subcircuits, &mut rng).unwrap();
         let stage0_state = CoordinatorStage0State::new::<TestParams>(circ);
         let all_subcircuit_indices = (0..num_subcircuits).collect::<Vec<_>>();
 
@@ -335,7 +337,7 @@ mod test {
 
         // Move on to stage 1. Make the coordinator state
         let stage1_state = stage0_state.process_stage0_responses(
-            &super_com_key,
+            &tipp_pk,
             tree_params.clone(),
             &fake_stage0_resps,
         );
@@ -442,12 +444,9 @@ mod test {
             .collect::<Vec<_>>();
 
         // Move on to stage 1. Make the coordinator state
-        let super_com_key = SuperComCommittingKey::<E>::gen(&mut rng, num_subcircuits);
-        let stage1_state = stage0_state.process_stage0_responses(
-            &super_com_key,
-            tree_params.clone(),
-            &stage0_resps,
-        );
+        let (tipp_pk, _tipp_vk) = TIPA::<E, Sha256>::setup(num_subcircuits, &mut rng).unwrap();
+        let stage1_state =
+            stage0_state.process_stage0_responses(&tipp_pk, tree_params.clone(), &stage0_resps);
 
         // Compute the values needed to prove stage1 for all subcircuits
         let stage1_reqs: Vec<Stage1Request<TestParams, _, _>> = all_subcircuit_indices
@@ -487,10 +486,7 @@ mod test {
             .collect::<Vec<_>>();
 
         // Do aggregation. Make up whatever keys are necessary
-        let kzg_ck = crate::kzg::KzgComKey::gen(&mut rng, num_subcircuits);
-        let agg_ck = AggProvingKey::new(super_com_key, kzg_ck, |subcircuit_idx| {
-            &proving_keys[subcircuit_idx]
-        });
+        let agg_ck = AggProvingKey::new(tipp_pk, |i| &proving_keys[i]);
 
         // Compute the aggregate proof
         final_agg_state.gen_agg_proof(&agg_ck, &stage1_resps);

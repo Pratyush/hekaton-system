@@ -64,11 +64,6 @@ impl<F: PrimeField> ExecTreeLeaf<F> {
             last_subtrace_entry: RomTranscriptEntry::padding(),
         }
     }
-
-    /// Serializes the leaf to bytes
-    pub(crate) fn to_bytes(&self) -> Vec<u8> {
-        [self.evals.to_bytes(), self.last_subtrace_entry.to_bytes()].concat()
-    }
 }
 
 impl<F: PrimeField> ToConstraintField<F> for ExecTreeLeaf<F> {

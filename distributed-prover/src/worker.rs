@@ -12,7 +12,6 @@ use ark_cp_groth16::{
 };
 use ark_ec::pairing::Pairing;
 // use ark_msm::msm::VariableBaseMSMExt;
-use ark_r1cs_std::fields::fp::FpVar;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rand::RngCore;
 use rand::{Rng, SeedableRng};
@@ -73,7 +72,7 @@ impl<E: Pairing> Stage1Response<E> {
 
 /// Consumes the stage0 request and performs the necessary Groth16 commitment
 pub fn process_stage0_request<C, CG, E, P, R>(
-    mut rng: R,
+    rng: R,
     tree_params: ExecTreeParams<C>,
     pk: &G16ProvingKey<E>,
     req: Stage0Request<E::ScalarField>,
@@ -204,7 +203,7 @@ where
 /// Process the given stage1 request, along with all the previous messages in this execution, and
 /// produces a Groth16 proof
 pub fn process_stage1_request<C, CG, E, P, R>(
-    mut rng: R,
+    rng: R,
     tree_params: ExecTreeParams<C>,
     pk: &G16ProvingKey<E>,
     stage0_req: Stage0Request<E::ScalarField>,

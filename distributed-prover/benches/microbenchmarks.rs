@@ -1,29 +1,22 @@
+use ark_ip_proofs::tipa::TIPA;
 use distributed_prover::{
-    aggregation::{AggProvingKey, SuperComCommittingKey},
+    aggregation::AggProvingKey,
     coordinator::{
         CoordinatorStage0State, FinalAggState, G16ProvingKeyGenerator, Stage0Request, Stage1Request,
     },
-    kzg::KzgComKey,
     poseidon_util::{
         gen_merkle_params, PoseidonTreeConfig as TreeConfig, PoseidonTreeConfigVar as TreeConfigVar,
     },
     tree_hash_circuit::{MerkleTreeCircuit, MerkleTreeCircuitParams},
-    util::{cli_filenames::*, deserialize_from_path, serialize_to_path, G16ProvingKey},
+    util::G16ProvingKey,
     worker::{Stage0Response, Stage1Response},
     CircuitWithPortals,
 };
-
-use std::{io, path::PathBuf};
+use sha2::Sha256;
 
 use ark_bls12_381::{Bls12_381 as E, Fr};
-use ark_std::{end_timer, start_timer};
-use clap::{Parser, Subcommand};
-use rayon::prelude::*;
 
-use criterion::{
-    criterion_group, criterion_main, measurement::Measurement, BatchSize, BenchmarkGroup,
-    BenchmarkId, Criterion,
-};
+use criterion::{criterion_group, criterion_main, Criterion};
 
 // Checks the test circuit parameters and puts them in a struct
 fn gen_test_circuit_params(
@@ -79,11 +72,11 @@ fn generate_g16_pk(
     first_leaf_pk
 }
 
-fn generate_agg_ck(
+fn generate_agg_ck<'a>(
     c: Option<&mut Criterion>,
     circ_params: &MerkleTreeCircuitParams,
     pk: &G16ProvingKey<E>,
-) -> AggProvingKey<E> {
+) -> AggProvingKey<'a, E> {
     let mut rng = rand::thread_rng();
     let num_subcircuits = 2 * circ_params.num_leaves;
 
@@ -92,19 +85,15 @@ fn generate_agg_ck(
 
     // We don't bench the SuperCom key. This is a subset of the KZG key. This will be resolved when
     // verification is resolved.
-    let super_com_key = SuperComCommittingKey::<E>::gen(&mut rng, num_subcircuits);
+    let (tipp_pk, _tipp_vk) = TIPA::<E, Sha256>::setup(num_subcircuits, &mut rng).unwrap();
 
     c.map(|c| {
         c.bench_function(&format!("Coord: generating agg ck {circ_params}"), |b| {
-            b.iter(|| {
-                let kzg_ck = KzgComKey::gen(&mut rng, num_subcircuits);
-                AggProvingKey::new(super_com_key.clone(), kzg_ck, pk_fetcher);
-            })
+            b.iter(|| AggProvingKey::new(tipp_pk.clone(), pk_fetcher))
         })
     });
 
-    let kzg_ck = KzgComKey::gen(&mut rng, num_subcircuits);
-    AggProvingKey::new(super_com_key, kzg_ck, pk_fetcher)
+    AggProvingKey::new(tipp_pk, pk_fetcher)
 }
 
 fn begin_stage0(
@@ -198,7 +187,7 @@ fn process_stage0_resps(
             |b| {
                 b.iter(|| {
                     stage0_state.clone().process_stage0_responses(
-                        &agg_ck.ipp_ck,
+                        &agg_ck.tipp_pk,
                         tree_params.clone(),
                         &stage0_resps,
                     )
@@ -208,7 +197,7 @@ fn process_stage0_resps(
     });
 
     let new_coord_state =
-        stage0_state.process_stage0_responses(&agg_ck.ipp_ck, tree_params, &stage0_resps);
+        stage0_state.process_stage0_responses(&agg_ck.tipp_pk, tree_params, &stage0_resps);
     let req = new_coord_state.gen_request(0).to_owned();
     let final_agg_state = new_coord_state.into_agg_state();
 
@@ -278,11 +267,11 @@ fn show_portal_constraint_tradeoff(c: &mut Criterion) {
     let mut rng = rand::thread_rng();
     let tree_params = gen_merkle_params();
 
-    /// All of these parameters produce circuits that are ~1.5M constraints. They are of the form
-    /// (num_subcircuits, num_sha2_iters, num_portal_wires)
+    // All of these parameters produce circuits that are ~1.5M constraints. They are of the form
+    // (num_subcircuits, num_sha2_iters, num_portal_wires)
     let num_subcircuits = 256;
-    let mut num_sha2_iters = 1;
-    let mut num_portals = 109_462;
+    let num_sha2_iters = 1;
+    let num_portals = 109_462;
 
     let mut circ_params = gen_test_circuit_params(num_subcircuits, num_sha2_iters, num_portals);
 
@@ -299,7 +288,7 @@ fn show_portal_constraint_tradeoff(c: &mut Criterion) {
     // Go up to 37 SHA2 iters
     for _ in 0..19 {
         // Make an empty circuit of the correct size
-        let circ = <MerkleTreeCircuit as CircuitWithPortals<Fr>>::new(&circ_params);
+        let _circ = <MerkleTreeCircuit as CircuitWithPortals<Fr>>::new(&circ_params);
         let first_leaf_pk = generate_g16_pk(Some(c), &circ_params);
         let agg_ck = generate_agg_ck(Some(c), &circ_params, &first_leaf_pk);
         let (stage0_state, stage0_req) = begin_stage0(Some(c), &circ_params);
@@ -313,7 +302,7 @@ fn show_portal_constraint_tradeoff(c: &mut Criterion) {
             |b| {
                 b.iter(|| {
                     let stage0_req = stage0_state.gen_request(0).to_owned();
-                    let stage0_resp = distributed_prover::worker::process_stage0_request::<
+                    let _stage0_resp = distributed_prover::worker::process_stage0_request::<
                         _,
                         TreeConfigVar,
                         _,
@@ -328,7 +317,7 @@ fn show_portal_constraint_tradeoff(c: &mut Criterion) {
 
         let stage0_resp =
             process_stage0_requests(Some(c), &circ_params, stage0_req.clone(), &first_leaf_pk);
-        let (final_agg_state, stage1_req) = process_stage0_resps(
+        let (_final_agg_state, stage1_req) = process_stage0_resps(
             Some(c),
             &circ_params,
             stage0_state,

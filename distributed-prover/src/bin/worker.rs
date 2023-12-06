@@ -2,7 +2,7 @@ use distributed_prover::{
     coordinator::{Stage0Request, Stage1Request},
     poseidon_util::{gen_merkle_params, PoseidonTreeConfigVar as TreeConfigVar},
     tree_hash_circuit::MerkleTreeCircuit,
-    util::{cli_filenames::*, deserialize_from_path, serialize_to_path, G16ComKey, G16ProvingKey},
+    util::{cli_filenames::*, deserialize_from_path, serialize_to_path, G16ProvingKey},
     worker::Stage0Response,
 };
 
