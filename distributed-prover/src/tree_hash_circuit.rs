@@ -111,7 +111,7 @@ pub struct MerkleTreeCircuitParams {
 
 impl std::fmt::Display for MerkleTreeCircuitParams {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        writeln!(
+        write!(
             f,
             "[nc={},ns={},np={}]",
             2 * self.num_leaves,
