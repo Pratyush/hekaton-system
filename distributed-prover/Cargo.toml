@@ -27,6 +27,7 @@ merlin = "3.0.0"
 ark-groth16 = "0.4.0"
 ark-ip-proofs = { git = "https://www.github.com/arkworks-rs/ripp", branch = "ip-commitment-old" }
 ark-inner-products = { git = "https://www.github.com/arkworks-rs/ripp", branch = "ip-commitment-old" }
+
 digest = "0.10"
 sha2 = "0.10"
 pretty_assertions = "1.2.0"
@@ -42,7 +43,7 @@ default = ["asm", "parallel"]
 print-trace = ["ark-std/print-trace"]
 std = ["ark-ff/std", "ark-poly/std", "ark-r1cs-std/std", "ark-serialize/std", "ark-relations/std"]
 asm = ["ark-ff/asm"]
-parallel = ["ark-ff/parallel", "ark-ec/parallel", "ark-bls12-381/parallel", "ark-poly/parallel", "ark-r1cs-std/parallel", ]
+parallel = ["ark-ff/parallel", "ark-ec/parallel", "ark-bls12-381/parallel", "ark-poly/parallel", "ark-r1cs-std/parallel", "ark-ip-proofs/parallel", "ark-inner-products/parallel" ]
 
 [[bench]]
 name = "microbenchmarks"
