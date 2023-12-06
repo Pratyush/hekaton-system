@@ -15,6 +15,8 @@ use distributed_prover::{
 use sha2::Sha256;
 
 use ark_bls12_381::{Bls12_381 as E, Fr};
+use ark_serialize::CanonicalSerialize;
+use ark_std::{end_timer, start_timer};
 
 use criterion::{criterion_group, criterion_main, Criterion};
 
@@ -252,8 +254,6 @@ fn process_stage1_resps(
     stage1_resp: Stage1Response<E>,
 ) {
     let num_subcircuits = 2 * circ_params.num_leaves;
-
-    println!("Making vec of resps");
     let stage1_resps = vec![stage1_resp; num_subcircuits];
 
     c.map(|c| {
@@ -261,6 +261,8 @@ fn process_stage1_resps(
             b.iter(|| final_agg_state.gen_agg_proof(&agg_ck, &stage1_resps))
         })
     });
+
+    final_agg_state.gen_agg_proof(&agg_ck, &stage1_resps);
 }
 
 fn show_portal_constraint_tradeoff(c: &mut Criterion) {
@@ -373,7 +375,7 @@ fn aggregation(c: &mut Criterion) {
     start_memory_printer();
 
     // Run aggregation for circuit of up to 2^30 subcircuits
-    for num_subcircuits in (0..30).step_by(2).map(|i| 1 << i) {
+    for num_subcircuits in (2..64).step_by(2).map(|i| 1 << i) {
         // Pick something that gives us 1.5M constraints. This does not affect our benchmark at
         // all, but may as well.
         let num_sha2_iters_per_subcirc = 1;
@@ -389,6 +391,10 @@ fn aggregation(c: &mut Criterion) {
         let g16_pk = generate_g16_pk(None, &circ_params);
         println!("Generating agg ck");
         let agg_ck = generate_agg_ck(None, &circ_params, &g16_pk);
+        println!(
+            "Agg ck size is {}B {circ_params}",
+            agg_ck.uncompressed_size()
+        );
         println!("Generating stage0 requests");
         let (stage0_state, stage0_req) = begin_stage0(None, &circ_params);
         println!("Processing stage0 requests");
@@ -413,7 +419,9 @@ fn aggregation(c: &mut Criterion) {
 
         // Now benchmark aggregation
         println!("Aggregating");
-        process_stage1_resps(Some(c), &circ_params, final_agg_state, agg_ck, stage1_resp);
+        let start = start_timer!(|| format!("Coord: aggregating {circ_params}"));
+        process_stage1_resps(None, &circ_params, final_agg_state, agg_ck, stage1_resp);
+        end_timer!(start);
     }
 }
 
