@@ -335,7 +335,9 @@ impl<'b, E: Pairing> AggProvingKey<'b, E> {
 
         let tipp_proof = TIPA::<_, Sha256>::prove(&self.tipp_pk, &instance, &witness).unwrap();
 
+        let tipp_start = start_timer!(|| format!("Verifying TIPA for {num_proofs} proofs"));
         assert!(TIPA::<_, Sha256>::verify(&self.tipp_pk.vk(), &instance, &tipp_proof).unwrap());
+        end_timer!(tipp_start);
         end_timer!(start);
 
         tipp_proof
