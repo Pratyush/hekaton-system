@@ -351,9 +351,29 @@ fn show_portal_constraint_tradeoff(c: &mut Criterion) {
     }
 }
 
+/// Starts a thread which prints memory consumption every second
+pub fn start_memory_printer() {
+    let page_size = procfs::page_size();
+    let me = procfs::process::Process::myself().unwrap();
+
+    ark_std::thread::spawn(move || loop {
+        let me_stat = me.stat().unwrap();
+
+        println!(
+            "\nvsize {}B, rss {}B",
+            me_stat.vsize,
+            me_stat.rss * page_size
+        );
+
+        ark_std::thread::sleep(std::time::Duration::from_secs(1))
+    });
+}
+
 fn aggregation(c: &mut Criterion) {
-    // Do the same thing as the function below this one, but only benchmark the last step
-    for num_subcircuits in [4, 16, 64, 256, 1024, 4096, 16384, 65536] {
+    start_memory_printer();
+
+    // Run aggregation for circuit of up to 2^30 subcircuits
+    for num_subcircuits in (0..30).step_by(2).map(|i| 1 << i) {
         // Pick something that gives us 1.5M constraints. This does not affect our benchmark at
         // all, but may as well.
         let num_sha2_iters_per_subcirc = 1;
@@ -365,10 +385,15 @@ fn aggregation(c: &mut Criterion) {
             num_sha2_iters_per_subcirc,
             num_portals_per_subcirc,
         );
+        println!("Generating g16 pk");
         let g16_pk = generate_g16_pk(None, &circ_params);
+        println!("Generating agg ck");
         let agg_ck = generate_agg_ck(None, &circ_params, &g16_pk);
+        println!("Generating stage0 requests");
         let (stage0_state, stage0_req) = begin_stage0(None, &circ_params);
+        println!("Processing stage0 requests");
         let stage0_resp = process_stage0_requests(None, &circ_params, stage0_req.clone(), &g16_pk);
+        println!("Generating stage1 requests");
         let (final_agg_state, stage1_req) = process_stage0_resps(
             None,
             &circ_params,
@@ -376,6 +401,7 @@ fn aggregation(c: &mut Criterion) {
             stage0_resp.clone(),
             agg_ck.clone(),
         );
+        println!("Processing stage1 requests");
         let stage1_resp = process_stage1_requests(
             None,
             &circ_params,
@@ -386,6 +412,7 @@ fn aggregation(c: &mut Criterion) {
         );
 
         // Now benchmark aggregation
+        println!("Aggregating");
         process_stage1_resps(Some(c), &circ_params, final_agg_state, agg_ck, stage1_resp);
     }
 }
