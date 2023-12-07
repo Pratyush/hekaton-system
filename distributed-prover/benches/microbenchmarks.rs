@@ -1,4 +1,4 @@
-use ark_ip_proofs::tipa::TIPA;
+use ark_ip_proofs::tipa::{Proof as AggProof, TIPA};
 use distributed_prover::{
     aggregation::AggProvingKey,
     coordinator::{
@@ -252,7 +252,7 @@ fn process_stage1_resps(
     final_agg_state: FinalAggState<E>,
     agg_ck: AggProvingKey<E>,
     stage1_resp: Stage1Response<E>,
-) {
+) -> AggProof<E> {
     let num_subcircuits = 2 * circ_params.num_leaves;
     let stage1_resps = vec![stage1_resp; num_subcircuits];
 
@@ -262,7 +262,7 @@ fn process_stage1_resps(
         })
     });
 
-    final_agg_state.gen_agg_proof(&agg_ck, &stage1_resps);
+    final_agg_state.gen_agg_proof(&agg_ck, &stage1_resps)
 }
 
 fn show_portal_constraint_tradeoff(c: &mut Criterion) {
@@ -374,7 +374,7 @@ pub fn start_memory_printer() {
 fn aggregation(c: &mut Criterion) {
     start_memory_printer();
 
-    // Run aggregation for circuit of up to 2^30 subcircuits
+    // Run aggregation for circuit until it falls over
     for num_subcircuits in (2..64).step_by(2).map(|i| 1 << i) {
         // Pick something that gives us 1.5M constraints. This does not affect our benchmark at
         // all, but may as well.
@@ -420,7 +420,11 @@ fn aggregation(c: &mut Criterion) {
         // Now benchmark aggregation
         println!("Aggregating");
         let start = start_timer!(|| format!("Coord: aggregating {circ_params}"));
-        process_stage1_resps(None, &circ_params, final_agg_state, agg_ck, stage1_resp);
+        let agg_proof = process_stage1_resps(None, &circ_params, final_agg_state, agg_ck, stage1_resp);
+        println!(
+            "Agg proof size is {}B {circ_params}",
+            agg_proof.uncompressed_size()
+        );
         end_timer!(start);
     }
 }
