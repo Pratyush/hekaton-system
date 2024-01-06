@@ -182,84 +182,6 @@ where
                 &self.tree_params.two_to_one_params,
             )?;
 
-            // Ensure that at subcircuit 0, the provided evals and last subtrace entry are the
-            // defaults
-            if self.subcircuit_idx == 0 {
-                // Check the evals are (1, 1)
-                cur_leaf_var
-                    .evals
-                    .time_ordered_eval
-                    .enforce_equal(&FpVar::one())?;
-                cur_leaf_var
-                    .evals
-                    .addr_ordered_eval
-                    .enforce_equal(&FpVar::one())?;
-
-                // Check the padding entry is (0, 0)
-                cur_leaf_var
-                    .last_subtrace_entry
-                    .val
-                    .enforce_equal(&FpVar::zero())?;
-                cur_leaf_var
-                    .last_subtrace_entry
-                    .addr
-                    .enforce_equal(&FpVar::zero())?;
-            }
-
-            // Set the challenge values so the running evals knows how to update itself
-            let mut running_evals_var = cur_leaf_var.evals.clone();
-            running_evals_var.challenges = Some((entry_chal_var, tr_chal_var));
-
-            // Prepend the last subtrace entry to the addr-ordered subtrace. This necessary for the
-            // consistency check.
-            let full_addr_ordered_subtrace = core::iter::once(&cur_leaf_var.last_subtrace_entry)
-                .chain(self.addr_ordered_subtrace_var.iter())
-                .cloned()
-                .collect::<Vec<_>>();
-            // Save the last subtrace entry for a check later
-            let last_subtrace_entry = full_addr_ordered_subtrace.last().unwrap().clone();
-
-            // Create the portal manager to give to the circuit
-            let mut pm = ProverPortalManager {
-                time_ordered_subtrace: self.time_ordered_subtrace_var.clone(),
-                addr_ordered_subtrace: full_addr_ordered_subtrace,
-                running_evals: running_evals_var,
-                next_entry_idx: 0,
-            };
-
-            // Run the specific subcircuit and give it the prepared portal manager
-            self.circ
-                .as_mut()
-                .expect("must provide circuit for stage 1 computation")
-                .generate_constraints(c.clone(), self.subcircuit_idx, &mut pm)?;
-
-            // Sanity checks: make sure all the subtraces were used. The addr-ordered one has 1
-            // remaining because it starts with 1 extra. The last one is used, but it's not popped.
-            assert_eq!(pm.next_entry_idx, pm.time_ordered_subtrace.len());
-
-            // Make sure the resulting tree leaf appears in the Merkle Tree
-            let next_leaf = ExecTreeLeafVar {
-                evals: pm.running_evals,
-                last_subtrace_entry,
-            };
-            next_leaf_membership_var
-                .verify_membership(
-                    &leaf_params_var,
-                    &two_to_one_params_var,
-                    &root_var,
-                    &next_leaf.to_constraint_field()?,
-                )?
-                .enforce_equal(&Boolean::TRUE)?;
-
-            // If this is the last subcircuit, then verify that the time- and addr-ordered evals
-            // are equal. This completes the permutation check.
-            if self.subcircuit_idx == self.circ.as_ref().unwrap().num_subcircuits() - 1 {
-                next_leaf
-                    .evals
-                    .time_ordered_eval
-                    .enforce_equal(&next_leaf.evals.addr_ordered_eval)?;
-            }
-
             println!(
                 "Full subcircuit {} costs {} constraints",
                 self.subcircuit_idx,
@@ -399,7 +321,7 @@ mod test {
 
         // Make a random Merkle tree
         let circ_params = MerkleTreeCircuitParams {
-            num_leaves: 2,
+            num_leaves: 4,
             num_sha_iters_per_subcircuit: 1,
             num_portals_per_subcircuit: 1,
         };
