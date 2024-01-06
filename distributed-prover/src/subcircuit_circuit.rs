@@ -323,7 +323,7 @@ mod test {
         let circ_params = MerkleTreeCircuitParams {
             num_leaves: 4,
             num_sha_iters_per_subcircuit: 1,
-            num_portals_per_subcircuit: 1,
+            num_portals_per_subcircuit: 100,
         };
         let circ = MerkleTreeCircuit::rand(&mut rng, &circ_params);
         let num_subcircuits = <MerkleTreeCircuit as CircuitWithPortals<Fr>>::num_subcircuits(&circ);
@@ -335,9 +335,8 @@ mod test {
                 circ.clone(),
                 tree_params.clone(),
             );
-            all_subcircuit_indices
-                .iter()
-                .map(|&i| generator.gen_pk(&mut rng, i))
+            core::iter::repeat(generator.gen_pk(&mut rng, 0))
+                .take(num_subcircuits)
                 .collect::<Vec<_>>()
         };
 

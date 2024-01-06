@@ -336,101 +336,26 @@ impl<F: PrimeField> CircuitWithPortals<F> for MerkleTreeCircuit {
     // This produces the same portal trace as generate_constraints(0...num_circuits) would do, but
     // without having to do all the ZK SHA2 computations
     fn get_portal_subtraces(&self) -> Vec<Vec<RomTranscriptEntry<F>>> {
-        let num_leaves = self.leaves.len();
-        let num_subcircuits = num_leaves * 2;
-
-        // A helper lambda to iteratively hash the input based on params
-        let iterated_sha256 = |input: &[u8]| {
-            let mut digest = input.to_vec();
-            for _ in 0..self.params.num_sha_iters_per_subcircuit {
-                digest = Sha256::digest(&digest).to_vec();
-            }
-
-            // Output the final digest
-            let mut outbuf = [0u8; 32];
-            outbuf.copy_from_slice(&digest);
-            outbuf
-        };
-
-        // Helper lambda to do the dummy operations at the end of every subcircuit
-        let do_dummy_ops = |pm: &mut SetupPortalManager<F>| {
-            // Now do the remaining placeholder ops
-            for _ in 0..self.params.num_portals_per_subcircuit - 1 {
-                let _ = pm.get("placeholder").unwrap();
-            }
-        };
-
         // Make a portal manager to collect the subtraces
         let cs = ConstraintSystem::new_ref();
         let mut pm = SetupPortalManager::new(cs.clone());
 
-        // Hash every leaf and compute the SET operation for it
-        for (subcircuit_idx, leaf) in self.leaves.iter().enumerate() {
+        // Make an identical looking subtrace for every subcircuit
+        for i in 0..<MerkleTreeCircuit as CircuitWithPortals<F>>::num_subcircuits(&self) {
             // Every leaf is its own subcircuit, so it gets its own subtrace
             pm.start_subtrace(ConstraintSystem::new_ref());
-            let leaf_hash = iterated_sha256(leaf);
 
-            // Compute the label and value coresponding to this portal wire
-            let node_idx = subcircuit_idx_to_node_idx(subcircuit_idx, num_leaves);
-            let leaf_hash_var = UInt8::new_witness_vec(ns!(cs, "leaf hash"), &leaf_hash).unwrap();
-            let leaf_hash_fpvar = digest_to_fpvar(DigestVar(leaf_hash_var)).unwrap();
-
-            // Set the value
             let _ = pm
-                .set(format!("node {node_idx} hash"), &leaf_hash_fpvar)
+                .set(
+                    format!("placeholder{i}"),
+                    &FpVar::new_witness(ns!(cs, "placeholder"), || Ok(F::zero())).unwrap(),
+                )
                 .unwrap();
 
-            // Do the first placeholder portal set
-            if subcircuit_idx == 0 {
-                let _ = pm
-                    .set(
-                        "placeholder".to_string(),
-                        &FpVar::new_witness(ns!(cs, "placeholder"), || Ok(F::ZERO)).unwrap(),
-                    )
-                    .unwrap();
+            for _ in 0..self.params.num_portals_per_subcircuit - 1 {
+                let _ = pm.get(&format!("placeholder{i}")).unwrap();
             }
-
-            do_dummy_ops(&mut pm);
         }
-
-        // Now go through all the parents, including the root node
-        for subcircuit_idx in self.leaves.len()..(num_subcircuits - 1) {
-            pm.start_subtrace(ConstraintSystem::new_ref());
-
-            let node_idx = subcircuit_idx_to_node_idx(subcircuit_idx, num_leaves);
-            let left = left_child(node_idx);
-            let right = right_child(node_idx);
-
-            // Extract the inputs. This involves some meaningless unwrapping
-            let left_child_fpvar = pm.get(&format!("node {left} hash")).unwrap();
-            let right_child_fpvar = pm.get(&format!("node {right} hash")).unwrap();
-            let left_child_var = fpvar_to_digest(&left_child_fpvar).unwrap();
-            let right_child_var = fpvar_to_digest(&right_child_fpvar).unwrap();
-            let left_child = left_child_var
-                .into_iter()
-                .map(|b| b.value().unwrap())
-                .collect::<Vec<_>>();
-            let right_child = right_child_var
-                .into_iter()
-                .map(|b| b.value().unwrap())
-                .collect::<Vec<_>>();
-
-            // Compute the parent hash and make it an FpVar
-            let parent = iterated_sha256(&[&left_child[..31], &right_child[..31]].concat());
-            let parent_hash_var = UInt8::new_witness_vec(ns!(cs, "parent hash"), &parent).unwrap();
-            let parent_hash_fpvar = digest_to_fpvar(DigestVar(parent_hash_var)).unwrap();
-
-            // Set the value in the portal manager
-            pm.set(format!("node {node_idx} hash"), &parent_hash_fpvar)
-                .unwrap();
-
-            // Now do the dummy ops
-            do_dummy_ops(&mut pm);
-        }
-
-        // Now do the padding node. This is only dummy ops
-        pm.start_subtrace(ConstraintSystem::new_ref());
-        do_dummy_ops(&mut pm);
 
         // Done
         pm.subtraces

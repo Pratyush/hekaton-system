@@ -335,6 +335,7 @@ where
         let subtrace_timer = start_timer!(|| "Get subtraces");
         // Run the circuit and collect the execution trace. Check that constraints are satisfied.
         let time_ordered_subtraces = circ.get_portal_subtraces();
+        println!("time ordered subtrace len {}", time_ordered_subtraces.len());
         let addr_ordered_subtraces = sort_subtraces_by_addr(&time_ordered_subtraces);
         end_timer!(subtrace_timer);
 
@@ -354,7 +355,7 @@ where
             subcircuit_idx,
             time_ordered_subtrace: self
                 .time_ordered_subtraces
-                .get(subcircuit_idx)
+                .get(dbg!(subcircuit_idx))
                 .as_ref()
                 .unwrap(),
             addr_ordered_subtrace: self
