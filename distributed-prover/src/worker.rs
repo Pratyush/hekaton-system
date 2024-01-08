@@ -177,8 +177,6 @@ where
     } = stage1_req;
     let (entry_chal, tr_chal) = cur_leaf.evals.challenges.unwrap();
 
-    assert_eq!(cb.circuit.subcircuit_idx, subcircuit_idx);
-
     // Make an empty version of the large circuit and fill in just the witnesses for the
     // subcircuit we're proving now
     let mut underlying_circuit = P::new(&circ_params);

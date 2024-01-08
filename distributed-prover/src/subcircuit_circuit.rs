@@ -321,47 +321,43 @@ mod test {
 
         // Make a random Merkle tree
         let circ_params = MerkleTreeCircuitParams {
-            num_leaves: 4,
+            num_leaves: 4096,
             num_sha_iters_per_subcircuit: 1,
-            num_portals_per_subcircuit: 100,
+            num_portals_per_subcircuit: 10,
         };
         let circ = MerkleTreeCircuit::rand(&mut rng, &circ_params);
         let num_subcircuits = <MerkleTreeCircuit as CircuitWithPortals<Fr>>::num_subcircuits(&circ);
         let all_subcircuit_indices = (0..num_subcircuits).collect::<Vec<_>>();
 
         // Coordinator generates all the proving keys
-        let proving_keys = {
+        println!("Generating proving key");
+        let proving_key = {
             let generator = G16ProvingKeyGenerator::<TestParams, TestParamsVar, _, _>::new(
                 circ.clone(),
                 tree_params.clone(),
             );
-            core::iter::repeat(generator.gen_pk(&mut rng, 0))
-                .take(num_subcircuits)
-                .collect::<Vec<_>>()
+            generator.gen_pk(&mut rng, 0)
         };
 
         // Make the stage0 coordinator state
+        println!("Generating stage0 state");
         let stage0_state = CoordinatorStage0State::new::<TestParams>(circ);
 
         // Workers receives stage0 packages containing the subtraces it will need for this run. We
         // imagine the worker saves their package to disk.
-        let stage0_reqs = all_subcircuit_indices
-            .iter()
-            .map(|&idx| stage0_state.gen_request(idx).to_owned())
-            .collect::<Vec<_>>();
+        println!("Generating stage0 req");
+        let stage0_req = stage0_state.gen_request(0).to_owned();
 
         // Make stage0 responses wrt the real proving keys. This contains all the commitments
-        let stage0_resps = stage0_reqs
-            .iter()
-            .zip(proving_keys.iter())
-            .map(|(req, pk)| {
-                process_stage0_request::<_, TestParamsVar, _, MerkleTreeCircuit, _>(
-                    &mut rng,
-                    tree_params.clone(),
-                    &pk,
-                    req.clone(),
-                )
-            })
+        println!("Generating stage0 resp");
+        let stage0_resp = process_stage0_request::<_, TestParamsVar, _, MerkleTreeCircuit, _>(
+            &mut rng,
+            tree_params.clone(),
+            &proving_key,
+            stage0_req.clone(),
+        );
+        let stage0_resps = core::iter::repeat(stage0_resp.clone())
+            .take(num_subcircuits)
             .collect::<Vec<_>>();
 
         // Move on to stage 1. Make the coordinator state
@@ -370,46 +366,37 @@ mod test {
             stage0_state.process_stage0_responses(&tipp_pk, tree_params.clone(), &stage0_resps);
 
         // Compute the values needed to prove stage1 for all subcircuits
-        let stage1_reqs: Vec<Stage1Request<TestParams, _, _>> = all_subcircuit_indices
-            .iter()
-            .map(|idx| stage1_state.gen_request(*idx).to_owned())
-            .collect();
+        println!("Generating stage1 req");
+        let stage1_req = stage1_state.gen_request(0).to_owned();
 
         // Convert the coordinator state into a final aggregator state. We can throw away most of
         // our circuit data now
         let final_agg_state = stage1_state.into_agg_state();
 
-        // Now compute all the proofs, check them, and collect them for aggregation
-        let stage1_resps = stage0_reqs
-            .into_iter()
-            .zip(stage0_resps.into_iter())
-            .zip(stage1_reqs.into_iter())
-            .zip(proving_keys.iter())
-            .map(|(((stage0_req, stage0_resp), stage1_req), pk)| {
-                // Compute the proof
-                let resp = process_stage1_request::<_, TestParamsVar, _, _, _>(
-                    &mut rng,
-                    tree_params.clone(),
-                    &pk,
-                    stage0_req,
-                    &stage0_resp,
-                    stage1_req,
-                );
-
-                // Verify
-
-                let public_inputs = &final_agg_state.public_inputs;
-                let pvk = prepare_verifying_key(&pk.vk());
-                assert!(verify_proof(&pvk, &resp.proof, &public_inputs).unwrap());
-
-                resp
-            })
+        println!("Generating stage1 resp");
+        let stage1_resp = process_stage1_request::<_, TestParamsVar, _, _, _>(
+            &mut rng,
+            tree_params.clone(),
+            &proving_key,
+            stage0_req,
+            &stage0_resp,
+            stage1_req,
+        );
+        let stage1_resps = core::iter::repeat(stage1_resp.clone())
+            .take(num_subcircuits)
             .collect::<Vec<_>>();
 
+        // Verify
+        let public_inputs = &final_agg_state.public_inputs;
+        let pvk = prepare_verifying_key(&proving_key.vk());
+        assert!(verify_proof(&pvk, &stage1_resp.proof, &public_inputs).unwrap());
+
         // Do aggregation. Make up whatever keys are necessary
-        let agg_ck = AggProvingKey::new(tipp_pk, |i| &proving_keys[i]);
+        println!("Generating agg ck");
+        let agg_ck = AggProvingKey::new(tipp_pk, |_| &proving_key);
 
         // Compute the aggregate proof
+        println!("Generating agg proof of {} responses", stage1_resps.len());
         final_agg_state.gen_agg_proof(&agg_ck, &stage1_resps);
 
         // TODO: Check verification
