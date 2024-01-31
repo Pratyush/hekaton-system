@@ -354,6 +354,7 @@ fn show_portal_constraint_tradeoff(c: &mut Criterion) {
 }
 
 /// Starts a thread which prints memory consumption every second
+/*
 pub fn start_memory_printer() {
     let page_size = procfs::page_size();
     let me = procfs::process::Process::myself().unwrap();
@@ -370,9 +371,10 @@ pub fn start_memory_printer() {
         ark_std::thread::sleep(std::time::Duration::from_secs(1))
     });
 }
+*/
 
 fn aggregation(c: &mut Criterion) {
-    start_memory_printer();
+    //start_memory_printer();
 
     // Run aggregation for circuit until it falls over
     for num_subcircuits in (2..64).step_by(2).map(|i| 1 << i) {
@@ -420,7 +422,8 @@ fn aggregation(c: &mut Criterion) {
         // Now benchmark aggregation
         println!("Aggregating");
         let start = start_timer!(|| format!("Coord: aggregating {circ_params}"));
-        let agg_proof = process_stage1_resps(None, &circ_params, final_agg_state, agg_ck, stage1_resp);
+        let agg_proof =
+            process_stage1_resps(None, &circ_params, final_agg_state, agg_ck, stage1_resp);
         println!(
             "Agg proof size is {}B {circ_params}",
             agg_proof.uncompressed_size()

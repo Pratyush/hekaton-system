@@ -22,7 +22,7 @@ derivative = "2.2.0"
 
 [dependencies.ark-r1cs-std]
 git = "https://www.github.com/arkworks-rs/r1cs-std"
-branch = "refactor-uints"
+rev = "4020fbc"
 
 [dev-dependencies]
 ark-bls12-381 = "0.4"

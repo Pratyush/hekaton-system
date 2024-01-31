@@ -18,7 +18,7 @@ rayon = { version = "1.5.1", default-features = false, optional = true }
 
 [dev-dependencies]
 ark-bls12-381 = { path = "../bls12_381", features = [ "parallel" ] }
-ark-r1cs-std = {git = "https://github.com/arkworks-rs/r1cs-std", branch = "refactor-uints" }
+ark-r1cs-std = {git = "https://github.com/arkworks-rs/r1cs-std", rev = "4020fbc" }
 jemallocator = { version = "0.5" }
 
 
