@@ -55,6 +55,7 @@ fn fpvar_to_digest<F: PrimeField>(f: &FpVar<F>) -> Result<Vec<UInt8<F>>, Synthes
 }
 
 /// Takes a digest as public input to the circuit
+/// Hossein: why comment says public input, but we have FpVar::new_witness
 fn input_digest<F: PrimeField>(
     cs: ConstraintSystemRef<F>,
     digest: InnerHash,
