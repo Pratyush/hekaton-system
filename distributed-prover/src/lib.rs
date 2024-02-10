@@ -1,3 +1,5 @@
+extern crate core;
+
 use core::borrow::Borrow;
 
 use ark_ff::{BigInteger, PrimeField};
@@ -24,6 +26,7 @@ pub mod tree_hash_circuit;
 pub mod util;
 pub mod worker;
 mod sparse_tree;
+mod sparse_tree_constraints;
 
 use portal_manager::PortalManager;
 
