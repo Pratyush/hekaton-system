@@ -542,7 +542,7 @@ mod test {
 
     // Digests truncated to 31 bytes and stored as portal wires. When we get the portal wire, we
     // have to unpack back into bytes. This test checks that the structure is preserved
-    // preserves their structure.
+    // their structure.
     #[test]
     fn test_digest_fpvar_roundtrip() {
         let mut rng = test_rng();

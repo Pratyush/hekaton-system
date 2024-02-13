@@ -1,5 +1,4 @@
-
-use ark_relations::r1cs::{SynthesisError, Namespace};
+use ark_relations::r1cs::{SynthesisError, Namespace, ConstraintSystemRef};
 use ark_r1cs_std::{
     prelude::*,
     uint64::UInt64,
@@ -25,6 +24,9 @@ use crate::{
 };
 
 use std::{borrow::Borrow, marker::PhantomData};
+use ark_crypto_primitives::crh::{TwoToOneCRHScheme, TwoToOneCRHSchemeGadget};
+use ark_relations::ns;
+use ark_bls12_381::{Fq, Fr};
 use crate::sparse_tree::{InnerHash, MerkleDepth};
 use crate::tree_hash_circuit::digest_to_fpvar;
 
@@ -109,7 +111,6 @@ impl<P, ConstraintF> MerkleTreePathVar<P, ConstraintF>
         )?;
         root.conditional_enforce_equal(&computed_root, condition)
     }
-
 }
 
 pub fn hash_leaf_var<ConstraintF>(
@@ -133,22 +134,15 @@ pub fn hash_inner_node_var<ConstraintF>(
 {
     // Convert the hashes back into bytes and concat them
     let left_bytes = left
-        .0
+        .0.clone()
         .into_iter()
-        .flat_map(|byte| byte.to_bits_le().unwrap())
         .collect::<Vec<_>>();
     let right_bytes = right
-        .0
+        .0.clone()
         .into_iter()
-        .flat_map(|byte| byte.to_bits_le().unwrap())
         .collect::<Vec<_>>();
-    let contacted_bits = [left_bytes, right_bytes].concat();
-    let contacted_bytes = contacted_bits
-        .to_bits_le()?
-        .chunks(8)
-        .map(UInt8::from_bits_le)
-        .collect::<Vec<_>>();
-    let mut digest = DigestVar(contacted_bytes);
+    let contacted = [left_bytes, right_bytes].concat();
+    let mut digest = DigestVar(contacted);
     Ok(Sha256Gadget::digest(&digest.0)?)
 }
 
@@ -161,19 +155,20 @@ for MerkleTreePathVar<P, ConstraintF>
     fn new_variable<T: Borrow<MerkleTreePath<P>>>(
         cs: impl Into<Namespace<ConstraintF>>,
         f: impl FnOnce() -> Result<T, SynthesisError>,
-        mode: AllocationMode
+        mode: AllocationMode,
     ) -> Result<Self, SynthesisError> {
+        let ns = cs.into();
         let f_out = f()?;
-        let path = Vec::<DigestVar<ConstraintF>>::new_variable(
-            cs,
-            || Ok(&f_out.borrow().path[..]),
-            mode,
-        )?;
-        Ok(MerkleTreePathVar{
-            path,
+        let cs = ns.cs();
+        let mut res = Vec::new();
+        for (i, _) in f_out.borrow().path.iter().enumerate() {
+            res.push(DigestVar::new_variable(cs.clone(), || Ok(f_out.borrow().path[i].to_vec()), mode).unwrap());
+        }
+        Ok(MerkleTreePathVar {
+            path: res,
             _parameters: PhantomData,
         })
-}
+    }
 }
 
 #[cfg(test)]
@@ -183,8 +178,8 @@ mod tests {
         sparse_tree::*,
     };
     use ark_relations::r1cs::ConstraintSystem;
-    use rand::{rngs::StdRng, SeedableRng};
-    use ark_bls12_381::Fq;
+    use rand::{Rng, rngs::StdRng, SeedableRng};
+    use ark_bls12_381::{Fq, Fr};
 
     #[derive(Clone)]
     pub struct MerkleTreeTestParameters;
@@ -221,25 +216,25 @@ mod tests {
 
         // Allocate root
         let root_var = DigestVar::new_input(
-            ark_relations::ns!(cs, "root"),
-            || Ok(tree.root.clone()),
+            ns!(cs, "root"),
+            || Ok(tree.root.to_vec()),
         ).unwrap();
 
         // Allocate leaf
         let leaf_var = Vec::<UInt8<Fq>>::new_witness(
-            ark_relations::ns!(cs, "leaf"),
+            ns!(cs, "leaf"),
             || Ok([1_u8; 16]),
         ).unwrap();
 
         // Allocate leaf
         let index_var = UInt64::<Fq>::new_witness(
-            ark_relations::ns!(cs, "index"),
+            ns!(cs, "index"),
             || Ok(177),
         ).unwrap();
 
         // Allocate path
         let path_var = MerkleTreePathVar::<MerkleTreeTestParameters, Fq>::new_witness(
-            ark_relations::ns!(cs, "path"),
+            ns!(cs, "path"),
             || Ok(path),
         )
             .unwrap();
@@ -255,46 +250,37 @@ mod tests {
 
         assert!(cs.is_satisfied().unwrap());
     }
-}
-/*
+
     #[test]
     fn poseidon_valid_path_constraints_test() {
-        let mut rng = StdRng::seed_from_u64(0u64);
-        let crh_parameters = PH::setup(&mut rng).unwrap();
-        let mut tree = PoseidonTestMerkleTree::new(&[0u8; 16], &crh_parameters).unwrap();
+        let mut tree = TestMerkleTree::new(&[0u8; 16], &()).unwrap();
         tree.update(177, &[1_u8; 16]).unwrap();
         let path = tree.lookup(177).unwrap();
 
         let cs = ConstraintSystem::<Fq>::new_ref();
 
-        // Allocate hash parameters
-        let crh_parameters_var = <PHG as FixedLengthCRHGadget<PH, Fq>>::ParametersVar::new_constant(
-            ark_relations::ns!(cs, "parameters"),
-            &crh_parameters,
-        )
-            .unwrap();
 
         // Allocate root
-        let root_var = <PHG as FixedLengthCRHGadget<PH, Fq>>::OutputVar::new_input(
-            ark_relations::ns!(cs, "root"),
-            || Ok(tree.root.clone()),
+        let root_var = DigestVar::new_input(
+            ns!(cs, "root"),
+            || Ok(tree.root.to_vec()),
         ).unwrap();
 
         // Allocate leaf
         let leaf_var = Vec::<UInt8<Fq>>::new_witness(
-            ark_relations::ns!(cs, "leaf"),
+            ns!(cs, "leaf"),
             || Ok([1_u8; 16]),
         ).unwrap();
 
         // Allocate leaf
         let index_var = UInt64::<Fq>::new_witness(
-            ark_relations::ns!(cs, "index"),
+            ns!(cs, "index"),
             || Ok(177),
         ).unwrap();
 
         // Allocate path
-        let path_var = MerkleTreePathVar::<PoseidonMerkleTreeTestParameters, PHG, Fq>::new_witness(
-            ark_relations::ns!(cs, "path"),
+        let path_var = MerkleTreePathVar::new_witness(
+            ns!(cs, "path"),
             || Ok(path),
         )
             .unwrap();
@@ -304,7 +290,7 @@ mod tests {
                 &root_var,
                 &leaf_var,
                 &index_var,
-                &crh_parameters_var,
+                &(),
             )
             .unwrap();
 
@@ -313,31 +299,22 @@ mod tests {
 
     #[test]
     fn invalid_root_path_constraints_test() {
-        let mut rng = StdRng::seed_from_u64(0u64);
-        let crh_parameters = H::setup(&mut rng).unwrap();
-        let mut tree = TestMerkleTree::new(&[0u8; 16], &crh_parameters).unwrap();
+        let mut tree = TestMerkleTree::new(&[0u8; 16], &()).unwrap();
         tree.update(177, &[1_u8; 16]).unwrap();
         let path = tree.lookup(177).unwrap();
 
         let cs = ConstraintSystem::<Fq>::new_ref();
 
-        // Allocate hash parameters
-        let crh_parameters_var = <HG as FixedLengthCRHGadget<H, Fq>>::ParametersVar::new_constant(
-            ark_relations::ns!(cs, "parameters"),
-            &crh_parameters,
-        )
-            .unwrap();
-
         // Allocate root
-        let root_var = <HG as FixedLengthCRHGadget<H, Fq>>::OutputVar::new_input(
-            ark_relations::ns!(cs, "root"),
-            || Ok(<H as FixedLengthCRH>::Output::default()),
+        let root_var = DigestVar::new_input(
+            ns!(cs, "root"),
+            || Ok(InnerHash::default().to_vec()),
         ).unwrap();
 
         // Allocate leaf
         let leaf_var = Vec::<UInt8<Fq>>::new_witness(
-            ark_relations::ns!(cs, "leaf"),
-            || Ok([1_u8; 16]),
+            ns!(cs, "leaf"),
+            || Ok([1_u8; 16].to_vec()),
         ).unwrap();
 
         // Allocate leaf
@@ -347,8 +324,8 @@ mod tests {
         ).unwrap();
 
         // Allocate path
-        let path_var = MerkleTreePathVar::<MerkleTreeTestParameters, HG, Fq>::new_witness(
-            ark_relations::ns!(cs, "path"),
+        let path_var = MerkleTreePathVar::new_witness(
+            ns!(cs, "path"),
             || Ok(path),
         )
             .unwrap();
@@ -358,7 +335,7 @@ mod tests {
                 &root_var,
                 &leaf_var,
                 &index_var,
-                &crh_parameters_var,
+                &(),
             )
             .unwrap();
 
@@ -367,42 +344,33 @@ mod tests {
 
     #[test]
     fn invalid_leaf_path_constraints_test() {
-        let mut rng = StdRng::seed_from_u64(0u64);
-        let crh_parameters = H::setup(&mut rng).unwrap();
-        let mut tree = TestMerkleTree::new(&[0u8; 16], &crh_parameters).unwrap();
+        let mut tree = TestMerkleTree::new(&[0u8; 16], &()).unwrap();
         tree.update(177, &[1_u8; 16]).unwrap();
         let path = tree.lookup(177).unwrap();
 
         let cs = ConstraintSystem::<Fq>::new_ref();
 
-        // Allocate hash parameters
-        let crh_parameters_var = <HG as FixedLengthCRHGadget<H, Fq>>::ParametersVar::new_constant(
-            ark_relations::ns!(cs, "parameters"),
-            &crh_parameters,
-        )
-            .unwrap();
-
         // Allocate root
-        let root_var = <HG as FixedLengthCRHGadget<H, Fq>>::OutputVar::new_input(
-            ark_relations::ns!(cs, "root"),
-            || Ok(tree.root.clone()),
+        let root_var = DigestVar::new_input(
+            ns!(cs, "root"),
+            || Ok(tree.root.to_vec()),
         ).unwrap();
 
         // Allocate leaf
         let leaf_var = Vec::<UInt8<Fq>>::new_witness(
-            ark_relations::ns!(cs, "leaf"),
+            ns!(cs, "leaf"),
             || Ok([2_u8; 16]),
         ).unwrap();
 
         // Allocate leaf
         let index_var = UInt64::<Fq>::new_witness(
-            ark_relations::ns!(cs, "index"),
+            ns!(cs, "index"),
             || Ok(177),
         ).unwrap();
 
         // Allocate path
-        let path_var = MerkleTreePathVar::<MerkleTreeTestParameters, HG, Fq>::new_witness(
-            ark_relations::ns!(cs, "path"),
+        let path_var = MerkleTreePathVar::new_witness(
+            ns!(cs, "path"),
             || Ok(path),
         )
             .unwrap();
@@ -412,7 +380,7 @@ mod tests {
                 &root_var,
                 &leaf_var,
                 &index_var,
-                &crh_parameters_var,
+                &(),
             )
             .unwrap();
 
@@ -421,42 +389,33 @@ mod tests {
 
     #[test]
     fn invalid_index_path_constraints_test() {
-        let mut rng = StdRng::seed_from_u64(0u64);
-        let crh_parameters = H::setup(&mut rng).unwrap();
-        let mut tree = TestMerkleTree::new(&[0u8; 16], &crh_parameters).unwrap();
+        let mut tree = TestMerkleTree::new(&[0u8; 16], &()).unwrap();
         tree.update(177, &[1_u8; 16]).unwrap();
         let path = tree.lookup(177).unwrap();
 
         let cs = ConstraintSystem::<Fq>::new_ref();
 
-        // Allocate hash parameters
-        let crh_parameters_var = <HG as FixedLengthCRHGadget<H, Fq>>::ParametersVar::new_constant(
-            ark_relations::ns!(cs, "parameters"),
-            &crh_parameters,
-        )
-            .unwrap();
-
         // Allocate root
-        let root_var = <HG as FixedLengthCRHGadget<H, Fq>>::OutputVar::new_input(
-            ark_relations::ns!(cs, "root"),
-            || Ok(tree.root.clone()),
+        let root_var = DigestVar::new_input(
+            ns!(cs, "root"),
+            || Ok(tree.root.to_vec()),
         ).unwrap();
 
         // Allocate leaf
         let leaf_var = Vec::<UInt8<Fq>>::new_witness(
-            ark_relations::ns!(cs, "leaf"),
+            ns!(cs, "leaf"),
             || Ok([1_u8; 16]),
         ).unwrap();
 
         // Allocate leaf
         let index_var = UInt64::<Fq>::new_witness(
-            ark_relations::ns!(cs, "index"),
+            ns!(cs, "index"),
             || Ok(176),
         ).unwrap();
 
         // Allocate path
-        let path_var = MerkleTreePathVar::<MerkleTreeTestParameters, HG, Fq>::new_witness(
-            ark_relations::ns!(cs, "path"),
+        let path_var = MerkleTreePathVar::new_witness(
+            ns!(cs, "path"),
             || Ok(path),
         )
             .unwrap();
@@ -466,11 +425,10 @@ mod tests {
                 &root_var,
                 &leaf_var,
                 &index_var,
-                &crh_parameters_var,
+                &(),
             )
             .unwrap();
 
         assert!(!cs.is_satisfied().unwrap());
     }
-
- */
+}

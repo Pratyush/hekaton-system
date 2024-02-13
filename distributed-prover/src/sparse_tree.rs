@@ -189,6 +189,7 @@ pub fn hash_leaf(
     // defining binding is needed because of the Rust's crap
     let binding = Sha256::digest(&digest);
     digest = &*binding;
+
     Ok(InnerHash::try_from(digest).unwrap())
 }
 
