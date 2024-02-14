@@ -140,7 +140,7 @@ mod tests {
     use rand::random;
     use crate::CircuitWithPortals;
     use crate::sparse_tree::{MerkleDepth, MerkleTreeParameters};
-    use crate::vkd::{VerifiableKeyDirectoryCircuit, VerifiableKeyDirectoryCircuitParams};
+    use crate::verifiable_key_directory::{VerifiableKeyDirectoryCircuit, VerifiableKeyDirectoryCircuitParams};
 
     #[test]
     fn test_vkd_circuit() {

@@ -27,7 +27,7 @@ pub mod util;
 pub mod worker;
 mod sparse_tree;
 mod sparse_tree_constraints;
-mod vkd;
+mod verifiable_key_directory;
 
 use portal_manager::PortalManager;
 
