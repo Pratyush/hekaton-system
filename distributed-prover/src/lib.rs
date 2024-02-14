@@ -27,6 +27,7 @@ pub mod util;
 pub mod worker;
 mod sparse_tree;
 mod sparse_tree_constraints;
+mod vkd;
 
 use portal_manager::PortalManager;
 

@@ -33,6 +33,7 @@ pub trait MerkleTreeParameters {
     }
 }
 
+#[derive(Clone)]
 pub struct SparseMerkleTree<P: MerkleTreeParameters> {
     tree: HashMap<(MerkleDepth, MerkleIndex), InnerHash>,
     pub root: InnerHash,
