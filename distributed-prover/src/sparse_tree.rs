@@ -12,6 +12,7 @@ use ark_crypto_primitives::crh::sha256::{
 };
 use ark_crypto_primitives::crh::TwoToOneCRHScheme;
 use ark_crypto_primitives::Error;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
 // Most of the code is borrowed from https://github.com/nirvantyagi/versa/blob/master/crypto_primitives/src/sparse_merkle_tree/mod.rs
 // We don't use Pederson instead we use SHA256
@@ -35,16 +36,18 @@ pub trait MerkleTreeParameters {
 
 #[derive(Clone)]
 pub struct SparseMerkleTree<P: MerkleTreeParameters> {
-    tree: HashMap<(MerkleDepth, MerkleIndex), InnerHash>,
+    pub(crate) tree: HashMap<(MerkleDepth, MerkleIndex), InnerHash>,
     pub root: InnerHash,
-    sparse_initial_hashes: Vec<InnerHash>,
+    pub(crate) sparse_initial_hashes: Vec<InnerHash>,
     pub hash_parameters: (),
     _parameters: PhantomData<P>,
 }
 
+#[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct MerkleTreePath<P: MerkleTreeParameters> {
     pub path: Vec<InnerHash>,
-    pub _parameters: PhantomData<P>,
+    // pretty smart to avoid multi-thread problems ==> https://stackoverflow.com/questions/50200197/how-do-i-share-a-struct-containing-a-phantom-pointer-among-threads
+    pub _parameters: PhantomData<fn() -> P>,
 }
 
 impl<P: MerkleTreeParameters> Clone for MerkleTreePath<P> {
@@ -64,6 +67,13 @@ impl<P: MerkleTreeParameters> Default for MerkleTreePath<P> {
         }
     }
 }
+
+impl<P: MerkleTreeParameters> Default for SparseMerkleTree<P> {
+    fn default() -> Self {
+        SparseMerkleTree::new(&[0u8; 16], &()).unwrap()
+    }
+}
+
 
 impl<P: MerkleTreeParameters> SparseMerkleTree<P> {
     pub fn new(
@@ -142,6 +152,10 @@ impl<P: MerkleTreeParameters> SparseMerkleTree<P> {
             path,
             _parameters: PhantomData,
         })
+    }
+
+    pub fn get_root(&self) -> Result<InnerHash, Error> {
+        Ok(self.root)
     }
 }
 
@@ -256,7 +270,7 @@ mod tests {
 
     #[test]
     fn update_and_verify_test() {
-        let mut rng = StdRng::seed_from_u64(0u64);
+        let rng = StdRng::seed_from_u64(0u64);
         let mut tree = TestMerkleTree::new(&[0u8; 16], &()).unwrap();
         let proof_0 = tree.lookup(0).unwrap();
         let proof_177 = tree.lookup(177).unwrap();

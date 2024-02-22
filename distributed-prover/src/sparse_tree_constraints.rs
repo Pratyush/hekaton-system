@@ -28,7 +28,6 @@ use ark_crypto_primitives::crh::{TwoToOneCRHScheme, TwoToOneCRHSchemeGadget};
 use ark_relations::ns;
 use ark_bls12_381::{Fq, Fr};
 use crate::sparse_tree::{InnerHash, MerkleDepth};
-use crate::tree_hash_circuit::digest_to_fpvar;
 
 #[derive(Clone)]
 pub struct MerkleTreePathVar<P, ConstraintF>
@@ -226,7 +225,7 @@ mod tests {
             || Ok([1_u8; 16]),
         ).unwrap();
 
-        // Allocate leaf
+        // Allocate index
         let index_var = UInt64::<Fq>::new_witness(
             ns!(cs, "index"),
             || Ok(177),
