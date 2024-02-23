@@ -36,20 +36,20 @@ pub struct VerifiableKeyDirectoryCircuit<P: MerkleTreeParameters> {
     pub(crate) initial_root: InnerHash,
     pub(crate) params: VerifiableKeyDirectoryCircuitParams,
     pub(crate) final_root: InnerHash,
-    pub(crate) update: Update<P>,
+    pub(crate) update: VkdUpdate<P>,
 }
 
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
-pub struct Update<P: MerkleTreeParameters> {
+pub struct VkdUpdate<P: MerkleTreeParameters> {
     pub(crate) merkle_index: MerkleIndex,
     pub(crate) initial_leaf: [u8; 32],
     pub(crate) final_leaf: [u8; 32],
     pub(crate) path: MerkleTreePath<P>,
 }
 
-impl<P: MerkleTreeParameters> Default for Update<P> {
+impl<P: MerkleTreeParameters> Default for VkdUpdate<P> {
     fn default() -> Self {
-        Update {
+        VkdUpdate {
             merkle_index: MerkleIndex::default(),
             initial_leaf: InnerHash::default(),
             final_leaf: InnerHash::default(),
@@ -101,7 +101,7 @@ impl<P: MerkleTreeParameters> VerifiableKeyDirectoryCircuit<P> {
             initial_root,
             params: params.clone(),
             final_root: tree.get_root()?,
-            update: Update {
+            update: VkdUpdate {
                 merkle_index: 177,
                 initial_leaf,
                 final_leaf,
@@ -156,7 +156,7 @@ impl<F: PrimeField, Params: MerkleTreeParameters> CircuitWithPortals<F>
             initial_root: InnerHash::default(),
             params,
             final_root: InnerHash::default(),
-            update: Update::default(),
+            update: VkdUpdate::default(),
         }
     }
 
@@ -169,7 +169,7 @@ impl<F: PrimeField, Params: MerkleTreeParameters> CircuitWithPortals<F>
 
     fn set_serialized_witnesses(&mut self, subcircuit_idx: usize, bytes: &[u8]) {
         // simply deserialize bytes into the vector of updates for the VKD instance
-        let update = Update::deserialize_uncompressed_unchecked(bytes).unwrap();
+        let update = VkdUpdate::deserialize_uncompressed_unchecked(bytes).unwrap();
         self.update = update;
     }
 
