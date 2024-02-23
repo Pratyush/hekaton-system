@@ -1,32 +1,33 @@
-use std::fmt::Display;
-use crate::{portal_manager::{PortalManager, SetupPortalManager}, util::log2, CircuitWithPortals, RomTranscriptEntry, sparse_tree};
-
-use ark_crypto_primitives::crh::sha256::{
-    digest::Digest,
+use crate::{
+    portal_manager::{PortalManager, SetupPortalManager},
+    sparse_tree,
+    util::log2,
+    CircuitWithPortals, RomTranscriptEntry,
 };
+use std::fmt::Display;
+
+use crate::sparse_tree::{
+    InnerHash, MerkleDepth, MerkleIndex, MerkleTreeParameters, MerkleTreePath, SparseMerkleTree,
+};
+use crate::sparse_tree_constraints::MerkleTreePathVar;
+use crate::tree_hash_circuit::{digest_to_fpvar, left_child, right_child};
 use ark_crypto_primitives::crh::sha256::constraints::DigestVar;
+use ark_crypto_primitives::crh::sha256::digest::Digest;
 use ark_crypto_primitives::Error;
 use ark_ff::PrimeField;
-use ark_r1cs_std::R1CSVar;
-use ark_r1cs_std::{
-    alloc::AllocVar,
-    bits::{ToBitsGadget},
-    eq::EqGadget,
-};
 use ark_r1cs_std::fields::fp::FpVar;
 use ark_r1cs_std::prelude::UInt8;
 use ark_r1cs_std::uint64::UInt64;
+use ark_r1cs_std::R1CSVar;
+use ark_r1cs_std::{alloc::AllocVar, bits::ToBitsGadget, eq::EqGadget};
+use ark_relations::r1cs::ConstraintSystem;
 use ark_relations::{
     ns,
     r1cs::{ConstraintSystemRef, SynthesisError},
 };
-use ark_relations::r1cs::ConstraintSystem;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rand::{random, Rng};
 use sha2::Sha256;
-use crate::sparse_tree::{InnerHash, MerkleDepth, MerkleIndex, MerkleTreeParameters, MerkleTreePath, SparseMerkleTree};
-use crate::sparse_tree_constraints::MerkleTreePathVar;
-use crate::tree_hash_circuit::{digest_to_fpvar, left_child, right_child};
 
 // Very high-level it seems VerifiableKeyDirectoryCircuit takes arguments for an initial root and final root and one update
 // It checks that the updates actually end us up with that final tree
@@ -67,9 +68,7 @@ pub struct VerifiableKeyDirectoryCircuitParams {
     pub(crate) num_portals_per_subcircuit: usize,
     /// Tree depth
     pub(crate) depth: MerkleDepth,
-
 }
-
 
 impl Display for VerifiableKeyDirectoryCircuitParams {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
@@ -115,14 +114,26 @@ impl<P: MerkleTreeParameters> VerifiableKeyDirectoryCircuit<P> {
         let update = &self.update;
         let initial_root = self.initial_root;
         let final_root = self.final_root;
-        let con1 = update.path.verify(&initial_root, &update.initial_leaf, update.merkle_index, &()).expect("TODO: panic message");
-        let con2 = update.path.verify(&final_root, &update.final_leaf, update.merkle_index, &()).expect("TODO: panic message");
+        let con1 = update
+            .path
+            .verify(
+                &initial_root,
+                &update.initial_leaf,
+                update.merkle_index,
+                &(),
+            )
+            .expect("TODO: panic message");
+        let con2 = update
+            .path
+            .verify(&final_root, &update.final_leaf, update.merkle_index, &())
+            .expect("TODO: panic message");
         con1 & con2
     }
 }
 
-
-impl<F: PrimeField, Params: MerkleTreeParameters> CircuitWithPortals<F> for VerifiableKeyDirectoryCircuit<Params> {
+impl<F: PrimeField, Params: MerkleTreeParameters> CircuitWithPortals<F>
+    for VerifiableKeyDirectoryCircuit<Params>
+{
     type Parameters = VerifiableKeyDirectoryCircuitParams;
 
     fn get_params(&self) -> VerifiableKeyDirectoryCircuitParams {
@@ -172,53 +183,34 @@ impl<F: PrimeField, Params: MerkleTreeParameters> CircuitWithPortals<F> for Veri
         let starting_num_constraints = cs.num_constraints();
 
         // add initial root and final root as public inputs
-        let initial_root_var = DigestVar::new_input(
-            ns!(cs, "root"),
-            || Ok(self.initial_root.to_vec()),
-        ).unwrap();
-        let final_root_var = DigestVar::new_input(
-            ns!(cs, "root"),
-            || Ok(self.final_root.to_vec()),
-        ).unwrap();
-
+        let initial_root_var =
+            DigestVar::new_input(ns!(cs, "root"), || Ok(self.initial_root.to_vec())).unwrap();
+        let final_root_var =
+            DigestVar::new_input(ns!(cs, "root"), || Ok(self.final_root.to_vec())).unwrap();
 
         // add path as private input
-        let path_var = MerkleTreePathVar::<Params, F>::new_witness(
-            ns!(cs, "path"),
-            || Ok(&self.update.path),
-        ).unwrap();
+        let path_var =
+            MerkleTreePathVar::<Params, F>::new_witness(ns!(cs, "path"), || Ok(&self.update.path))
+                .unwrap();
 
         // add initial leaf and final leaf as private input
-        let initial_leaf_var = Vec::<UInt8<F>>::new_witness(
-            ns!(cs, "leaf"),
-            || Ok(self.update.initial_leaf),
-        ).unwrap();
-        let final_leaf_var = Vec::<UInt8<F>>::new_witness(
-            ns!(cs, "leaf"),
-            || Ok(self.update.final_leaf),
-        ).unwrap();
+        let initial_leaf_var =
+            Vec::<UInt8<F>>::new_witness(ns!(cs, "leaf"), || Ok(self.update.initial_leaf)).unwrap();
+        let final_leaf_var =
+            Vec::<UInt8<F>>::new_witness(ns!(cs, "leaf"), || Ok(self.update.final_leaf)).unwrap();
 
         // add merkle index as private input
-        let index_var = UInt64::<F>::new_witness(
-            ns!(cs, "index"),
-            || Ok(self.update.merkle_index),
-        ).unwrap();
+        let index_var =
+            UInt64::<F>::new_witness(ns!(cs, "index"), || Ok(self.update.merkle_index)).unwrap();
 
         // initial path is valid
-        path_var.check_path(
-            &initial_root_var,
-            &initial_leaf_var,
-            &index_var,
-            &(),
-        ).unwrap();
+        path_var
+            .check_path(&initial_root_var, &initial_leaf_var, &index_var, &())
+            .unwrap();
         // final path is valid
-        path_var.check_path(
-            &final_root_var,
-            &final_leaf_var,
-            &index_var,
-            &(),
-        ).unwrap();
-
+        path_var
+            .check_path(&final_root_var, &final_leaf_var, &index_var, &())
+            .unwrap();
 
         // Print out how big this circuit was
         let ending_num_constraints = cs.num_constraints();
@@ -231,16 +223,17 @@ impl<F: PrimeField, Params: MerkleTreeParameters> CircuitWithPortals<F> for Veri
     }
 }
 
-
 #[cfg(test)]
 mod tests {
-    use ark_relations::r1cs::{ConstraintSystem, ConstraintSystemRef};
-    use ark_bls12_381::{Fq, Fr};
-    use crate::CircuitWithPortals;
     use crate::portal_manager::SetupPortalManager;
     use crate::sparse_tree::{MerkleDepth, MerkleTreeParameters};
     use crate::tree_hash_circuit::MerkleTreeCircuit;
-    use crate::verifiable_key_directory::{VerifiableKeyDirectoryCircuit, VerifiableKeyDirectoryCircuitParams};
+    use crate::verifiable_key_directory::{
+        VerifiableKeyDirectoryCircuit, VerifiableKeyDirectoryCircuitParams,
+    };
+    use crate::CircuitWithPortals;
+    use ark_bls12_381::{Fq, Fr};
+    use ark_relations::r1cs::{ConstraintSystem, ConstraintSystemRef};
 
     #[test]
     fn test_vkd_circuit() {
@@ -256,7 +249,8 @@ mod tests {
             num_portals_per_subcircuit: 1,
             depth: 63,
         };
-        let vkd: VerifiableKeyDirectoryCircuit<MerkleTreeTestParameters> = VerifiableKeyDirectoryCircuit::rand(&vkd_params).unwrap();
+        let vkd: VerifiableKeyDirectoryCircuit<MerkleTreeTestParameters> =
+            VerifiableKeyDirectoryCircuit::rand(&vkd_params).unwrap();
         assert!(vkd.verify());
     }
 
@@ -276,7 +270,8 @@ mod tests {
         };
 
         // Make a random VKD
-        let mut vkd: VerifiableKeyDirectoryCircuit<MerkleTreeTestParameters> = VerifiableKeyDirectoryCircuit::rand(&vkd_params).unwrap();
+        let mut vkd: VerifiableKeyDirectoryCircuit<MerkleTreeTestParameters> =
+            VerifiableKeyDirectoryCircuit::rand(&vkd_params).unwrap();
 
         // Make a fresh portal manager
         let cs = ConstraintSystem::<Fq>::new_ref();
@@ -294,6 +289,3 @@ mod tests {
         assert!(cs.is_satisfied().unwrap());
     }
 }
-
-
-

@@ -21,13 +21,13 @@ pub mod eval_tree;
 pub mod pairing_ops;
 pub mod portal_manager;
 pub mod poseidon_util;
+mod sparse_tree;
+mod sparse_tree_constraints;
 pub mod subcircuit_circuit;
 pub mod tree_hash_circuit;
 pub mod util;
-pub mod worker;
-mod sparse_tree;
-mod sparse_tree_constraints;
 mod verifiable_key_directory;
+pub mod worker;
 
 use portal_manager::PortalManager;
 

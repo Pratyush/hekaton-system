@@ -1,8 +1,5 @@
-use ark_relations::r1cs::{SynthesisError, Namespace, ConstraintSystemRef};
-use ark_r1cs_std::{
-    prelude::*,
-    uint64::UInt64,
-};
+use ark_r1cs_std::{prelude::*, uint64::UInt64};
+use ark_relations::r1cs::{ConstraintSystemRef, Namespace, SynthesisError};
 
 use ark_crypto_primitives::crh::sha256::{
     constraints::{DigestVar, Sha256Gadget},
@@ -18,31 +15,28 @@ use ark_r1cs_std::{
     fields::fp::FpVar,
 };
 
+use crate::sparse_tree::{MerkleTreeParameters, MerkleTreePath};
 
-use crate::{
-    sparse_tree::{MerkleTreeParameters, MerkleTreePath},
-};
-
-use std::{borrow::Borrow, marker::PhantomData};
+use crate::sparse_tree::{InnerHash, MerkleDepth};
+use ark_bls12_381::{Fq, Fr};
 use ark_crypto_primitives::crh::{TwoToOneCRHScheme, TwoToOneCRHSchemeGadget};
 use ark_relations::ns;
-use ark_bls12_381::{Fq, Fr};
-use crate::sparse_tree::{InnerHash, MerkleDepth};
+use std::{borrow::Borrow, marker::PhantomData};
 
 #[derive(Clone)]
 pub struct MerkleTreePathVar<P, ConstraintF>
-    where
-        P: MerkleTreeParameters,
-        ConstraintF: PrimeField,
+where
+    P: MerkleTreeParameters,
+    ConstraintF: PrimeField,
 {
     path: Vec<DigestVar<ConstraintF>>,
     _parameters: PhantomData<P>,
 }
 
 impl<P, ConstraintF> MerkleTreePathVar<P, ConstraintF>
-    where
-        P: MerkleTreeParameters,
-        ConstraintF: PrimeField,
+where
+    P: MerkleTreeParameters,
+    ConstraintF: PrimeField,
 {
     pub fn compute_root_var(
         &self,
@@ -50,31 +44,16 @@ impl<P, ConstraintF> MerkleTreePathVar<P, ConstraintF>
         index: &UInt64<ConstraintF>,
         hash_parameters: &(),
     ) -> Result<DigestVar<ConstraintF>, SynthesisError> {
-        let mut current_hash = hash_leaf_var::<ConstraintF>(
-            hash_parameters,
-            leaf,
-        )?;
+        let mut current_hash = hash_leaf_var::<ConstraintF>(hash_parameters, leaf)?;
         for (i, b) in index
             .to_bits_le()
             .iter()
             .take(P::DEPTH as usize)
             .enumerate()
         {
-            let lc = DigestVar::conditionally_select(
-                b,
-                &self.path[i],
-                &current_hash,
-            )?;
-            let rc = DigestVar::conditionally_select(
-                b,
-                &current_hash,
-                &self.path[i],
-            )?;
-            current_hash = hash_inner_node_var::<ConstraintF>(
-                hash_parameters,
-                &lc,
-                &rc,
-            )?;
+            let lc = DigestVar::conditionally_select(b, &self.path[i], &current_hash)?;
+            let rc = DigestVar::conditionally_select(b, &current_hash, &self.path[i])?;
+            current_hash = hash_inner_node_var::<ConstraintF>(hash_parameters, &lc, &rc)?;
         }
         Ok(current_hash)
     }
@@ -86,13 +65,7 @@ impl<P, ConstraintF> MerkleTreePathVar<P, ConstraintF>
         index: &UInt64<ConstraintF>,
         hash_parameters: &(),
     ) -> Result<(), SynthesisError> {
-        self.conditional_check_path(
-            root,
-            leaf,
-            index,
-            hash_parameters,
-            &Boolean::constant(true),
-        )
+        self.conditional_check_path(root, leaf, index, hash_parameters, &Boolean::constant(true))
     }
 
     pub fn conditional_check_path(
@@ -103,11 +76,7 @@ impl<P, ConstraintF> MerkleTreePathVar<P, ConstraintF>
         hash_parameters: &(),
         condition: &Boolean<ConstraintF>,
     ) -> Result<(), SynthesisError> {
-        let computed_root = self.compute_root_var(
-            leaf,
-            index,
-            hash_parameters,
-        )?;
+        let computed_root = self.compute_root_var(leaf, index, hash_parameters)?;
         root.conditional_enforce_equal(&computed_root, condition)
     }
 }
@@ -116,8 +85,8 @@ pub fn hash_leaf_var<ConstraintF>(
     parameters: &(),
     leaf: &Vec<UInt8<ConstraintF>>,
 ) -> Result<DigestVar<ConstraintF>, SynthesisError>
-    where
-        ConstraintF: PrimeField,
+where
+    ConstraintF: PrimeField,
 {
     let mut digest = DigestVar(leaf.to_vec());
     Ok(Sha256Gadget::digest(&digest.0)?)
@@ -128,28 +97,21 @@ pub fn hash_inner_node_var<ConstraintF>(
     left: &DigestVar<ConstraintF>,
     right: &DigestVar<ConstraintF>,
 ) -> Result<DigestVar<ConstraintF>, SynthesisError>
-    where
-        ConstraintF: PrimeField,
+where
+    ConstraintF: PrimeField,
 {
     // Convert the hashes back into bytes and concat them
-    let left_bytes = left
-        .0.clone()
-        .into_iter()
-        .collect::<Vec<_>>();
-    let right_bytes = right
-        .0.clone()
-        .into_iter()
-        .collect::<Vec<_>>();
+    let left_bytes = left.0.clone().into_iter().collect::<Vec<_>>();
+    let right_bytes = right.0.clone().into_iter().collect::<Vec<_>>();
     let contacted = [left_bytes, right_bytes].concat();
     let mut digest = DigestVar(contacted);
     Ok(Sha256Gadget::digest(&digest.0)?)
 }
 
-impl<P, ConstraintF> AllocVar<MerkleTreePath<P>, ConstraintF>
-for MerkleTreePathVar<P, ConstraintF>
-    where
-        P: MerkleTreeParameters,
-        ConstraintF: PrimeField,
+impl<P, ConstraintF> AllocVar<MerkleTreePath<P>, ConstraintF> for MerkleTreePathVar<P, ConstraintF>
+where
+    P: MerkleTreeParameters,
+    ConstraintF: PrimeField,
 {
     fn new_variable<T: Borrow<MerkleTreePath<P>>>(
         cs: impl Into<Namespace<ConstraintF>>,
@@ -161,7 +123,10 @@ for MerkleTreePathVar<P, ConstraintF>
         let cs = ns.cs();
         let mut res = Vec::new();
         for (i, _) in f_out.borrow().path.iter().enumerate() {
-            res.push(DigestVar::new_variable(cs.clone(), || Ok(f_out.borrow().path[i].to_vec()), mode).unwrap());
+            res.push(
+                DigestVar::new_variable(cs.clone(), || Ok(f_out.borrow().path[i].to_vec()), mode)
+                    .unwrap(),
+            );
         }
         Ok(MerkleTreePathVar {
             path: res,
@@ -173,12 +138,10 @@ for MerkleTreePathVar<P, ConstraintF>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        sparse_tree::*,
-    };
-    use ark_relations::r1cs::ConstraintSystem;
-    use rand::{Rng, rngs::StdRng, SeedableRng};
+    use crate::sparse_tree::*;
     use ark_bls12_381::{Fq, Fr};
+    use ark_relations::r1cs::ConstraintSystem;
+    use rand::{rngs::StdRng, Rng, SeedableRng};
 
     #[derive(Clone)]
     pub struct MerkleTreeTestParameters;
@@ -199,7 +162,6 @@ mod tests {
 
     type PoseidonTestMerkleTree = SparseMerkleTree<PoseidonMerkleTreeTestParameters>;
 
-
     #[test]
     fn valid_path_constraints_test() {
         let mut rng = StdRng::seed_from_u64(0u64);
@@ -214,37 +176,23 @@ mod tests {
         let crh_parameters_var = ();
 
         // Allocate root
-        let root_var = DigestVar::new_input(
-            ns!(cs, "root"),
-            || Ok(tree.root.to_vec()),
-        ).unwrap();
+        let root_var = DigestVar::new_input(ns!(cs, "root"), || Ok(tree.root.to_vec())).unwrap();
 
         // Allocate leaf
-        let leaf_var = Vec::<UInt8<Fq>>::new_witness(
-            ns!(cs, "leaf"),
-            || Ok([1_u8; 16]),
-        ).unwrap();
+        let leaf_var = Vec::<UInt8<Fq>>::new_witness(ns!(cs, "leaf"), || Ok([1_u8; 16])).unwrap();
 
         // Allocate index
-        let index_var = UInt64::<Fq>::new_witness(
-            ns!(cs, "index"),
-            || Ok(177),
-        ).unwrap();
+        let index_var = UInt64::<Fq>::new_witness(ns!(cs, "index"), || Ok(177)).unwrap();
 
         // Allocate path
-        let path_var = MerkleTreePathVar::<MerkleTreeTestParameters, Fq>::new_witness(
-            ns!(cs, "path"),
-            || Ok(path),
-        )
+        let path_var =
+            MerkleTreePathVar::<MerkleTreeTestParameters, Fq>::new_witness(ns!(cs, "path"), || {
+                Ok(path)
+            })
             .unwrap();
 
         path_var
-            .check_path(
-                &root_var,
-                &leaf_var,
-                &index_var,
-                &crh_parameters_var,
-            )
+            .check_path(&root_var, &leaf_var, &index_var, &crh_parameters_var)
             .unwrap();
 
         assert!(cs.is_satisfied().unwrap());
@@ -258,39 +206,20 @@ mod tests {
 
         let cs = ConstraintSystem::<Fq>::new_ref();
 
-
         // Allocate root
-        let root_var = DigestVar::new_input(
-            ns!(cs, "root"),
-            || Ok(tree.root.to_vec()),
-        ).unwrap();
+        let root_var = DigestVar::new_input(ns!(cs, "root"), || Ok(tree.root.to_vec())).unwrap();
 
         // Allocate leaf
-        let leaf_var = Vec::<UInt8<Fq>>::new_witness(
-            ns!(cs, "leaf"),
-            || Ok([1_u8; 16]),
-        ).unwrap();
+        let leaf_var = Vec::<UInt8<Fq>>::new_witness(ns!(cs, "leaf"), || Ok([1_u8; 16])).unwrap();
 
         // Allocate leaf
-        let index_var = UInt64::<Fq>::new_witness(
-            ns!(cs, "index"),
-            || Ok(177),
-        ).unwrap();
+        let index_var = UInt64::<Fq>::new_witness(ns!(cs, "index"), || Ok(177)).unwrap();
 
         // Allocate path
-        let path_var = MerkleTreePathVar::new_witness(
-            ns!(cs, "path"),
-            || Ok(path),
-        )
-            .unwrap();
+        let path_var = MerkleTreePathVar::new_witness(ns!(cs, "path"), || Ok(path)).unwrap();
 
         path_var
-            .check_path(
-                &root_var,
-                &leaf_var,
-                &index_var,
-                &(),
-            )
+            .check_path(&root_var, &leaf_var, &index_var, &())
             .unwrap();
 
         assert!(cs.is_satisfied().unwrap());
@@ -305,37 +234,22 @@ mod tests {
         let cs = ConstraintSystem::<Fq>::new_ref();
 
         // Allocate root
-        let root_var = DigestVar::new_input(
-            ns!(cs, "root"),
-            || Ok(InnerHash::default().to_vec()),
-        ).unwrap();
+        let root_var =
+            DigestVar::new_input(ns!(cs, "root"), || Ok(InnerHash::default().to_vec())).unwrap();
 
         // Allocate leaf
-        let leaf_var = Vec::<UInt8<Fq>>::new_witness(
-            ns!(cs, "leaf"),
-            || Ok([1_u8; 16].to_vec()),
-        ).unwrap();
+        let leaf_var =
+            Vec::<UInt8<Fq>>::new_witness(ns!(cs, "leaf"), || Ok([1_u8; 16].to_vec())).unwrap();
 
         // Allocate leaf
-        let index_var = UInt64::<Fq>::new_witness(
-            ark_relations::ns!(cs, "index"),
-            || Ok(177),
-        ).unwrap();
+        let index_var =
+            UInt64::<Fq>::new_witness(ark_relations::ns!(cs, "index"), || Ok(177)).unwrap();
 
         // Allocate path
-        let path_var = MerkleTreePathVar::new_witness(
-            ns!(cs, "path"),
-            || Ok(path),
-        )
-            .unwrap();
+        let path_var = MerkleTreePathVar::new_witness(ns!(cs, "path"), || Ok(path)).unwrap();
 
         path_var
-            .check_path(
-                &root_var,
-                &leaf_var,
-                &index_var,
-                &(),
-            )
+            .check_path(&root_var, &leaf_var, &index_var, &())
             .unwrap();
 
         assert!(!cs.is_satisfied().unwrap());
@@ -350,37 +264,19 @@ mod tests {
         let cs = ConstraintSystem::<Fq>::new_ref();
 
         // Allocate root
-        let root_var = DigestVar::new_input(
-            ns!(cs, "root"),
-            || Ok(tree.root.to_vec()),
-        ).unwrap();
+        let root_var = DigestVar::new_input(ns!(cs, "root"), || Ok(tree.root.to_vec())).unwrap();
 
         // Allocate leaf
-        let leaf_var = Vec::<UInt8<Fq>>::new_witness(
-            ns!(cs, "leaf"),
-            || Ok([2_u8; 16]),
-        ).unwrap();
+        let leaf_var = Vec::<UInt8<Fq>>::new_witness(ns!(cs, "leaf"), || Ok([2_u8; 16])).unwrap();
 
         // Allocate leaf
-        let index_var = UInt64::<Fq>::new_witness(
-            ns!(cs, "index"),
-            || Ok(177),
-        ).unwrap();
+        let index_var = UInt64::<Fq>::new_witness(ns!(cs, "index"), || Ok(177)).unwrap();
 
         // Allocate path
-        let path_var = MerkleTreePathVar::new_witness(
-            ns!(cs, "path"),
-            || Ok(path),
-        )
-            .unwrap();
+        let path_var = MerkleTreePathVar::new_witness(ns!(cs, "path"), || Ok(path)).unwrap();
 
         path_var
-            .check_path(
-                &root_var,
-                &leaf_var,
-                &index_var,
-                &(),
-            )
+            .check_path(&root_var, &leaf_var, &index_var, &())
             .unwrap();
 
         assert!(!cs.is_satisfied().unwrap());
@@ -395,37 +291,19 @@ mod tests {
         let cs = ConstraintSystem::<Fq>::new_ref();
 
         // Allocate root
-        let root_var = DigestVar::new_input(
-            ns!(cs, "root"),
-            || Ok(tree.root.to_vec()),
-        ).unwrap();
+        let root_var = DigestVar::new_input(ns!(cs, "root"), || Ok(tree.root.to_vec())).unwrap();
 
         // Allocate leaf
-        let leaf_var = Vec::<UInt8<Fq>>::new_witness(
-            ns!(cs, "leaf"),
-            || Ok([1_u8; 16]),
-        ).unwrap();
+        let leaf_var = Vec::<UInt8<Fq>>::new_witness(ns!(cs, "leaf"), || Ok([1_u8; 16])).unwrap();
 
         // Allocate leaf
-        let index_var = UInt64::<Fq>::new_witness(
-            ns!(cs, "index"),
-            || Ok(176),
-        ).unwrap();
+        let index_var = UInt64::<Fq>::new_witness(ns!(cs, "index"), || Ok(176)).unwrap();
 
         // Allocate path
-        let path_var = MerkleTreePathVar::new_witness(
-            ns!(cs, "path"),
-            || Ok(path),
-        )
-            .unwrap();
+        let path_var = MerkleTreePathVar::new_witness(ns!(cs, "path"), || Ok(path)).unwrap();
 
         path_var
-            .check_path(
-                &root_var,
-                &leaf_var,
-                &index_var,
-                &(),
-            )
+            .check_path(&root_var, &leaf_var, &index_var, &())
             .unwrap();
 
         assert!(!cs.is_satisfied().unwrap());

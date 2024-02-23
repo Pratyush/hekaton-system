@@ -1,15 +1,6 @@
-use std::{
-    collections::HashMap,
-    error::Error as ErrorTrait,
-    fmt,
-    marker::PhantomData,
-};
+use std::{collections::HashMap, error::Error as ErrorTrait, fmt, marker::PhantomData};
 
-use ark_crypto_primitives::crh::sha256::{
-
-    digest::Digest,
-    Sha256,
-};
+use ark_crypto_primitives::crh::sha256::{digest::Digest, Sha256};
 use ark_crypto_primitives::crh::TwoToOneCRHScheme;
 use ark_crypto_primitives::Error;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -21,7 +12,6 @@ pub type MerkleIndex = u64;
 pub const MAX_DEPTH: u8 = 64;
 
 pub type InnerHash = [u8; 32];
-
 
 // TODO: Add const hash parameters
 pub trait MerkleTreeParameters {
@@ -74,28 +64,20 @@ impl<P: MerkleTreeParameters> Default for SparseMerkleTree<P> {
     }
 }
 
-
 impl<P: MerkleTreeParameters> SparseMerkleTree<P> {
-    pub fn new(
-        initial_leaf_value: &[u8],
-        hash_parameters: &(),
-    ) -> Result<Self, Error> {
+    pub fn new(initial_leaf_value: &[u8], hash_parameters: &()) -> Result<Self, Error> {
         // Compute initial hashes for each depth of tree
-        let mut sparse_initial_hashes =
-            vec![hash_leaf(initial_leaf_value)?];
+        let mut sparse_initial_hashes = vec![hash_leaf(initial_leaf_value)?];
         for i in 1..=(P::DEPTH as usize) {
             let child_hash = sparse_initial_hashes[i - 1].clone();
-            sparse_initial_hashes.push(hash_inner_node(
-                &child_hash,
-                &child_hash,
-            )?);
+            sparse_initial_hashes.push(hash_inner_node(&child_hash, &child_hash)?);
         }
         sparse_initial_hashes.reverse();
 
         Ok(SparseMerkleTree {
             tree: HashMap::new(),
             root: sparse_initial_hashes[0].clone(),
-            sparse_initial_hashes: sparse_initial_hashes,
+            sparse_initial_hashes,
             hash_parameters: (),
             _parameters: PhantomData,
         })
@@ -107,10 +89,7 @@ impl<P: MerkleTreeParameters> SparseMerkleTree<P> {
         }
 
         let mut i = index;
-        self.tree.insert(
-            (P::DEPTH, i),
-            hash_leaf(leaf_value)?,
-        );
+        self.tree.insert((P::DEPTH, i), hash_leaf(leaf_value)?);
 
         for d in (0..P::DEPTH).rev() {
             i >>= 1;
@@ -124,10 +103,8 @@ impl<P: MerkleTreeParameters> SparseMerkleTree<P> {
                 Some(h) => h.clone(),
                 None => self.sparse_initial_hashes[(d + 1) as usize].clone(),
             };
-            self.tree.insert(
-                (d, i),
-                hash_inner_node(&lc_hash, &rc_hash)?,
-            );
+            self.tree
+                .insert((d, i), hash_inner_node(&lc_hash, &rc_hash)?);
         }
         self.root = self.tree.get(&(0, 0)).expect("root lookup failed").clone();
         Ok(())
@@ -197,9 +174,7 @@ impl<P: MerkleTreeParameters> MerkleTreePath<P> {
     }
 }
 
-pub fn hash_leaf(
-    leaf: &[u8],
-) -> Result<InnerHash, Error> {
+pub fn hash_leaf(leaf: &[u8]) -> Result<InnerHash, Error> {
     let mut digest = leaf;
     // defining binding is needed because of the Rust's crap
     let binding = Sha256::digest(&digest);
@@ -208,14 +183,10 @@ pub fn hash_leaf(
     Ok(InnerHash::try_from(digest).unwrap())
 }
 
-pub fn hash_inner_node(
-    left: &InnerHash,
-    right: &InnerHash,
-) -> Result<InnerHash, Error> {
+pub fn hash_inner_node(left: &InnerHash, right: &InnerHash) -> Result<InnerHash, Error> {
     let digest = Sha256::evaluate(&(), *left, *right).expect("TODO: panic message");
     Ok(InnerHash::try_from(digest).unwrap())
 }
-
 
 #[derive(Debug)]
 pub enum MerkleTreeError {
@@ -276,29 +247,15 @@ mod tests {
         let proof_177 = tree.lookup(177).unwrap();
         let proof_255 = tree.lookup(255).unwrap();
         let proof_256 = tree.lookup(256);
-        assert!(proof_0
-            .verify(&tree.root, &[0u8; 16], 0, &())
-            .unwrap());
-        assert!(proof_177
-            .verify(&tree.root, &[0u8; 16], 177, &())
-            .unwrap());
-        assert!(proof_255
-            .verify(&tree.root, &[0u8; 16], 255, &())
-            .unwrap());
+        assert!(proof_0.verify(&tree.root, &[0u8; 16], 0, &()).unwrap());
+        assert!(proof_177.verify(&tree.root, &[0u8; 16], 177, &()).unwrap());
+        assert!(proof_255.verify(&tree.root, &[0u8; 16], 255, &()).unwrap());
         assert!(proof_256.is_err());
         assert!(tree.update(177, &[1_u8; 16]).is_ok());
-        assert!(proof_177
-            .verify(&tree.root, &[1u8; 16], 177, &())
-            .unwrap());
-        assert!(!proof_177
-            .verify(&tree.root, &[0u8; 16], 177, &())
-            .unwrap());
-        assert!(!proof_177
-            .verify(&tree.root, &[1u8; 16], 0, &())
-            .unwrap());
-        assert!(!proof_0
-            .verify(&tree.root, &[0u8; 16], 0, &())
-            .unwrap());
+        assert!(proof_177.verify(&tree.root, &[1u8; 16], 177, &()).unwrap());
+        assert!(!proof_177.verify(&tree.root, &[0u8; 16], 177, &()).unwrap());
+        assert!(!proof_177.verify(&tree.root, &[1u8; 16], 0, &()).unwrap());
+        assert!(!proof_0.verify(&tree.root, &[0u8; 16], 0, &()).unwrap());
         let updated_proof_0 = tree.lookup(0).unwrap();
         assert!(updated_proof_0
             .verify(&tree.root, &[0u8; 16], 0, &())
