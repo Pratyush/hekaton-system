@@ -24,7 +24,6 @@ use ark_relations::r1cs::ConstraintSystem;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rand::{random, Rng};
 use sha2::Sha256;
-use ark_bls12_381::Fq;
 use crate::sparse_tree::{InnerHash, MerkleDepth, MerkleIndex, MerkleTreeParameters, MerkleTreePath, SparseMerkleTree};
 use crate::sparse_tree_constraints::MerkleTreePathVar;
 use crate::tree_hash_circuit::{digest_to_fpvar, left_child, right_child};
@@ -111,6 +110,7 @@ impl<P: MerkleTreeParameters> VerifiableKeyDirectoryCircuit<P> {
             },
         })
     }
+
     pub fn verify(&self) -> bool {
         let update = &self.update;
         let initial_root = self.initial_root;
@@ -183,41 +183,41 @@ impl<F: PrimeField, Params: MerkleTreeParameters> CircuitWithPortals<F> for Veri
 
 
         // add path as private input
-        let path_var = MerkleTreePathVar::<Params, Fq>::new_witness(
+        let path_var = MerkleTreePathVar::<Params, F>::new_witness(
             ns!(cs, "path"),
             || Ok(&self.update.path),
         ).unwrap();
 
         // add initial leaf and final leaf as private input
-        let initial_leaf_var = Vec::<UInt8<Fq>>::new_witness(
+        let initial_leaf_var = Vec::<UInt8<F>>::new_witness(
             ns!(cs, "leaf"),
             || Ok(self.update.initial_leaf),
         ).unwrap();
-        let final_leaf_var = Vec::<UInt8<Fq>>::new_witness(
+        let final_leaf_var = Vec::<UInt8<F>>::new_witness(
             ns!(cs, "leaf"),
             || Ok(self.update.final_leaf),
         ).unwrap();
 
         // add merkle index as private input
-        let index_var = UInt64::<Fq>::new_witness(
+        let index_var = UInt64::<F>::new_witness(
             ns!(cs, "index"),
             || Ok(self.update.merkle_index),
         ).unwrap();
 
         // initial path is valid
         path_var.check_path(
-                &initial_root_var,
-                &initial_leaf_var,
-                &index_var,
-                &(),
-            ).unwrap();
+            &initial_root_var,
+            &initial_leaf_var,
+            &index_var,
+            &(),
+        ).unwrap();
         // final path is valid
         path_var.check_path(
-                &final_root_var,
-                &final_leaf_var,
-                &index_var,
-                &(),
-            ).unwrap();
+            &final_root_var,
+            &final_leaf_var,
+            &index_var,
+            &(),
+        ).unwrap();
 
 
         // Print out how big this circuit was
@@ -234,7 +234,12 @@ impl<F: PrimeField, Params: MerkleTreeParameters> CircuitWithPortals<F> for Veri
 
 #[cfg(test)]
 mod tests {
+    use ark_relations::r1cs::{ConstraintSystem, ConstraintSystemRef};
+    use ark_bls12_381::{Fq, Fr};
+    use crate::CircuitWithPortals;
+    use crate::portal_manager::SetupPortalManager;
     use crate::sparse_tree::{MerkleDepth, MerkleTreeParameters};
+    use crate::tree_hash_circuit::MerkleTreeCircuit;
     use crate::verifiable_key_directory::{VerifiableKeyDirectoryCircuit, VerifiableKeyDirectoryCircuitParams};
 
     #[test]
@@ -253,6 +258,40 @@ mod tests {
         };
         let vkd: VerifiableKeyDirectoryCircuit<MerkleTreeTestParameters> = VerifiableKeyDirectoryCircuit::rand(&vkd_params).unwrap();
         assert!(vkd.verify());
+    }
+
+    #[test]
+    fn test_vkd_subcircuit() {
+        #[derive(Clone)]
+        pub struct MerkleTreeTestParameters;
+        impl MerkleTreeParameters for MerkleTreeTestParameters {
+            const DEPTH: MerkleDepth = 63;
+        }
+
+        let vkd_params = VerifiableKeyDirectoryCircuitParams {
+            max_depth: 64_u8,
+            num_sha_iters_per_subcircuit: 1,
+            num_portals_per_subcircuit: 1,
+            depth: 63,
+        };
+
+        // Make a random VKD
+        let mut vkd: VerifiableKeyDirectoryCircuit<MerkleTreeTestParameters> = VerifiableKeyDirectoryCircuit::rand(&vkd_params).unwrap();
+
+        // Make a fresh portal manager
+        let cs = ConstraintSystem::<Fq>::new_ref();
+        let mut pm = SetupPortalManager::new(cs.clone());
+
+        // Make it all one subtrace. We're not really testing this part
+        pm.start_subtrace(cs.clone());
+
+        let num_subcircuits = <VerifiableKeyDirectoryCircuit<MerkleTreeTestParameters> as CircuitWithPortals<Fr>>::num_subcircuits(&vkd);
+        for subcircuit_idx in 0..num_subcircuits {
+            vkd.generate_constraints(cs.clone(), subcircuit_idx, &mut pm)
+                .unwrap();
+        }
+
+        assert!(cs.is_satisfied().unwrap());
     }
 }
 
