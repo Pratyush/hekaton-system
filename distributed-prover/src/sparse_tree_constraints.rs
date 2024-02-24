@@ -205,8 +205,8 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(0u64);
         let crh_parameters = ();
         let mut tree = TestMerkleTree::new(&[0u8; 16], &crh_parameters).unwrap();
-        tree.update(177, &[1_u8; 16]).unwrap();
-        let path = tree.lookup(177).unwrap();
+        tree.update_leaf(177, &[1_u8; 16]).unwrap();
+        let path = tree.lookup_path(177, PoseidonMerkleTreeTestParameters::DEPTH).unwrap();
 
         let cs = ConstraintSystem::<Fq>::new_ref();
 
@@ -253,8 +253,8 @@ mod tests {
     #[test]
     fn poseidon_valid_path_constraints_test() {
         let mut tree = TestMerkleTree::new(&[0u8; 16], &()).unwrap();
-        tree.update(177, &[1_u8; 16]).unwrap();
-        let path = tree.lookup(177).unwrap();
+        tree.update_leaf(177, &[1_u8; 16]).unwrap();
+        let path = tree.lookup_path(177, PoseidonMerkleTreeTestParameters::DEPTH).unwrap();
 
         let cs = ConstraintSystem::<Fq>::new_ref();
 
@@ -299,8 +299,8 @@ mod tests {
     #[test]
     fn invalid_root_path_constraints_test() {
         let mut tree = TestMerkleTree::new(&[0u8; 16], &()).unwrap();
-        tree.update(177, &[1_u8; 16]).unwrap();
-        let path = tree.lookup(177).unwrap();
+        tree.update_leaf(177, &[1_u8; 16]).unwrap();
+        let path = tree.lookup_path(177, PoseidonMerkleTreeTestParameters::DEPTH).unwrap();
 
         let cs = ConstraintSystem::<Fq>::new_ref();
 
@@ -344,8 +344,8 @@ mod tests {
     #[test]
     fn invalid_leaf_path_constraints_test() {
         let mut tree = TestMerkleTree::new(&[0u8; 16], &()).unwrap();
-        tree.update(177, &[1_u8; 16]).unwrap();
-        let path = tree.lookup(177).unwrap();
+        tree.update_leaf(177, &[1_u8; 16]).unwrap();
+        let path = tree.lookup_path(177, PoseidonMerkleTreeTestParameters::DEPTH).unwrap();
 
         let cs = ConstraintSystem::<Fq>::new_ref();
 
@@ -389,8 +389,8 @@ mod tests {
     #[test]
     fn invalid_index_path_constraints_test() {
         let mut tree = TestMerkleTree::new(&[0u8; 16], &()).unwrap();
-        tree.update(177, &[1_u8; 16]).unwrap();
-        let path = tree.lookup(177).unwrap();
+        tree.update_leaf(177, &[1_u8; 16]).unwrap();
+        let path = tree.lookup_path(177, PoseidonMerkleTreeTestParameters::DEPTH).unwrap();
 
         let cs = ConstraintSystem::<Fq>::new_ref();
 

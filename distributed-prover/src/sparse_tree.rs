@@ -1,15 +1,6 @@
-use std::{
-    collections::HashMap,
-    error::Error as ErrorTrait,
-    fmt,
-    marker::PhantomData,
-};
+use std::{collections::HashMap, error::Error as ErrorTrait, fmt, marker::PhantomData, };
 
-use ark_crypto_primitives::crh::sha256::{
-
-    digest::Digest,
-    Sha256,
-};
+use ark_crypto_primitives::crh::sha256::{digest::Digest, Sha256, };
 use ark_crypto_primitives::crh::TwoToOneCRHScheme;
 use ark_crypto_primitives::Error;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -18,12 +9,12 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 // We don't use Pederson instead we use SHA256
 pub type MerkleDepth = u8;
 pub type MerkleIndex = u64;
+
 pub const MAX_DEPTH: u8 = 64;
 
 pub type InnerHash = [u8; 32];
 
 
-// TODO: Add const hash parameters
 pub trait MerkleTreeParameters {
     const DEPTH: MerkleDepth;
     fn is_valid() -> Result<bool, Error> {
@@ -95,13 +86,14 @@ impl<P: MerkleTreeParameters> SparseMerkleTree<P> {
         Ok(SparseMerkleTree {
             tree: HashMap::new(),
             root: sparse_initial_hashes[0].clone(),
-            sparse_initial_hashes: sparse_initial_hashes,
+            sparse_initial_hashes,
             hash_parameters: (),
             _parameters: PhantomData,
         })
     }
 
-    pub fn update(&mut self, index: MerkleIndex, leaf_value: &[u8]) -> Result<(), Error> {
+    // for updating leafs, the leaf is hashes first and the rest is similar to internal nodes
+    pub fn update_leaf(&mut self, index: MerkleIndex, leaf_value: &[u8]) -> Result<(), Error> {
         if index >= 1_u64 << (P::DEPTH as u64) {
             return Err(Box::new(MerkleTreeError::LeafIndex(index)));
         }
@@ -116,14 +108,8 @@ impl<P: MerkleTreeParameters> SparseMerkleTree<P> {
             i >>= 1;
             let lc_i = i << 1;
             let rc_i = lc_i + 1;
-            let lc_hash = match self.tree.get(&(d + 1, lc_i)) {
-                Some(h) => h.clone(),
-                None => self.sparse_initial_hashes[(d + 1) as usize].clone(),
-            };
-            let rc_hash = match self.tree.get(&(d + 1, rc_i)) {
-                Some(h) => h.clone(),
-                None => self.sparse_initial_hashes[(d + 1) as usize].clone(),
-            };
+            let lc_hash = self.lookup_internal_node(lc_i, d + 1).unwrap();
+            let rc_hash = self.lookup_internal_node(rc_i, d + 1).unwrap();
             self.tree.insert(
                 (d, i),
                 hash_inner_node(&lc_hash, &rc_hash)?,
@@ -133,18 +119,43 @@ impl<P: MerkleTreeParameters> SparseMerkleTree<P> {
         Ok(())
     }
 
-    pub fn lookup(&self, index: MerkleIndex) -> Result<MerkleTreePath<P>, Error> {
+    pub fn update_internal_node(&mut self, index: MerkleIndex, internal_value: &InnerHash) -> Result<(), Error> {
         if index >= 1_u64 << (P::DEPTH as u64) {
+            return Err(Box::new(MerkleTreeError::LeafIndex(index)));
+        }
+
+        let mut i = index;
+        self.tree.insert(
+            (P::DEPTH, i),
+            *internal_value,
+        );
+
+        for d in (0..P::DEPTH).rev() {
+            i >>= 1;
+            let lc_i = i << 1;
+            let rc_i = lc_i + 1;
+            let lc_hash = self.lookup_internal_node(lc_i, d + 1).unwrap();
+            let rc_hash = self.lookup_internal_node(rc_i, d + 1).unwrap();
+            self.tree.insert(
+                (d, i),
+                hash_inner_node(&lc_hash, &rc_hash)?,
+            );
+        }
+        self.root = self.tree.get(&(0, 0)).expect("root lookup failed").clone();
+        Ok(())
+    }
+
+
+    // In the normal case, depth = P::Depth
+    pub fn lookup_path(&self, index: MerkleIndex, depth: MerkleDepth) -> Result<MerkleTreePath<P>, Error> {
+        if index >= 1_u64 << (depth as u64) {
             return Err(Box::new(MerkleTreeError::LeafIndex(index)));
         }
         let mut path = Vec::new();
 
         let mut i = index;
-        for d in (1..=P::DEPTH).rev() {
-            let sibling_hash = match self.tree.get(&(d, i ^ 1)) {
-                Some(h) => h.clone(),
-                None => self.sparse_initial_hashes[d as usize].clone(),
-            };
+        for d in (1..=depth).rev() {
+            let sibling_hash = self.lookup_internal_node(i ^ 1, d).unwrap();
             path.push(sibling_hash);
             i >>= 1;
         }
@@ -154,21 +165,35 @@ impl<P: MerkleTreeParameters> SparseMerkleTree<P> {
         })
     }
 
+    pub fn lookup_internal_node(&self, index: MerkleIndex, depth: MerkleDepth) -> Result<InnerHash, Error> {
+        let res = match self.tree.get(&(depth, index)) {
+            Some(h) => h.clone(),
+            None => self.sparse_initial_hashes[depth as usize].clone(),
+        };
+        Ok(res)
+    }
+
+
     pub fn get_root(&self) -> Result<InnerHash, Error> {
         Ok(self.root)
     }
+
 }
 
 impl<P: MerkleTreeParameters> MerkleTreePath<P> {
-    pub fn compute_root(
+    //  this function computes the root given the path and leaf, so it firsts hashes the leaf and then
+    // computes the root, and it always assumes that length of path is equal to the depth of tree
+    pub fn compute_root_from_leaf(
         &self,
         leaf: &[u8],
         index: MerkleIndex,
         hash_parameters: &(),
     ) -> Result<InnerHash, Error> {
+        // checking index is not out of bound
         if index >= 1_u64 << (P::DEPTH as u64) {
             return Err(Box::new(MerkleTreeError::LeafIndex(index)));
         }
+        // checking length of path is equal to the depth of the tree
         if self.path.len() != P::DEPTH as usize {
             return Err(Box::new(MerkleTreeError::TreeDepth(self.path.len() as u8)));
         }
@@ -186,14 +211,49 @@ impl<P: MerkleTreeParameters> MerkleTreePath<P> {
         Ok(current_hash)
     }
 
-    pub fn verify(
+    // this one takes a path of arbitrary length and an internal node and computes the root
+    pub fn compute_root_from_internal_nodes(
+        &self,
+        internal_node: &InnerHash,
+        index: MerkleIndex,
+        hash_parameters: &(),
+    ) -> Result<InnerHash, Error> {
+        // out of bound error
+        if index >= 1_u64 << (P::DEPTH as u64) {
+            return Err(Box::new(MerkleTreeError::LeafIndex(index)));
+        }
+        let mut i = index;
+        // don't hash the internal node just clone it!
+        let mut current_hash = internal_node.clone();
+        for sibling_hash in self.path.iter() {
+            current_hash = match i % 2 {
+                0 => hash_inner_node(&current_hash, sibling_hash)?,
+                1 => hash_inner_node(sibling_hash, &current_hash)?,
+                _ => unreachable!(),
+            };
+            i >>= 1;
+        }
+        Ok(current_hash)
+    }
+
+    pub fn verify_leaf(
         &self,
         root: &InnerHash,
         leaf: &[u8],
         index: MerkleIndex,
         hash_parameters: &(),
     ) -> Result<bool, Error> {
-        Ok(self.compute_root(leaf, index, hash_parameters)? == *root)
+        Ok(self.compute_root_from_leaf(leaf, index, hash_parameters)? == *root)
+    }
+
+    pub fn verify_internal_node(
+        &self,
+        root: &InnerHash,
+        internal_node: &InnerHash,
+        index: MerkleIndex,
+        hash_parameters: &(),
+    ) -> Result<bool, Error> {
+        Ok(self.compute_root_from_internal_nodes(&internal_node, index, hash_parameters)? == *root)
     }
 }
 
@@ -269,39 +329,48 @@ mod tests {
     }
 
     #[test]
+    fn lookup_test() {
+        let tree = TestMerkleTree::new(&[0u8; 16], &()).unwrap();
+        let leaf = tree.lookup_internal_node(20, 7).unwrap();
+        let path = tree.lookup_path(20, 7).unwrap();
+        let p = path.compute_root_from_internal_nodes(&leaf, 20, &()).unwrap();
+        assert_eq!(p, tree.root);
+    }
+
+    #[test]
     fn update_and_verify_test() {
         let rng = StdRng::seed_from_u64(0u64);
         let mut tree = TestMerkleTree::new(&[0u8; 16], &()).unwrap();
-        let proof_0 = tree.lookup(0).unwrap();
-        let proof_177 = tree.lookup(177).unwrap();
-        let proof_255 = tree.lookup(255).unwrap();
-        let proof_256 = tree.lookup(256);
+        let proof_0 = tree.lookup_path(0, MerkleTreeTestParameters::DEPTH).unwrap();
+        let proof_177 = tree.lookup_path(177, MerkleTreeTestParameters::DEPTH).unwrap();
+        let proof_255 = tree.lookup_path(255, MerkleTreeTestParameters::DEPTH).unwrap();
+        let proof_256 = tree.lookup_path(256, MerkleTreeTestParameters::DEPTH);
         assert!(proof_0
-            .verify(&tree.root, &[0u8; 16], 0, &())
+            .verify_leaf(&tree.root, &[0u8; 16], 0, &())
             .unwrap());
         assert!(proof_177
-            .verify(&tree.root, &[0u8; 16], 177, &())
+            .verify_leaf(&tree.root, &[0u8; 16], 177, &())
             .unwrap());
         assert!(proof_255
-            .verify(&tree.root, &[0u8; 16], 255, &())
+            .verify_leaf(&tree.root, &[0u8; 16], 255, &())
             .unwrap());
         assert!(proof_256.is_err());
-        assert!(tree.update(177, &[1_u8; 16]).is_ok());
+        assert!(tree.update_leaf(177, &[1_u8; 16]).is_ok());
         assert!(proof_177
-            .verify(&tree.root, &[1u8; 16], 177, &())
+            .verify_leaf(&tree.root, &[1u8; 16], 177, &())
             .unwrap());
         assert!(!proof_177
-            .verify(&tree.root, &[0u8; 16], 177, &())
+            .verify_leaf(&tree.root, &[0u8; 16], 177, &())
             .unwrap());
         assert!(!proof_177
-            .verify(&tree.root, &[1u8; 16], 0, &())
+            .verify_leaf(&tree.root, &[1u8; 16], 0, &())
             .unwrap());
         assert!(!proof_0
-            .verify(&tree.root, &[0u8; 16], 0, &())
+            .verify_leaf(&tree.root, &[0u8; 16], 0, &())
             .unwrap());
-        let updated_proof_0 = tree.lookup(0).unwrap();
+        let updated_proof_0 = tree.lookup_path(0, MerkleTreeTestParameters::DEPTH).unwrap();
         assert!(updated_proof_0
-            .verify(&tree.root, &[0u8; 16], 0, &())
+            .verify_leaf(&tree.root, &[0u8; 16], 0, &())
             .unwrap());
     }
 }
