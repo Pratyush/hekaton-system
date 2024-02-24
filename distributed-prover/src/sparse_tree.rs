@@ -1,6 +1,6 @@
-use std::{collections::HashMap, error::Error as ErrorTrait, fmt, marker::PhantomData, };
+use std::{collections::HashMap, error::Error as ErrorTrait, fmt, marker::PhantomData};
 
-use ark_crypto_primitives::crh::sha256::{digest::Digest, Sha256, };
+use ark_crypto_primitives::crh::sha256::{digest::Digest, Sha256};
 use ark_crypto_primitives::crh::TwoToOneCRHScheme;
 use ark_crypto_primitives::Error;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -12,7 +12,7 @@ pub type MerkleIndex = u64;
 
 pub const MAX_DEPTH: u8 = 64;
 
-pub type InnerHash = [u8; 32];
+pub type InnerHash = [u8; 31];
 
 
 pub trait MerkleTreeParameters {
@@ -178,6 +178,11 @@ impl<P: MerkleTreeParameters> SparseMerkleTree<P> {
         Ok(self.root)
     }
 
+    pub fn get_padded_root(&self) -> Result<[u8; 32], Error> {
+        let mut padded_array: [u8; 32] = [0_u8; 32];
+        padded_array[0..self.root.len()].copy_from_slice(&self.root);
+        Ok(padded_array)
+    }
 }
 
 impl<P: MerkleTreeParameters> MerkleTreePath<P> {
@@ -264,7 +269,7 @@ pub fn hash_leaf(
     // defining binding is needed because of the Rust's crap
     let binding = Sha256::digest(&digest);
     digest = &*binding;
-
+    digest = &digest[0..31];
     Ok(InnerHash::try_from(digest).unwrap())
 }
 
@@ -273,7 +278,8 @@ pub fn hash_inner_node(
     right: &InnerHash,
 ) -> Result<InnerHash, Error> {
     let digest = Sha256::evaluate(&(), *left, *right).expect("TODO: panic message");
-    Ok(InnerHash::try_from(digest).unwrap())
+    let a: [u8; 32] = digest.try_into().unwrap();
+    Ok(InnerHash::try_from(&a[0..31]).unwrap())
 }
 
 

@@ -132,15 +132,13 @@ pub fn hash_inner_node_var<ConstraintF>(
         ConstraintF: PrimeField,
 {
     // Convert the hashes back into bytes and concat them
-    let left_bytes = left
-        .0.clone()
+    let left_bytes = (&left.0[0..31]).to_vec();
+    let right_bytes = (&right.0[0..31]).to_vec();
+    let contacted = [left_bytes, right_bytes]
+        .concat()
         .into_iter()
         .collect::<Vec<_>>();
-    let right_bytes = right
-        .0.clone()
-        .into_iter()
-        .collect::<Vec<_>>();
-    let contacted = [left_bytes, right_bytes].concat();
+    // hash the result and return only the 31 first bytes
     let mut digest = DigestVar(contacted);
     Ok(Sha256Gadget::digest(&digest.0)?)
 }
@@ -161,7 +159,9 @@ for MerkleTreePathVar<P, ConstraintF>
         let cs = ns.cs();
         let mut res = Vec::new();
         for (i, _) in f_out.borrow().path.iter().enumerate() {
-            res.push(DigestVar::new_variable(cs.clone(), || Ok(f_out.borrow().path[i].to_vec()), mode).unwrap());
+            let mut padded_array: [u8; 32] = [0_u8; 32];
+            padded_array[0..31].copy_from_slice(&f_out.borrow().path[i]);
+            res.push(DigestVar::new_variable(cs.clone(), || Ok(padded_array.to_vec()), mode).unwrap());
         }
         Ok(MerkleTreePathVar {
             path: res,
@@ -199,6 +199,21 @@ mod tests {
 
     type PoseidonTestMerkleTree = SparseMerkleTree<PoseidonMerkleTreeTestParameters>;
 
+    #[test]
+    fn hash_tests() {
+        let leaf_var = Vec::<UInt8<Fq>>::new();
+        let x = hash_leaf_var(&(), &leaf_var).expect("TODO: panic message");
+        let left_bytes = (&x.0[0..31]).to_vec();
+        let right_bytes = (&x.0[0..31]).to_vec();
+        let contacted = [left_bytes, right_bytes]
+            .concat()
+            .into_iter()
+            .collect::<Vec<_>>();
+        // hash the result and return only the 31 first bytes
+        let mut digest = DigestVar(contacted);
+
+        hash_inner_node_var(&(), &digest, &digest).expect("to do");
+    }
 
     #[test]
     fn valid_path_constraints_test() {
@@ -214,37 +229,25 @@ mod tests {
         let crh_parameters_var = ();
 
         // Allocate root
-        let root_var = DigestVar::new_input(
-            ns!(cs, "root"),
-            || Ok(tree.root.to_vec()),
-        ).unwrap();
+        let padded_root = tree.get_padded_root().unwrap();
+        println!("{}", &padded_root.to_vec().len());
+        let root_var = DigestVar::new_input(ns!(cs, "root"), || Ok(padded_root.to_vec())).unwrap();
 
         // Allocate leaf
-        let leaf_var = Vec::<UInt8<Fq>>::new_witness(
-            ns!(cs, "leaf"),
-            || Ok([1_u8; 16]),
-        ).unwrap();
+        let leaf_var = Vec::<UInt8<Fq>>::new_witness(ns!(cs, "leaf"), || Ok([1_u8; 16])).unwrap();
 
         // Allocate index
-        let index_var = UInt64::<Fq>::new_witness(
-            ns!(cs, "index"),
-            || Ok(177),
-        ).unwrap();
+        let index_var = UInt64::<Fq>::new_witness(ns!(cs, "index"), || Ok(177)).unwrap();
 
         // Allocate path
-        let path_var = MerkleTreePathVar::<MerkleTreeTestParameters, Fq>::new_witness(
-            ns!(cs, "path"),
-            || Ok(path),
-        )
-            .unwrap();
+        let path_var = MerkleTreePathVar::<MerkleTreeTestParameters, Fq>::new_witness(ns!(cs, "path"), || Ok(path)).unwrap();
 
-        path_var
-            .check_path(
-                &root_var,
-                &leaf_var,
-                &index_var,
-                &crh_parameters_var,
-            )
+        path_var.check_path(
+            &root_var,
+            &leaf_var,
+            &index_var,
+            &crh_parameters_var,
+        )
             .unwrap();
 
         assert!(cs.is_satisfied().unwrap());
@@ -260,38 +263,25 @@ mod tests {
 
 
         // Allocate root
-        let root_var = DigestVar::new_input(
-            ns!(cs, "root"),
-            || Ok(tree.root.to_vec()),
-        ).unwrap();
+        let padded_root = tree.get_padded_root().unwrap();
+        println!("{}", &padded_root.to_vec().len());
+        let root_var = DigestVar::new_input(ns!(cs, "root"), || Ok(padded_root.to_vec())).unwrap();
 
         // Allocate leaf
-        let leaf_var = Vec::<UInt8<Fq>>::new_witness(
-            ns!(cs, "leaf"),
-            || Ok([1_u8; 16]),
-        ).unwrap();
+        let leaf_var = Vec::<UInt8<Fq>>::new_witness(ns!(cs, "leaf"), || Ok([1_u8; 16])).unwrap();
 
         // Allocate leaf
-        let index_var = UInt64::<Fq>::new_witness(
-            ns!(cs, "index"),
-            || Ok(177),
-        ).unwrap();
+        let index_var = UInt64::<Fq>::new_witness(ns!(cs, "index"), || Ok(177)).unwrap();
 
         // Allocate path
-        let path_var = MerkleTreePathVar::new_witness(
-            ns!(cs, "path"),
-            || Ok(path),
-        )
-            .unwrap();
+        let path_var = MerkleTreePathVar::new_witness(ns!(cs, "path"), || Ok(path)).unwrap();
 
-        path_var
-            .check_path(
+        path_var.check_path(
                 &root_var,
                 &leaf_var,
                 &index_var,
                 &(),
-            )
-            .unwrap();
+            ).unwrap();
 
         assert!(cs.is_satisfied().unwrap());
     }
@@ -305,38 +295,25 @@ mod tests {
         let cs = ConstraintSystem::<Fq>::new_ref();
 
         // Allocate root
-        let root_var = DigestVar::new_input(
-            ns!(cs, "root"),
-            || Ok(InnerHash::default().to_vec()),
-        ).unwrap();
+        let padded_root = [0_u8; 32];
+        println!("{}", &padded_root.to_vec().len());
+        let root_var = DigestVar::new_input(ns!(cs, "root"), || Ok(padded_root.to_vec())).unwrap();
 
         // Allocate leaf
-        let leaf_var = Vec::<UInt8<Fq>>::new_witness(
-            ns!(cs, "leaf"),
-            || Ok([1_u8; 16].to_vec()),
-        ).unwrap();
+        let leaf_var = Vec::<UInt8<Fq>>::new_witness(ns!(cs, "leaf"), || Ok([1_u8; 16].to_vec())).unwrap();
 
         // Allocate leaf
-        let index_var = UInt64::<Fq>::new_witness(
-            ark_relations::ns!(cs, "index"),
-            || Ok(177),
-        ).unwrap();
+        let index_var = UInt64::<Fq>::new_witness(ns!(cs, "index"), || Ok(177)).unwrap();
 
         // Allocate path
-        let path_var = MerkleTreePathVar::new_witness(
-            ns!(cs, "path"),
-            || Ok(path),
-        )
-            .unwrap();
+        let path_var = MerkleTreePathVar::new_witness(ns!(cs, "path"), || Ok(path)).unwrap();
 
-        path_var
-            .check_path(
+        path_var.check_path(
                 &root_var,
                 &leaf_var,
                 &index_var,
                 &(),
-            )
-            .unwrap();
+            ).unwrap();
 
         assert!(!cs.is_satisfied().unwrap());
     }
@@ -350,38 +327,25 @@ mod tests {
         let cs = ConstraintSystem::<Fq>::new_ref();
 
         // Allocate root
-        let root_var = DigestVar::new_input(
-            ns!(cs, "root"),
-            || Ok(tree.root.to_vec()),
-        ).unwrap();
+        let padded_root = tree.get_padded_root().unwrap();
+        println!("{}", &padded_root.to_vec().len());
+        let root_var = DigestVar::new_input(ns!(cs, "root"), || Ok(padded_root.to_vec())).unwrap();
 
         // Allocate leaf
-        let leaf_var = Vec::<UInt8<Fq>>::new_witness(
-            ns!(cs, "leaf"),
-            || Ok([2_u8; 16]),
-        ).unwrap();
+        let leaf_var = Vec::<UInt8<Fq>>::new_witness(ns!(cs, "leaf"), || Ok([2_u8; 16])).unwrap();
 
         // Allocate leaf
-        let index_var = UInt64::<Fq>::new_witness(
-            ns!(cs, "index"),
-            || Ok(177),
-        ).unwrap();
+        let index_var = UInt64::<Fq>::new_witness(ns!(cs, "index"), || Ok(177)).unwrap();
 
         // Allocate path
-        let path_var = MerkleTreePathVar::new_witness(
-            ns!(cs, "path"),
-            || Ok(path),
-        )
-            .unwrap();
+        let path_var = MerkleTreePathVar::new_witness(ns!(cs, "path"), || Ok(path)).unwrap();
 
-        path_var
-            .check_path(
+        path_var.check_path(
                 &root_var,
                 &leaf_var,
                 &index_var,
                 &(),
-            )
-            .unwrap();
+            ).unwrap();
 
         assert!(!cs.is_satisfied().unwrap());
     }
@@ -395,38 +359,28 @@ mod tests {
         let cs = ConstraintSystem::<Fq>::new_ref();
 
         // Allocate root
+        let padded_root = tree.get_padded_root().unwrap();
+        println!("{}", &padded_root.to_vec().len());
         let root_var = DigestVar::new_input(
             ns!(cs, "root"),
-            || Ok(tree.root.to_vec()),
+            || Ok(padded_root.to_vec()),
         ).unwrap();
 
         // Allocate leaf
-        let leaf_var = Vec::<UInt8<Fq>>::new_witness(
-            ns!(cs, "leaf"),
-            || Ok([1_u8; 16]),
-        ).unwrap();
+        let leaf_var = Vec::<UInt8<Fq>>::new_witness(ns!(cs, "leaf"), || Ok([1_u8; 16])).unwrap();
 
         // Allocate leaf
-        let index_var = UInt64::<Fq>::new_witness(
-            ns!(cs, "index"),
-            || Ok(176),
-        ).unwrap();
+        let index_var = UInt64::<Fq>::new_witness(ns!(cs, "index"), || Ok(176)).unwrap();
 
         // Allocate path
-        let path_var = MerkleTreePathVar::new_witness(
-            ns!(cs, "path"),
-            || Ok(path),
-        )
-            .unwrap();
+        let path_var = MerkleTreePathVar::new_witness(ns!(cs, "path"), || Ok(path)).unwrap();
 
-        path_var
-            .check_path(
+        path_var.check_path(
                 &root_var,
                 &leaf_var,
                 &index_var,
                 &(),
-            )
-            .unwrap();
+            ) .unwrap();
 
         assert!(!cs.is_satisfied().unwrap());
     }
