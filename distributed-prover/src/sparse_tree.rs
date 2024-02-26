@@ -6,14 +6,14 @@ use ark_crypto_primitives::Error;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
 // Most of the code is borrowed from https://github.com/nirvantyagi/versa/blob/master/crypto_primitives/src/sparse_merkle_tree/mod.rs
-// We don't use Pederson instead we use SHA256
+// We don't use Pederson instead we use SHA256, our InnerHash is 31 bytes instead of 32 and outputs of contraints
+// is Fp instead of Digest ==> output/input of hashes are Fp
 pub type MerkleDepth = u8;
 pub type MerkleIndex = u64;
 
 pub const MAX_DEPTH: u8 = 64;
 
 pub type InnerHash = [u8; 31];
-
 
 pub trait MerkleTreeParameters {
     const DEPTH: MerkleDepth;
@@ -176,12 +176,6 @@ impl<P: MerkleTreeParameters> SparseMerkleTree<P> {
 
     pub fn get_root(&self) -> Result<InnerHash, Error> {
         Ok(self.root)
-    }
-
-    pub fn get_padded_root(&self) -> Result<[u8; 32], Error> {
-        let mut padded_array: [u8; 32] = [0_u8; 32];
-        padded_array[0..self.root.len()].copy_from_slice(&self.root);
-        Ok(padded_array)
     }
 }
 
@@ -351,32 +345,16 @@ mod tests {
         let proof_177 = tree.lookup_path(177, MerkleTreeTestParameters::DEPTH).unwrap();
         let proof_255 = tree.lookup_path(255, MerkleTreeTestParameters::DEPTH).unwrap();
         let proof_256 = tree.lookup_path(256, MerkleTreeTestParameters::DEPTH);
-        assert!(proof_0
-            .verify_leaf(&tree.root, &[0u8; 16], 0, &())
-            .unwrap());
-        assert!(proof_177
-            .verify_leaf(&tree.root, &[0u8; 16], 177, &())
-            .unwrap());
-        assert!(proof_255
-            .verify_leaf(&tree.root, &[0u8; 16], 255, &())
-            .unwrap());
+        assert!(proof_0.verify_leaf(&tree.root, &[0u8; 16], 0, &()).unwrap());
+        assert!(proof_177.verify_leaf(&tree.root, &[0u8; 16], 177, &()).unwrap());
+        assert!(proof_255.verify_leaf(&tree.root, &[0u8; 16], 255, &()).unwrap());
         assert!(proof_256.is_err());
         assert!(tree.update_leaf(177, &[1_u8; 16]).is_ok());
-        assert!(proof_177
-            .verify_leaf(&tree.root, &[1u8; 16], 177, &())
-            .unwrap());
-        assert!(!proof_177
-            .verify_leaf(&tree.root, &[0u8; 16], 177, &())
-            .unwrap());
-        assert!(!proof_177
-            .verify_leaf(&tree.root, &[1u8; 16], 0, &())
-            .unwrap());
-        assert!(!proof_0
-            .verify_leaf(&tree.root, &[0u8; 16], 0, &())
-            .unwrap());
+        assert!(proof_177.verify_leaf(&tree.root, &[1u8; 16], 177, &()).unwrap());
+        assert!(!proof_177.verify_leaf(&tree.root, &[0u8; 16], 177, &()).unwrap());
+        assert!(!proof_177.verify_leaf(&tree.root, &[1u8; 16], 0, &()).unwrap());
+        assert!(!proof_0.verify_leaf(&tree.root, &[0u8; 16], 0, &()).unwrap());
         let updated_proof_0 = tree.lookup_path(0, MerkleTreeTestParameters::DEPTH).unwrap();
-        assert!(updated_proof_0
-            .verify_leaf(&tree.root, &[0u8; 16], 0, &())
-            .unwrap());
+        assert!(updated_proof_0.verify_leaf(&tree.root, &[0u8; 16], 0, &()).unwrap());
     }
 }

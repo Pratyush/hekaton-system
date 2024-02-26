@@ -31,7 +31,7 @@ type InnerHash = [u8; 31];
 
 /// Truncates the SHA256 hash to 31 bytes, converts to bits (each byte to little-endian), and
 /// interprets the resulting bitstring as a little-endian-encoded field element
-pub(crate) fn digest_to_fpvar<F: PrimeField>(
+pub fn digest_to_fpvar<F: PrimeField>(
     digest: DigestVar<F>,
 ) -> Result<FpVar<F>, SynthesisError> {
     let bits = digest
@@ -44,7 +44,7 @@ pub(crate) fn digest_to_fpvar<F: PrimeField>(
 }
 
 /// Converts a field element back into the truncated digest that created it
-fn fpvar_to_digest<F: PrimeField>(f: &FpVar<F>) -> Result<Vec<UInt8<F>>, SynthesisError> {
+pub fn fpvar_to_digest<F: PrimeField>(f: &FpVar<F>) -> Result<Vec<UInt8<F>>, SynthesisError> {
     let bytes = f
         .to_bits_le()?
         .chunks(8)
@@ -371,7 +371,7 @@ impl<F: PrimeField> CircuitWithPortals<F> for MerkleTreeCircuit {
             pm.start_subtrace(ConstraintSystem::new_ref());
             let leaf_hash = iterated_sha256(leaf);
 
-            // Compute the label and value coresponding to this portal wire
+            // Compute the label and value corresponding to this portal wire
             let node_idx = subcircuit_idx_to_node_idx(subcircuit_idx, num_leaves);
             let leaf_hash_var = UInt8::new_witness_vec(ns!(cs, "leaf hash"), &leaf_hash).unwrap();
             let leaf_hash_fpvar = digest_to_fpvar(DigestVar(leaf_hash_var)).unwrap();
