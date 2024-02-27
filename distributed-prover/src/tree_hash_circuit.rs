@@ -336,7 +336,7 @@ impl<F: PrimeField> CircuitWithPortals<F> for MerkleTreeCircuit {
 
     // This produces the same portal trace as generate_constraints(0...num_circuits) would do, but
     // without having to do all the ZK SHA2 computations
-    fn get_portal_subtraces(&self) -> Vec<Vec<RomTranscriptEntry<F>>> {
+    fn get_portal_subtraces(&self) -> SetupPortalManager<F> {
         let num_leaves = self.leaves.len();
         let num_subcircuits = num_leaves * 2;
 
@@ -434,7 +434,7 @@ impl<F: PrimeField> CircuitWithPortals<F> for MerkleTreeCircuit {
         do_dummy_ops(&mut pm);
 
         // Done
-        pm.subtraces
+        pm
     }
 }
 
@@ -643,6 +643,6 @@ mod test {
 
         let trace1 = circ.get_portal_subtraces();
         let trace2 = slow_get_portal_subtraces::<Fr, _>(&circ);
-        assert_eq!(trace1, trace2);
+        assert_eq!(trace1.subtraces, trace2);
     }
 }

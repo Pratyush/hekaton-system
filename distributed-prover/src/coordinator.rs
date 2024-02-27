@@ -53,7 +53,8 @@ where
     pub fn new(circ: P, tree_params: ExecTreeParams<C>) -> Self {
         // Generate the traces. Do not bother to check whether the constraints are satisfied. This
         // circuit's contents might be placeholder values.
-        let time_ordered_subtraces = circ.get_portal_subtraces();
+        // TODO: Hossein
+        let time_ordered_subtraces = circ.get_portal_subtraces().subtraces;
 
         G16ProvingKeyGenerator {
             tree_params,
@@ -334,7 +335,8 @@ where
 
         let subtrace_timer = start_timer!(|| "Get subtraces");
         // Run the circuit and collect the execution trace. Check that constraints are satisfied.
-        let time_ordered_subtraces = circ.get_portal_subtraces();
+        // TODO: Hossein: I modified this
+        let time_ordered_subtraces = circ.get_portal_subtraces().subtraces;
         let addr_ordered_subtraces = sort_subtraces_by_addr(&time_ordered_subtraces);
         end_timer!(subtrace_timer);
 

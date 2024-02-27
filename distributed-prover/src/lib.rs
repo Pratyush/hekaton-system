@@ -30,6 +30,7 @@ mod verifiable_key_directory;
 pub mod worker;
 
 use portal_manager::PortalManager;
+use crate::portal_manager::SetupPortalManager;
 
 #[macro_export]
 macro_rules! par {
@@ -295,7 +296,8 @@ pub trait CircuitWithPortals<F: PrimeField> {
     fn get_params(&self) -> Self::Parameters;
 
     /// Gets all the subtraces of the portal wires used in this circuit instantiation
-    fn get_portal_subtraces(&self) -> Vec<Vec<RomTranscriptEntry<F>>>;
+    // TODO: (Hossein) Doesn't it make more sense?
+    fn get_portal_subtraces(&self) -> SetupPortalManager<F>;
 
     /// The number of subcircuits in this circuit
     fn num_subcircuits(&self) -> usize;

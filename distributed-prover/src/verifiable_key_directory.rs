@@ -146,7 +146,7 @@ impl<F: PrimeField, Params: MerkleTreeParameters> CircuitWithPortals<F> for Veri
 
     // This produces the same portal trace as generate_constraints(0...num_circuits) would do, but
     // without having to do all the ZK SHA2 computations
-    fn get_portal_subtraces(&self) -> Vec<Vec<RomTranscriptEntry<F>>> {
+    fn get_portal_subtraces(&self) -> SetupPortalManager<F> {
         // Make a portal manager to collect the subtraces
         let cs = ConstraintSystem::new_ref();
         let mut pm = SetupPortalManager::new(cs.clone());
@@ -162,7 +162,7 @@ impl<F: PrimeField, Params: MerkleTreeParameters> CircuitWithPortals<F> for Veri
             println!("here: root {}", subcircuit_idx);
         }
         // We don't compute any portal wires for the equality circuit
-        pm.subtraces
+        pm
     }
 
     /*
@@ -270,7 +270,8 @@ impl<F: PrimeField, Params: MerkleTreeParameters> CircuitWithPortals<F> for Veri
             let final_root = u.path.compute_root_from_internal_nodes(&u.final_value, u.merkle_index, &()).unwrap();
             let root_var = UInt8::new_witness_vec(ns!(cs, "next root"), &final_root).unwrap();
             let final_root_fpvar = digest_to_fpvar(DigestVar(root_var)).unwrap();
-            let _ = pm.set(format!("root {subcircuit_idx}"), &final_root_fpvar).unwrap();
+            //TODO: get this actually right
+            //let _ = pm.set(format!("root {subcircuit_idx}"), &final_root_fpvar).unwrap();
 
             // initial path is valid
             path_var.check_path_from_internal_node(
@@ -361,9 +362,7 @@ mod tests {
 
         // Make a fresh portal manager
         let cs = ConstraintSystem::<Fq>::new_ref();
-        let mut pm = SetupPortalManager::new(cs.clone());
-        pm.subtraces = vkd.get_portal_subtraces();
-        //pm.start_subtrace(cs.clone());
+        let mut pm = vkd.get_portal_subtraces();
 
         let num_subcircuits = <VerifiableKeyDirectoryCircuit<MerkleTreeTestParameters> as CircuitWithPortals<Fr>>::num_subcircuits(&vkd);
         for subcircuit_idx in 0..num_subcircuits {
