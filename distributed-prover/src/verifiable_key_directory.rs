@@ -1,4 +1,5 @@
 use std::fmt::{Display};
+use std::marker::PhantomData;
 use crate::{portal_manager::{PortalManager, SetupPortalManager}, util::log2, CircuitWithPortals, RomTranscriptEntry, sparse_tree};
 
 use ark_crypto_primitives::crh::sha256::{digest::Digest};
@@ -14,7 +15,7 @@ use ark_relations::{ns, r1cs::{ConstraintSystemRef, SynthesisError}};
 use ark_relations::r1cs::ConstraintSystem;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rand::{random, Rng};
-use crate::sparse_tree::{InnerHash, MerkleDepth, MerkleIndex, MerkleTreeParameters, MerkleTreePath, SparseMerkleTree};
+use crate::sparse_tree::{hash, InnerHash, MerkleIndex, MerkleTreeParameters, MerkleTreePath, NodeType, SparseMerkleTree, TreeUpdate};
 use crate::sparse_tree_constraints::MerkleTreePathVar;
 use crate::tree_hash_circuit::{digest_to_fpvar, fpvar_to_digest};
 
@@ -26,24 +27,57 @@ pub struct VerifiableKeyDirectoryCircuit<P: MerkleTreeParameters> {
     pub(crate) initial_root: InnerHash,
     pub(crate) params: VerifiableKeyDirectoryCircuitParams,
     pub(crate) final_root: InnerHash,
-    pub(crate) update: Vec<VkdUpdate<P>>,
+    pub(crate) update: Vec<TreeOperation<P>>,
 }
 
-// Note updates are for internal nodes and not leafs, so for updating leafs consider their hash
+// Enum to represent different tree operations
+#[derive(Clone)]
+pub enum TreeOperation<P: MerkleTreeParameters> {
+    Append(VkdAppendOperation<P>),
+    Deepen(VkdDeepenOperation<P>),
+}
+
+// TODO: make sure path and merkle_index have the same length
+/*
+Overview:
+    - Struct is for adding a leaf to an empty node to the tree.
+    - We also need to make sure that the index provided is already empty.
+    - Empty node values are part of public parameter.
+ */
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
-pub struct VkdUpdate<P: MerkleTreeParameters> {
-    pub(crate) merkle_index: MerkleIndex,
-    pub(crate) initial_value: InnerHash,
-    pub(crate) final_value: InnerHash,
+pub struct VkdAppendOperation<P: MerkleTreeParameters> {
+    // It's important merkle index has two uses, one to construct a tree where we do arithmetic operation and path verification
+    // where the index is treated as a vector of boolean values, since we cannot serialise BigUint instead we model it as bool vector
+    pub(crate) merkle_index: Vec<bool>,
+    pub(crate) leaf: [u8; 32],
     pub(crate) path: MerkleTreePath<P>,
 }
 
-impl<P: MerkleTreeParameters> Default for VkdUpdate<P> {
+#[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
+pub struct VkdDeepenOperation<P: MerkleTreeParameters> {
+    pub(crate) merkle_index: Vec<bool>,
+    pub(crate) initial_depth: u16,
+    pub(crate) leaf: [u8; 32],
+    pub(crate) path: MerkleTreePath<P>,
+}
+
+
+impl<P: MerkleTreeParameters> Default for VkdAppendOperation<P> {
     fn default() -> Self {
-        VkdUpdate {
-            merkle_index: MerkleIndex::default(),
-            initial_value: InnerHash::default(),
-            final_value: InnerHash::default(),
+        VkdAppendOperation {
+            merkle_index: Vec::default(),
+            leaf: [0u8; 32],
+            path: MerkleTreePath::default(),
+        }
+    }
+}
+
+impl<P: MerkleTreeParameters> Default for VkdDeepenOperation<P> {
+    fn default() -> Self {
+        VkdDeepenOperation {
+            merkle_index: Vec::default(),
+            initial_depth: 0,
+            leaf: [0u8; 32],
             path: MerkleTreePath::default(),
         }
     }
@@ -52,15 +86,14 @@ impl<P: MerkleTreeParameters> Default for VkdUpdate<P> {
 
 #[derive(Copy, Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct VerifiableKeyDirectoryCircuitParams {
-    /// get parameters for the MerkleTree
-    pub(crate) max_depth: u8,
     /// Number of outgoing portal wires at each node
     pub(crate) num_portals_per_subcircuit: usize,
     /// Tree depth
-    pub(crate) depth: MerkleDepth,
+    pub(crate) depth: usize,
     /// Num of updates
     pub(crate) num_of_updates: usize,
-
+    /// Chunk size
+    pub(crate) chunk_size: usize,
 }
 
 
@@ -68,8 +101,8 @@ impl Display for VerifiableKeyDirectoryCircuitParams {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(
             f,
-            "[md={},np={}, depth={}, nu={}]",
-            self.max_depth,
+            "[cs={},np={}, depth={}, nu={}]",
+            self.chunk_size,
             self.num_portals_per_subcircuit,
             self.depth,
             self.num_of_updates
@@ -77,43 +110,62 @@ impl Display for VerifiableKeyDirectoryCircuitParams {
     }
 }
 
-// TODO: if padding circuit is needed and takes the index zero, I need to fix it
 impl<P: MerkleTreeParameters> VerifiableKeyDirectoryCircuit<P> {
     pub fn rand(params: &VerifiableKeyDirectoryCircuitParams) -> Result<Self, Error> {
-        // generate the initial tree from a random bytes
         let mut tree = SparseMerkleTree::new(&[0u8; 32], &()).unwrap();
         let initial_root = tree.root.clone();
         // generate random updates
-        let mut updates: Vec<VkdUpdate<P>> = Vec::new();
+        let mut updates: Vec<TreeOperation<P>> = Vec::new();
         for _ in 0..params.num_of_updates {
-            // generate index, TODO: You consider bigger indices
-            let merkle_index = random::<u8>() as MerkleIndex;
-            // get the initial value
-            let initial_value = tree.lookup_internal_node(merkle_index, P::DEPTH).unwrap();
-            // get the path for the index
-            let path = tree.lookup_path(merkle_index, P::DEPTH).unwrap();
-            // generate the new leaf and update the tree
-            let final_value = random::<InnerHash>();
-            tree.update_internal_node(merkle_index, &final_value).expect("panic message");
-            // add the update to the vector of all updates
-            updates.push(VkdUpdate {
-                merkle_index,
-                initial_value,
-                final_value,
-                path,
-            })
+            // generate a random leaf and update the tree with it
+            let leaf = random::<[u8; 32]>();
+            let leaf_h = hash(&leaf).unwrap();
+            let tree_update = tree.update(&leaf).unwrap();
+            let index = tree.get_index_from_hash(&leaf_h).unwrap();
+            let path = tree.lookup_path(&index).unwrap();
+            // see if update is simple or requires shifting
+            match tree_update {
+                // if simple make an append operation from it
+                TreeUpdate::SimpleUpdate(_simple_update) => {
+                    updates.push(TreeOperation::Append(VkdAppendOperation {
+                        merkle_index: index.to_bit_vector(),
+                        leaf,
+                        path,
+                    }));
+                }
+                // If shift update, make a Deepen and one append operation
+                TreeUpdate::ShiftUpdate(shift_update) => {
+                    println!("{:?}", shift_update);
+                    let shift_leaf = shift_update.shift_leaf;
+                    let shift_leaf_h = hash(&shift_leaf).unwrap();
+                    let shift_leaf_index = tree.get_index_from_hash(&shift_leaf_h).unwrap();
+                    let shift_path = tree.lookup_path(&shift_leaf_index).unwrap();
+                    println!("{:?}", shift_leaf_index);
+                    // order of append and deepen has to be consistent with the order in updating the tree
+                    updates.push(TreeOperation::Deepen(VkdDeepenOperation {
+                        merkle_index: shift_leaf_index.to_bit_vector(),
+                        initial_depth: shift_update.shift_leaf_previous_index.depth as u16,
+                        leaf: <[u8; 32]>::try_from(shift_leaf).unwrap(),
+                        path: shift_path,
+                    }));
+                    updates.push(TreeOperation::Append(VkdAppendOperation {
+                        merkle_index: index.to_bit_vector(),
+                        leaf,
+                        path,
+                    }));
+                }
+            }
         }
         // get the final tree by updates
-        Ok(VerifiableKeyDirectoryCircuit {
+        Ok((VerifiableKeyDirectoryCircuit {
             initial_root,
             params: params.clone(),
-            final_root: tree.get_root()?,
+            final_root: tree.root.clone(),
             update: updates,
-        })
+        }))
     }
 
-    pub fn verify(&self) -> Result<bool, Error> {
-        // return an error if the number of updates is inconsistent with updates length
+    pub fn verify(&self, sparse_initial_hashes: Vec<InnerHash>) -> Result<bool, Error> {
         // TODO: Throw an appropriate error
         if self.update.len() != self.params.num_of_updates {
             // return Err(Box::new(Error::LeafIndex(0)));
@@ -122,19 +174,40 @@ impl<P: MerkleTreeParameters> VerifiableKeyDirectoryCircuit<P> {
         // compute the final root wrt updates and check if it's equal to the supposed one
         let mut root = self.initial_root;
         for u in self.update.iter() {
-            // verify the initial value is valid wrt current root
-            res = res & u.path.verify_internal_node(&root,
-                                                    &u.initial_value,
-                                                    u.merkle_index,
-                                                    &()).expect("TODO: panic message");
-            // update the root according to the update
-            root = u.path.compute_root_from_internal_nodes(&u.final_value, u.merkle_index, &()).unwrap();
+            match u {
+                TreeOperation::Deepen(op) => {
+                    // Create a new vector containing the last 'd' elements from 'path'
+                    let p = &op.path.path;
+                    let mut sub_p: Vec<InnerHash> = p.iter().rev().take(op.initial_depth as usize).cloned().collect();
+                    sub_p.reverse();
+                    let i = &op.merkle_index;
+                    let mut sub_i: Vec<bool> = i.iter().rev().cloned().take(op.initial_depth as usize).collect();
+                    sub_i.reverse();
+                    let sub_path: MerkleTreePath<P> = MerkleTreePath { path: sub_p.clone(), _parameters: PhantomData };
+                    res = res & sub_path.verify(&root, &op.leaf, &sub_i, &(), NodeType::Leaf).unwrap();
+                    // the leaf is correctly moved deeper in the tree
+                    root = op.path.compute_root(&op.leaf, &op.merkle_index, &(), NodeType::Leaf).unwrap();
+                    println!("the crap {}", sub_path.verify(&root, &op.leaf, &sub_i, &(), NodeType::Leaf).unwrap());
+                    println!("{:?} {:?}", sub_p, p);
+                    println!("{:?} {:?}", sub_i, i);
+                }
+                TreeOperation::Append(op) => {
+                    // the previous leaf is null
+                    let null_leaf = sparse_initial_hashes[op.path.path.len()];
+                    res = res & op.path.verify(&root, &null_leaf, &op.merkle_index, &(), NodeType::InternalNode).unwrap();
+                    println!("this gotta be right {}", res & op.path.verify(&root, &null_leaf, &op.merkle_index, &(), NodeType::InternalNode).unwrap());
+                    // the root is correctly updated
+                    root = op.path.compute_root(&op.leaf, &op.merkle_index, &(), NodeType::Leaf).unwrap();
+                }
+            }
         }
+        println!("{}", res);
+        println!("{}", root == self.final_root);
         Ok(res & (root == self.final_root))
     }
 }
 
-
+/*
 // TODO: assert everywhere that num_subcircuits = num_of_updates + 1
 // InnerHash <====> UInt8 <==digest_to_fpvar==> FpVar
 impl<F: PrimeField, Params: MerkleTreeParameters> CircuitWithPortals<F> for VerifiableKeyDirectoryCircuit<Params> {
@@ -270,7 +343,7 @@ impl<F: PrimeField, Params: MerkleTreeParameters> CircuitWithPortals<F> for Veri
             let final_root = u.path.compute_root_from_internal_nodes(&u.final_value, u.merkle_index, &()).unwrap();
             let root_var = UInt8::new_witness_vec(ns!(cs, "next root"), &final_root).unwrap();
             let final_root_fpvar = digest_to_fpvar(DigestVar(root_var)).unwrap();
-            //TODO: get this actually right
+            // TODO: get this actually right
             //let _ = pm.set(format!("root {subcircuit_idx}"), &final_root_fpvar).unwrap();
 
             // initial path is valid
@@ -310,16 +383,17 @@ impl<F: PrimeField, Params: MerkleTreeParameters> CircuitWithPortals<F> for Veri
         Ok(())
     }
 }
+ */
 
 
 #[cfg(test)]
 mod tests {
     use ark_relations::r1cs::{ConstraintSystem, ConstraintSystemRef};
     use rand::random;
-    use ark_bls12_381::{Fq, Fr};
+    use ark_bls12_381::{Fq};
     use crate::CircuitWithPortals;
     use crate::portal_manager::SetupPortalManager;
-    use crate::sparse_tree::{MerkleDepth, MerkleIndex, MerkleTreeParameters, SparseMerkleTree};
+    use crate::sparse_tree::{hash_inner_node, hash_leaf, MerkleIndex, MerkleTreeParameters, SparseMerkleTree};
     use crate::tree_hash_circuit::MerkleTreeCircuit;
     use crate::verifiable_key_directory::{VerifiableKeyDirectoryCircuit, VerifiableKeyDirectoryCircuitParams};
 
@@ -328,50 +402,59 @@ mod tests {
         #[derive(Clone)]
         pub struct MerkleTreeTestParameters;
         impl MerkleTreeParameters for MerkleTreeTestParameters {
-            const DEPTH: MerkleDepth = 10;
+            const DEPTH: usize = 256;
+            const CHUNK_SIZE: usize = 8;
         }
+
+        let mut sparse_initial_hashes = vec![hash_leaf(&[0u8; 32]).unwrap()];
+        for i in 1..=MerkleTreeTestParameters::DEPTH {
+            let child_hash = sparse_initial_hashes[i - 1].clone();
+            sparse_initial_hashes.push(hash_inner_node(&child_hash, &child_hash).unwrap());
+        }
+        sparse_initial_hashes.reverse();
 
         let vkd_params = VerifiableKeyDirectoryCircuitParams {
-            max_depth: 11_u8,
             num_portals_per_subcircuit: 1,
-            depth: 10,
-            num_of_updates: 5,
+            depth: 256,
+            num_of_updates: 64,
+            chunk_size: 8,
         };
-        let vkd: VerifiableKeyDirectoryCircuit<MerkleTreeTestParameters> = VerifiableKeyDirectoryCircuit::rand(&vkd_params).unwrap();
-        assert!(vkd.verify().unwrap());
+        let vkd = VerifiableKeyDirectoryCircuit::<MerkleTreeTestParameters>::rand(&vkd_params).unwrap();
+        assert!(vkd.verify(sparse_initial_hashes).unwrap());
     }
 
+    /*
+        #[test]
+        fn test_vkd_subcircuit() {
+            #[derive(Clone)]
+            pub struct MerkleTreeTestParameters;
+            impl MerkleTreeParameters for MerkleTreeTestParameters {
+                const DEPTH: MerkleDepth = 16;
+            }
 
-    #[test]
-    fn test_vkd_subcircuit() {
-        #[derive(Clone)]
-        pub struct MerkleTreeTestParameters;
-        impl MerkleTreeParameters for MerkleTreeTestParameters {
-            const DEPTH: MerkleDepth = 16;
+            let vkd_params = VerifiableKeyDirectoryCircuitParams {
+                max_depth: 32_u8,
+                num_portals_per_subcircuit: 1,
+                depth: 16,
+                num_of_updates: 3,
+            };
+
+            // Make a random VKD
+            let mut vkd: VerifiableKeyDirectoryCircuit<MerkleTreeTestParameters> = VerifiableKeyDirectoryCircuit::rand(&vkd_params).unwrap();
+
+            // Make a fresh portal manager
+            let cs = ConstraintSystem::<Fq>::new_ref();
+            let mut pm = vkd.get_portal_subtraces();
+
+            let num_subcircuits = <VerifiableKeyDirectoryCircuit<MerkleTreeTestParameters> as CircuitWithPortals<Fr>>::num_subcircuits(&vkd);
+            for subcircuit_idx in 0..num_subcircuits {
+                vkd.generate_constraints(cs.clone(), subcircuit_idx, &mut pm)
+                    .unwrap();
+            }
+
+            assert!(cs.is_satisfied().unwrap());
         }
-
-        let vkd_params = VerifiableKeyDirectoryCircuitParams {
-            max_depth: 32_u8,
-            num_portals_per_subcircuit: 1,
-            depth: 16,
-            num_of_updates: 3,
-        };
-
-        // Make a random VKD
-        let mut vkd: VerifiableKeyDirectoryCircuit<MerkleTreeTestParameters> = VerifiableKeyDirectoryCircuit::rand(&vkd_params).unwrap();
-
-        // Make a fresh portal manager
-        let cs = ConstraintSystem::<Fq>::new_ref();
-        let mut pm = vkd.get_portal_subtraces();
-
-        let num_subcircuits = <VerifiableKeyDirectoryCircuit<MerkleTreeTestParameters> as CircuitWithPortals<Fr>>::num_subcircuits(&vkd);
-        for subcircuit_idx in 0..num_subcircuits {
-            vkd.generate_constraints(cs.clone(), subcircuit_idx, &mut pm)
-                .unwrap();
-        }
-
-        assert!(cs.is_satisfied().unwrap());
-    }
+     */
 }
 
 
