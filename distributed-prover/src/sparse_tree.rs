@@ -475,8 +475,7 @@ mod tests {
     }
 
     #[test]
-    #[test]
-    fn success_test() {
+    fn failing_test() {
         let mut tree = TestMerkleTree::new(&[0u8; 16], &()).unwrap();
         let mut root = tree.root.clone();
         for i in 0..2560 {
