@@ -1,4 +1,4 @@
-use ark_relations::r1cs::{SynthesisError, Namespace, ConstraintSystemRef};
+/*use ark_relations::r1cs::{SynthesisError, Namespace, ConstraintSystemRef};
 use ark_r1cs_std::{prelude::*, uint64::UInt64};
 
 use ark_crypto_primitives::crh::sha256::{constraints::{DigestVar, Sha256Gadget}, digest::Digest};
@@ -280,3 +280,5 @@ mod tests {
         assert!(cs.is_satisfied().unwrap());
     }
 }
+
+ */

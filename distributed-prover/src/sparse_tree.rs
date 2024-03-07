@@ -42,12 +42,6 @@ pub trait MerkleTreeParameters {
     const CHUNK_SIZE: usize;
     const BYTE_SIZE: usize = Self::CHUNK_SIZE / 8;
     const NUM_OF_CHUNKS: usize = Self::DEPTH / Self::CHUNK_SIZE;
-    fn is_valid() -> Result<bool, Error> {
-        if Self::DEPTH != 256 || Self::CHUNK_SIZE & 8 != 0 {
-            return Err(Box::new(MerkleTreeError::InvalidParameter));
-        }
-        Ok(true)
-    }
 }
 
 #[derive(Clone)]
@@ -57,24 +51,35 @@ pub struct SparseMerkleTree<P: MerkleTreeParameters> {
     pub root: InnerHash,
     pub sparse_initial_hashes: Vec<InnerHash>,
     pub hash_parameters: (),
-    _parameters: PhantomData<P>,
+    pub(crate) _parameters: PhantomData<P>,
 }
 
 pub enum TreeUpdate {
     SimpleUpdate(SimpleUpdate),
-    ShiftUpdate(ShiftUpdate),
+    CompoundUpdate(CompoundUpdate),
 }
 
+#[derive(Clone, Default, Debug)]
 pub struct SimpleUpdate {
     pub leaf: Vec<u8>,
+    pub leaf_h: Vec<u8>,
+    pub index: MerkleIndex,
 }
 
-#[derive(Debug)]
-pub struct ShiftUpdate {
+#[derive(Clone, Debug)]
+pub struct CompoundUpdate {
+    pub simple_update: SimpleUpdate,
+    pub deepen_update: DeepenUpdate,
+}
+
+#[derive(Debug, Clone)]
+pub struct DeepenUpdate {
     pub leaf: Vec<u8>,
-    pub shift_leaf: Vec<u8>,
-    pub shift_leaf_previous_index: MerkleIndex,
-    // TODO: to be removed
+    pub leaf_h: Vec<u8>,
+    pub previous_index: MerkleIndex,
+    pub previous_path: Vec<InnerHash>,
+    pub min_depth: usize,
+    pub update: SimpleUpdate,
 }
 
 impl<P: MerkleTreeParameters> Display for SparseMerkleTree<P> {
@@ -133,8 +138,8 @@ impl<P: MerkleTreeParameters> SparseMerkleTree<P> {
             let _ = &i.shr_assign(1);
             let lc_i = &*i << 1;
             let rc_i = &lc_i + 1_u8;
-            let lc_hash = self.lookup_internal_node(lc_i, (d + 1)).unwrap();
-            let rc_hash = self.lookup_internal_node(rc_i, (d + 1)).unwrap();
+            let lc_hash = self.lookup_internal_node(lc_i, d + 1).unwrap();
+            let rc_hash = self.lookup_internal_node(rc_i, d + 1).unwrap();
             let temp = MerkleIndex { index: i.clone(), depth: d };
             self.tree.insert(
                 temp.clone(),
@@ -158,77 +163,81 @@ impl<P: MerkleTreeParameters> SparseMerkleTree<P> {
         let leaf_h = hash(leaf).unwrap();
         let is_shift = self.is_there_shift_leaf(leaf_h.as_slice()).unwrap();
         return if is_shift {
-            let shift_leaf = self.get_shift_leaf(leaf_h.as_slice()).unwrap();
-            let shift_leaf_h = hash(shift_leaf.0.as_slice()).unwrap();
-            let u = self.shift_update(leaf, leaf_h.as_slice(), shift_leaf.0.as_slice(), shift_leaf_h.as_slice(), shift_leaf.1).unwrap();
-            Ok(TreeUpdate::ShiftUpdate(u))
+            let shift_leaf = self.get_shift_leaf(leaf_h.as_slice()).unwrap().0;
+            let shift_leaf_h = hash(shift_leaf.as_slice()).unwrap();
+            let c = self.compound_update(&leaf, leaf_h.as_slice(), shift_leaf.as_slice(), shift_leaf_h.as_slice()).unwrap();
+            // remove previous index and new one
+            Ok(TreeUpdate::CompoundUpdate(c))
         } else {
             let leaf_h = hash(leaf).unwrap();
-            let u = self.simple_update(leaf, leaf_h.as_slice()).unwrap();
+            let u = self.simple_update(leaf, leaf_h.as_slice(), 1).unwrap();
             Ok(TreeUpdate::SimpleUpdate(u))
         };
     }
 
-    pub fn shift_update(&mut self, leaf: &[u8], leaf_h: &[u8], shift_leaf: &[u8], shift_leaf_h: &[u8], shift_leaf_index: MerkleIndex) -> Result<ShiftUpdate, Error> {
-        if leaf_h.len() != 32 || shift_leaf_h.len() != 32 {
-            return Err(Box::new(MerkleTreeError::InvalidHashSize));
-        }
-        // remove previous leaf
-        self.leaves.remove(&shift_leaf_index);
-        // get the new indexes for them
-        let (ind1, ind2) = self.get_indexes_for_two_leaves(leaf_h, shift_leaf_h).unwrap();
-        // It's of great importance to first shift the s-leaf and then append the new leaf
-        self.insert(ind2.clone(), shift_leaf, NodeType::Leaf).expect("Insertion Error");
-        self.insert(ind1.clone(), leaf, NodeType::Leaf).expect("Insertion Error");
-        // add the new leaves
-        self.leaves.insert(ind1.clone(), leaf.to_vec());
-        self.leaves.insert(ind2.clone(), shift_leaf.to_vec());
-        Ok(ShiftUpdate {
-            leaf: leaf.to_vec(),
-            shift_leaf: shift_leaf.to_vec(),
-            shift_leaf_previous_index: shift_leaf_index,
-        })
-    }
 
-    pub fn simple_update(&mut self, leaf: &[u8], leaf_h: &[u8]) -> Result<SimpleUpdate, Error> {
+    pub fn deepen(&mut self, leaf: &[u8], leaf_h: &[u8], min_depth: usize) -> Result<DeepenUpdate, Error> {
         if leaf_h.len() != 32 {
             return Err(Box::new(MerkleTreeError::InvalidHashSize));
         }
-        if self.lookup_internal_node(BigUint::from_bytes_le(&leaf_h), P::DEPTH).unwrap().1 {
-            return Err(Box::new(MerkleTreeError::FullTree));
+        let shift_leaf = self.get_shift_leaf(leaf_h).unwrap();
+        if shift_leaf.0.as_slice() != leaf {
+            return Err(Box::new(MerkleTreeError::InvalidHashSize));
         }
-        for d in (1..P::NUM_OF_CHUNKS).rev() {
+        // get previous path
+        let previous_path = self.lookup_path(&shift_leaf.1).unwrap();
+        // remove
+        self.leaves.remove(&shift_leaf.1);
+        // add
+        let t = self.simple_update(&leaf, &leaf_h, min_depth).expect("TODO: panic message");
+        Ok(DeepenUpdate {
+            leaf: leaf.to_vec(),
+            leaf_h: leaf_h.to_vec(),
+            previous_index: shift_leaf.1,
+            previous_path: previous_path.path,
+            min_depth,
+            update: t,
+        })
+    }
+
+    pub fn compound_update(&mut self, leaf: &[u8], leaf_h: &[u8], shift_leaf: &[u8], shift_leaf_h: &[u8]) -> Result<CompoundUpdate, Error> {
+        if leaf_h.len() != 32 || shift_leaf_h.len() != 32 {
+            return Err(Box::new(MerkleTreeError::InvalidHashSize));
+        }
+        // get the min depth
+        let min_depth = self.get_first_block_of_difference(leaf_h, shift_leaf_h).unwrap();
+        let deep = self.deepen(&shift_leaf, &shift_leaf_h, min_depth).unwrap();
+        let simple = self.simple_update(&leaf, &leaf_h, min_depth).unwrap();
+        Ok(CompoundUpdate { simple_update: simple, deepen_update: deep })
+    }
+
+    pub fn simple_update(&mut self, leaf: &[u8], leaf_h: &[u8], min_depth: usize) -> Result<SimpleUpdate, Error> {
+        if leaf_h.len() != 32 || min_depth < 1 {
+            return Err(Box::new(MerkleTreeError::InvalidHashSize));
+        }
+        for d in min_depth..=P::NUM_OF_CHUNKS {
             let i = BigUint::from_bytes_le(&leaf_h[0..d * P::BYTE_SIZE]);
             let depth = P::CHUNK_SIZE * d;
-            let is_full = self.lookup_internal_node(i.clone(), depth).unwrap().1;
-            if is_full {
-                // check if contains a leaf or it's just full
-                let is_leaf = match self.leaves.get(&MerkleIndex { index: i, depth }) {
-                    Some(_h) => true,
-                    None => false,
-                };
-                if is_leaf {
-                    return Err(Box::new(MerkleTreeError::NotSimpleUpdate));
-                } else {
-                    let i = BigUint::from_bytes_le(&leaf_h[0..(d + 1) * P::BYTE_SIZE]);
-                    let depth = P::CHUNK_SIZE * (d + 1);
-                    let index = MerkleIndex { index: i, depth };
-                    self.insert(index.clone(), leaf, NodeType::Leaf).expect("Insertion Error");
-                    self.leaves.insert(index.clone(), leaf.to_vec());
-                    return Ok(SimpleUpdate { leaf: leaf.to_vec() });
-                }
+            let is_empty = self.lookup_internal_node(i.clone(), depth).unwrap();
+            if !is_empty.1 {
+                let index = MerkleIndex { index: i, depth };
+
+                let path = self.lookup_path(&index).unwrap();
+                let null_leaf = self.sparse_initial_hashes[path.path.len()];
+                println!("cute {} {}", path.verify(&self.root, &null_leaf, &index.to_bit_vector(), &(), NodeType::InternalNode).unwrap(), null_leaf == is_empty.0);
+
+                self.insert(index.clone(), leaf, NodeType::Leaf).expect("Insertion Error");
+                self.leaves.insert(index.clone(), leaf.to_vec());
+                return Ok((SimpleUpdate { leaf: leaf.to_vec(), leaf_h: leaf_h.to_vec(), index }));
             }
         }
-        let index = MerkleIndex { index: BigUint::from_bytes_le(&leaf_h[0.. P::BYTE_SIZE]), depth: P::CHUNK_SIZE };
-        self.insert(index.clone(), leaf, NodeType::Leaf).expect("Insertion Error");
-        self.leaves.insert(index.clone(), leaf.to_vec());
-        Ok(SimpleUpdate { leaf: leaf.to_vec() })
+        return Err(Box::new(MerkleTreeError::FullTree));
     }
 
     pub fn lookup_internal_node(&self, index: BigUint, depth: usize) -> Result<(InnerHash, bool), Error> {
-        let res = match self.tree.get(&MerkleIndex { index, depth: depth as usize }) {
+        let res = match self.tree.get(&MerkleIndex { index, depth }) {
             Some(h) => (h.clone(), true),
-            None => (self.sparse_initial_hashes[depth as usize].clone(), false),
+            None => (self.sparse_initial_hashes[depth].clone(), false),
         };
         Ok(res)
     }
@@ -253,96 +262,43 @@ impl<P: MerkleTreeParameters> SparseMerkleTree<P> {
             - The first depth common to both leaves.
             - The new indexes to which these two leaves need to be moved.
      */
-    pub fn get_indexes_for_two_leaves(&self, leaf_h1: &[u8], leaf_h2: &[u8]) -> Result<(MerkleIndex, MerkleIndex), Error> {
+    pub fn get_first_block_of_difference(&self, leaf_h1: &[u8], leaf_h2: &[u8]) -> Result<usize, Error> {
         if leaf_h1.len() != 32 || leaf_h2.len() != 32 {
             return Err(Box::new(MerkleTreeError::InvalidHashSize));
         }
-        for i in 0..P::NUM_OF_CHUNKS {
-            if leaf_h1[0..P::BYTE_SIZE * (i + 1)] == leaf_h2[0..P::BYTE_SIZE * (i + 1)] {
+        for i in 1..P::NUM_OF_CHUNKS {
+            if leaf_h1[0..P::BYTE_SIZE * i] == leaf_h2[0..P::BYTE_SIZE * i] {
                 continue;
             }
-            let i1 = BigUint::from_bytes_le(&leaf_h1[0..P::BYTE_SIZE * (i + 1)]);
-            let i2 = BigUint::from_bytes_le(&leaf_h2[0..P::BYTE_SIZE * (i + 1)]);
-            let ind1 = MerkleIndex { index: i1, depth: P::CHUNK_SIZE * (i + 1) };
-            let ind2 = MerkleIndex { index: i2, depth: P::CHUNK_SIZE * (i + 1) };
-            return Ok((ind1, ind2));
+            return Ok(i * P::BYTE_SIZE);
         }
         return Err(Box::new(MerkleTreeError::SHA256Collision));
     }
 
-    /*
-     Function Overview:
-        - This function determines whether there's a leaf to be moved after adding a new leaf
-        - Start from the bottom of the tree
-        - Check the first full node encountered
-        - If the node contains a leaf, a shift is required
-        - If the node is empty, no shift is needed
-    */
     pub fn is_there_shift_leaf(&self, leaf_h: &[u8]) -> Result<bool, Error> {
         if leaf_h.len() != 32 {
             return Err(Box::new(MerkleTreeError::InvalidHashSize));
         }
-        for d in (1..=P::NUM_OF_CHUNKS).rev() {
-            let index = BigUint::from_bytes_le(&leaf_h[0..d * P::BYTE_SIZE]);
-            let depth = P::CHUNK_SIZE * d;
-            let is_full = self.lookup_internal_node(index.clone(), depth).unwrap().1;
-            if is_full {
-                // check if contains a leaf or it's just full
-                let is_leaf = match self.leaves.get(&MerkleIndex { index, depth }) {
-                    Some(_h) => true,
-                    None => false,
-                };
-                return Ok(is_leaf);
-            }
-        }
-        Ok(false)
+        Ok(!self.get_shift_leaf(leaf_h).is_err())
     }
 
     // This function takes a leaf and outputs the leaf on the way of this leaf that needs to be moved
     pub fn get_shift_leaf(&self, leaf_h: &[u8]) -> Result<(Vec<u8>, MerkleIndex), Error> {
-        if !self.is_there_shift_leaf(leaf_h).unwrap() {
-            return Err(Box::new(MerkleTreeError::NoShiftLeaf));
-        }
         if leaf_h.len() != 32 {
             return Err(Box::new(MerkleTreeError::InvalidHashSize));
         }
-        for i in (1..=P::NUM_OF_CHUNKS).rev() {
-            // get the biginteger from the first i * 8 bytes
-            let i1 = BigUint::from_bytes_le(&leaf_h[0..i * P::BYTE_SIZE]);
-            let d = P::CHUNK_SIZE * i;
-            let is_full = self.lookup_internal_node(i1, d).unwrap().1;
-            if is_full {
-                // retrieve the leaf on the way
-                let i2 = BigUint::from_bytes_le(&leaf_h[0..i * P::BYTE_SIZE]);
-                let merkle_index = MerkleIndex { index: i2, depth: P::CHUNK_SIZE * i };
-                let shift_leaf = match self.leaves.get(&merkle_index) {
-                    Some(h) => h.clone(),
-                    None => Vec::new(),
-                };
-                return Ok((shift_leaf, merkle_index));
+        for d in (1..=P::NUM_OF_CHUNKS).rev() {
+            let i = BigUint::from_bytes_le(&leaf_h[0..d * P::BYTE_SIZE]);
+            let merkle_index = MerkleIndex { index: i, depth: P::CHUNK_SIZE * d };
+            let shift_leaf = match self.leaves.get(&merkle_index) {
+                Some(h) => (h.clone(), true),
+                None => (Vec::new(), false),
+            };
+            if shift_leaf.1 {
+                return Ok((shift_leaf.0, merkle_index));
             }
         }
         return Err(Box::new(MerkleTreeError::NoShiftLeaf));
-    }
-
-    // TODO: this might be buggy but hasn't been used yet
-    // This function returns index where a new leaf has to be inserted its hash
-    pub fn get_index_from_hash(&self, leaf_h: &[u8]) -> Result<MerkleIndex, Error> {
-        if leaf_h.len() != 32 {
-            return Err(Box::new(MerkleTreeError::InvalidHashSize));
-        }
-        // Important: we start from the bottom of the tree not top!
-        for i in (1..=P::NUM_OF_CHUNKS).rev() {
-            // get the biginteger from the first i * 8 bytes
-            let i1 = BigUint::from_bytes_le(&leaf_h[0..i * P::BYTE_SIZE]);
-            let is_full = self.lookup_internal_node(i1, P::CHUNK_SIZE * i).unwrap().1;
-            if is_full {
-                // retrieve the leaf
-                let i2 = BigUint::from_bytes_le(&leaf_h[0..i * P::BYTE_SIZE]);
-                return Ok(MerkleIndex { index: i2, depth: P::CHUNK_SIZE * i });
-            }
-        }
-        return Err(Box::new(MerkleTreeError::LeafNotFound));
     }
 }
 
@@ -362,7 +318,6 @@ impl<P: MerkleTreeParameters> Clone for MerkleTreePath<P> {
     }
 }
 
-// TODO: get a sub_path
 impl<P: MerkleTreeParameters> Default for MerkleTreePath<P> {
     fn default() -> Self {
         Self {
@@ -469,6 +424,7 @@ impl Display for MerkleTreeError {
 
 #[cfg(test)]
 mod tests {
+    use rand::random;
     use super::*;
 
     pub fn get_simple_index(leaf_h: &[u8]) -> Result<MerkleIndex, Error> {
@@ -491,83 +447,84 @@ mod tests {
     type TestMerkleTree = SparseMerkleTree<MerkleTreeTestParameters>;
 
     #[test]
-    fn initialize_test() {
-        // test correctness of hashes
-        let leaf_leaf = [0_u8; 32];
-        let left_hash = hash_leaf(&leaf_leaf).unwrap();
-        let right_leaf = [0_u8; 32];
-        let right_hash = hash_leaf(&right_leaf).unwrap();
-        let mut result = Vec::from(left_hash);
-        result.extend_from_slice(&right_hash);
-        let concatenation = result.as_slice();
-        let h1 = hash_inner_node(&left_hash, &right_hash).unwrap();
-        let h2 = hash_leaf(concatenation).unwrap();
-        assert_eq!(h1, h2);
-        // test parity function
-        assert!(is_even(&BigUint::zero()));
-        assert!(!is_even(&BigUint::one()));
+    fn success_test() {
+        let mut tree = TestMerkleTree::new(&[0u8; 16], &()).unwrap();
+        let mut root = tree.root.clone();
+        for i in 0..10 {
+            let j = i as i32;
+            let leaf = j.to_le_bytes();
+            let leaf_h = hash(&leaf).unwrap();
+            let y = tree.update(&leaf).expect("TODO: panic message");
+            let index: MerkleIndex;
+            match y {
+                TreeUpdate::SimpleUpdate(s) => {
+                    index = s.index;
+                }
+                TreeUpdate::CompoundUpdate(c) => {
+                    index = c.simple_update.index;
+                }
+            }
+            let path = tree.lookup_path(&index).unwrap();
+            let null_leaf = tree.sparse_initial_hashes[path.path.len()];
+            println!("{} {:?}", tree, index.to_bit_vector().clone());
+            assert!(path.verify(&root, &null_leaf, &index.to_bit_vector(), &(), NodeType::InternalNode).unwrap());
+            assert!(path.verify(&tree.root, &leaf, &index.to_bit_vector(), &(), NodeType::Leaf).unwrap());
+            root = tree.root.clone();
+        }
+        println!("{}", tree);
     }
 
     #[test]
-    fn insert_test() {
+    #[test]
+    fn success_test() {
         let mut tree = TestMerkleTree::new(&[0u8; 16], &()).unwrap();
-        let leaf = [1_u8; 32];
-        let mut index = get_simple_index(&leaf).unwrap();
-        // update the tree
-        tree.insert(index.clone(), &leaf, NodeType::Leaf).expect("insertion error");
-        let path = tree.lookup_path(&index).unwrap();
-        assert!(path.verify(&tree.root, &leaf, &index.to_bit_vector(), &(), NodeType::Leaf).expect("path verification error"));
-
-        let leaf = [9_u8; 32];
-        let mut index = get_simple_index(&leaf).unwrap();
-        // update the tree
-        tree.insert(index.clone(), &leaf, NodeType::Leaf).expect("insertion error");
-        let path = tree.lookup_path(&index).unwrap();
-        assert!(path.verify(&tree.root, &leaf, &index.to_bit_vector(), &(), NodeType::Leaf).expect("path verification error"));
-
-        let leaf = [10_u8; 32];
-        let h = hash_leaf(&leaf).unwrap();
-        let mut index = get_simple_index(&leaf).unwrap();
-        // update the tree
-        tree.insert(index.clone(), &leaf, NodeType::Leaf).expect("insertion error");
-        let path = tree.lookup_path(&index).unwrap();
-        assert!(path.verify(&tree.root, &h, &index.to_bit_vector(), &(), NodeType::InternalNode).expect("path verification error"));
+        let mut root = tree.root.clone();
+        for i in 0..2560 {
+            let j = i as i32;
+            let leaf = j.to_le_bytes();
+            let leaf_h = hash(&leaf).unwrap();
+            let y = tree.update(&leaf).expect("TODO: panic message");
+            let index: MerkleIndex;
+            match y {
+                TreeUpdate::SimpleUpdate(s) => {
+                    index = s.index;
+                }
+                TreeUpdate::CompoundUpdate(c) => {
+                    index = c.simple_update.index;
+                }
+            }
+            let path = tree.lookup_path(&index).unwrap();
+            let null_leaf = tree.sparse_initial_hashes[path.path.len()];
+            println!("{} {:?}", tree, index.to_bit_vector().clone());
+            assert!(path.verify(&root, &null_leaf, &index.to_bit_vector(), &(), NodeType::InternalNode).unwrap());
+            assert!(path.verify(&tree.root, &leaf, &index.to_bit_vector(), &(), NodeType::Leaf).unwrap());
+            root = tree.root.clone();
+        }
+        println!("{}", tree);
+    }
+    #[test]
+    fn koshher2() {
+        let mut tree = TestMerkleTree::new(&[0u8; 16], &()).unwrap();
+        let leaf1 = random::<[u8; 32]>();
+        let leaf1_h = hash(&leaf1).unwrap();
+        let leaf2 = random::<[u8; 32]>();
+        let leaf2_h = hash(&leaf2).unwrap();
+        tree.simple_update(&leaf1, leaf1_h.as_slice(), 1).expect("to do");
+        tree.simple_update(&leaf2, leaf2_h.as_slice(), 4).expect("to do");
+        println!("{}", tree);
+        tree.deepen(&leaf1, &leaf1_h, 10).unwrap();
+        tree.deepen(&leaf2, &leaf2_h, 10).unwrap();
+        println!("{}", tree);
     }
 
     #[test]
-    fn shift_leaf_test() {
-        let mut tree = TestMerkleTree::new(&[0u8; 16], &()).unwrap();
-        let leaf = [0u8; 32];
-        let leaf_h1: [u8; 32] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
-            0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
-            0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
-            0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8];
-        let leaf_h2: [u8; 32] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
-            1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
-            0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
-            0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8];
-        let index1 = get_simple_index(&leaf_h1).unwrap();
-        let index2 = get_simple_index(&leaf_h2).unwrap();
-        let (ind1, ind2) = tree.get_indexes_for_two_leaves(&leaf_h1, &leaf_h2).unwrap();
-        assert_eq!(index1.depth, MerkleTreeTestParameters::CHUNK_SIZE);
-        assert_eq!(ind1.depth, ind2.depth);
-        assert_eq!(ind2.depth, 72);
-        let b = tree.is_there_shift_leaf(&leaf_h1).unwrap();
-        assert!(!b);
-        tree.simple_update(&leaf, &leaf_h1).expect("TODO: panic message");
-        // tree.insert(index1, &leaf, NodeType::Leaf).expect("insertion error");
-        let b = tree.is_there_shift_leaf(&leaf_h2).unwrap();
-        assert!(b);
-    }
+    fn kosher1() {
+        let mut tree1 = TestMerkleTree::new(&[0u8; 16], &()).unwrap();
 
-    #[test]
-    fn shift_leaf_test2() {
-        let mut tree = TestMerkleTree::new(&[0u8; 16], &()).unwrap();
         let leaf1 = [0u8; 32];
         let leaf2 = [1u8; 32];
         let leaf3 = [2u8; 32];
-        let leaf4 = [3u8; 32];
-        let  leaf_h1: [u8; 32] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        let leaf_h1: [u8; 32] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
             0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
             0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
             0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8];
@@ -576,86 +533,23 @@ mod tests {
             0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
             0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8];
         let leaf_h3: [u8; 32] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
-            1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+            2u8, 2u8, 2u8, 2u8, 2u8, 2u8, 2u8, 2u8,
             1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
             0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8];
-        let leaf_h4: [u8; 32] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
-            1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
-            1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
-            1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8];
-        tree.simple_update(&leaf1, &leaf_h1).expect("simple update error");
-        println!("{}", tree);
-        let l1 = tree.get_shift_leaf(&leaf_h2).unwrap();
-        assert_eq!(l1.0.as_slice(), leaf1.as_slice());
-        tree.shift_update(&leaf2, &leaf_h2, &leaf1, &leaf_h1, l1.1).expect("shift update error");
-        assert!(tree.is_there_shift_leaf(&leaf_h2).unwrap());
-        println!("{}", tree);
-        let l2 = tree.get_shift_leaf(&leaf_h3).unwrap();
-        assert_eq!(l2.0.as_slice(), leaf2.as_slice());
-        tree.shift_update(&leaf3, &leaf_h3, &leaf2, &leaf_h2, l2.1).expect("shift update error");
-        assert!(tree.is_there_shift_leaf(&leaf_h3).unwrap());
-        println!("{}", tree);
-        let l3 = tree.get_shift_leaf(&leaf_h3).unwrap();
-        assert_eq!(l3.0.as_slice(), leaf3.as_slice());
-        tree.shift_update(&leaf4, &leaf_h4, &leaf3, &leaf_h3, l3.1).expect("shift update error");
-        assert!(tree.is_there_shift_leaf(&leaf_h4).unwrap());
-        println!("{}", tree);
+        tree1.simple_update(&leaf1, &leaf_h1, 1).expect("TODO: panic message");
+        assert!(tree1.is_there_shift_leaf(&leaf_h2).unwrap());
+        assert!(tree1.is_there_shift_leaf(&leaf_h3).unwrap());
+        tree1.deepen(&leaf1, &leaf_h1, 4).expect("TODO: panic message");
+        println!("{}", tree1);
     }
 
     #[test]
-    fn same_leaf_test() {
+    fn foksher3() {
         let mut tree = TestMerkleTree::new(&[0u8; 16], &()).unwrap();
-        let leaf_h: [u8; 32] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
-            0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
-            0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
-            0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8];
-        let t = tree.get_indexes_for_two_leaves(&leaf_h, &leaf_h);
-        assert!(t.is_err());
-    }
 
-    #[test]
-    fn update_tree_test2() {
-        let mut tree = TestMerkleTree::new(&[0u8; 16], &()).unwrap();
-        for i in 0..100 {
-            let j = i as i32;
-            let leaf = j.to_le_bytes();
-            tree.update(&leaf).expect("TODO: panic message");
-            let leaf_h = hash(&leaf).unwrap();
-            let index = tree.get_index_from_hash(leaf_h.as_slice()).unwrap();
-            let path = tree.lookup_path(&index).unwrap();
-            assert!(path.verify(&tree.root, &leaf, &index.to_bit_vector(), &(), NodeType::Leaf).unwrap());
-        }
-    }
-
-    #[test]
-    fn null_leaf_test() {
-        let mut tree = TestMerkleTree::new(&[0u8; 16], &()).unwrap();
-        let leaf = [3u8; 32];
-        let leaf_h = hash(&leaf).unwrap();
-        let index = get_simple_index(leaf_h.as_slice()).unwrap();
-        let x = tree.lookup_internal_node(index.index.clone(), index.depth).unwrap().0;
-        let path = tree.lookup_path(&index).unwrap();
-        assert!(path.verify(&tree.root, &x, &index.to_bit_vector(), &(), NodeType::InternalNode).unwrap());
-    }
-
-    #[test]
-    fn update_result_test() {
-        // simple update
-        let mut tree = TestMerkleTree::new(&[0u8; 16], &()).unwrap();
-        let leaf = [3u8; 32];
-        let leaf_h = hash(&leaf).unwrap();
-        let u = tree.update(&leaf).unwrap();
-        match u {
-            TreeUpdate::ShiftUpdate(op) => {
-                assert_eq!(1, 2);
-            }
-            TreeUpdate::SimpleUpdate(op) => {
-                assert_eq!(op.leaf, leaf.to_vec());
-            }
-        }
-        // shift update
         let leaf1 = [0u8; 32];
         let leaf2 = [1u8; 32];
+        let leaf3 = [2u8; 32];
         let leaf_h1: [u8; 32] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
             0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
             0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
@@ -664,12 +558,194 @@ mod tests {
             1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
             0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
             0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8];
-        tree.simple_update(&leaf, &leaf_h1).expect("TODO: panic message");
-        let previous_index = tree.get_index_from_hash(&leaf_h1).unwrap();
-        let u = tree.shift_update(&leaf2, &leaf_h2, &leaf1, &leaf_h1, previous_index.clone()).unwrap();
-        assert_eq!(u.shift_leaf_previous_index, previous_index.clone());
-        assert_eq!(u.leaf, leaf2.to_vec());
-        assert_eq!(u.shift_leaf, leaf1.to_vec());
+        let leaf_h3: [u8; 32] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+            2u8, 2u8, 2u8, 2u8, 2u8, 2u8, 2u8, 2u8,
+            1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+            0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8];
+        tree.simple_update(&leaf1, &leaf_h1, 1).expect(" ");
+        tree.compound_update(&leaf2, &leaf_h2, &leaf1, &leaf_h1).expect(" ");
+        assert!(!tree.is_there_shift_leaf(&leaf_h3).unwrap());
+        println!("{}", tree);
+        tree.simple_update(&leaf3, &leaf_h3, 10).expect(" ");
+        println!("{}", tree);
     }
+
+
+    /*
+       #[test]
+       fn initialize_test() {
+           // test correctness of hashes
+           let leaf_leaf = [0_u8; 32];
+           let left_hash = hash_leaf(&leaf_leaf).unwrap();
+           let right_leaf = [0_u8; 32];
+           let right_hash = hash_leaf(&right_leaf).unwrap();
+           let mut result = Vec::from(left_hash);
+           result.extend_from_slice(&right_hash);
+           let concatenation = result.as_slice();
+           let h1 = hash_inner_node(&left_hash, &right_hash).unwrap();
+           let h2 = hash_leaf(concatenation).unwrap();
+           assert_eq!(h1, h2);
+           // test parity function
+           assert!(is_even(&BigUint::zero()));
+           assert!(!is_even(&BigUint::one()));
+       }
+
+       #[test]
+       fn insert_test() {
+           let mut tree = TestMerkleTree::new(&[0u8; 16], &()).unwrap();
+           let leaf = [1_u8; 32];
+           let mut index = get_simple_index(&leaf).unwrap();
+           // update the tree
+           tree.insert(index.clone(), &leaf, NodeType::Leaf).expect("insertion error");
+           let path = tree.lookup_path(&index).unwrap();
+           assert!(path.verify(&tree.root, &leaf, &index.to_bit_vector(), &(), NodeType::Leaf).expect("path verification error"));
+
+           let leaf = [9_u8; 32];
+           let mut index = get_simple_index(&leaf).unwrap();
+           // update the tree
+           tree.insert(index.clone(), &leaf, NodeType::Leaf).expect("insertion error");
+           let path = tree.lookup_path(&index).unwrap();
+           assert!(path.verify(&tree.root, &leaf, &index.to_bit_vector(), &(), NodeType::Leaf).expect("path verification error"));
+
+           let leaf = [10_u8; 32];
+           let h = hash_leaf(&leaf).unwrap();
+           let mut index = get_simple_index(&leaf).unwrap();
+           // update the tree
+           tree.insert(index.clone(), &leaf, NodeType::Leaf).expect("insertion error");
+           let path = tree.lookup_path(&index).unwrap();
+           assert!(path.verify(&tree.root, &h, &index.to_bit_vector(), &(), NodeType::InternalNode).expect("path verification error"));
+       }
+
+       #[test]
+       fn shift_leaf_test() {
+           let mut tree = TestMerkleTree::new(&[0u8; 16], &()).unwrap();
+           let leaf = [0u8; 32];
+           let leaf_h1: [u8; 32] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+               0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+               0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+               0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8];
+           let leaf_h2: [u8; 32] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+               1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+               0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+               0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8];
+           let index1 = get_simple_index(&leaf_h1).unwrap();
+           let index2 = get_simple_index(&leaf_h2).unwrap();
+           let (ind1, ind2) = tree.get_indexes_for_two_leaves(&leaf_h1, &leaf_h2).unwrap();
+           assert_eq!(index1.depth, MerkleTreeTestParameters::CHUNK_SIZE);
+           assert_eq!(ind1.depth, ind2.depth);
+           assert_eq!(ind2.depth, 72);
+           let b = tree.is_there_shift_leaf(&leaf_h1).unwrap();
+           assert!(!b);
+           tree.simple_update(&leaf, &leaf_h1).expect("TODO: panic message");
+           // tree.insert(index1, &leaf, NodeType::Leaf).expect("insertion error");
+           let b = tree.is_there_shift_leaf(&leaf_h2).unwrap();
+           assert!(b);
+       }
+
+       /*#[test]
+       fn shift_leaf_test2() {
+           let mut tree = TestMerkleTree::new(&[0u8; 16], &()).unwrap();
+           let leaf1 = [0u8; 32];
+           let leaf2 = [1u8; 32];
+           let leaf3 = [2u8; 32];
+           let leaf4 = [3u8; 32];
+           let leaf_h1: [u8; 32] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+               0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+               0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+               0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8];
+           let leaf_h2: [u8; 32] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+               1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+               0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+               0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8];
+           let leaf_h3: [u8; 32] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+               1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+               1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+               0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8];
+           let leaf_h4: [u8; 32] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+               1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+               1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+               1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8];
+           tree.simple_update(&leaf1, &leaf_h1).expect("simple update error");
+           println!("{}", tree);
+           let l1 = tree.get_shift_leaf(&leaf_h2).unwrap();
+           assert_eq!(l1.0.as_slice(), leaf1.as_slice());
+           tree.shift_update(&leaf2, &leaf_h2, &leaf1, &leaf_h1, l1.1).expect("shift update error");
+           assert!(tree.is_there_shift_leaf(&leaf_h2).unwrap());
+           println!("{}", tree);
+           let l2 = tree.get_shift_leaf(&leaf_h3).unwrap();
+           assert_eq!(l2.0.as_slice(), leaf2.as_slice());
+           tree.shift_update(&leaf3, &leaf_h3, &leaf2, &leaf_h2, l2.1).expect("shift update error");
+           assert!(tree.is_there_shift_leaf(&leaf_h3).unwrap());
+           println!("{}", tree);
+           let l3 = tree.get_shift_leaf(&leaf_h3).unwrap();
+           assert_eq!(l3.0.as_slice(), leaf3.as_slice());
+           tree.shift_update(&leaf4, &leaf_h4, &leaf3, &leaf_h3, l3.1).expect("shift update error");
+           assert!(tree.is_there_shift_leaf(&leaf_h4).unwrap());
+           println!("{}", tree);
+       }
+        */
+
+       #[test]
+       fn same_leaf_test() {
+           let mut tree = TestMerkleTree::new(&[0u8; 16], &()).unwrap();
+           let leaf_h: [u8; 32] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+               0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+               0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+               0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8];
+           let t = tree.get_indexes_for_two_leaves(&leaf_h, &leaf_h);
+           assert!(t.is_err());
+       }
+
+
+
+       #[test]
+       fn null_leaf_test() {
+           let mut tree = TestMerkleTree::new(&[0u8; 16], &()).unwrap();
+           let leaf = [3u8; 32];
+           let leaf_h = hash(&leaf).unwrap();
+           let index = get_simple_index(leaf_h.as_slice()).unwrap();
+           let x = tree.lookup_internal_node(index.index.clone(), index.depth).unwrap().0;
+           let path = tree.lookup_path(&index).unwrap();
+           assert!(path.verify(&tree.root, &x, &index.to_bit_vector(), &(), NodeType::InternalNode).unwrap());
+       }
+
+
+       #[test]
+       fn update_result_test() {
+           // simple update
+           let mut tree = TestMerkleTree::new(&[0u8; 16], &()).unwrap();
+           let leaf = [3u8; 32];
+           let leaf_h = hash(&leaf).unwrap();
+           let u = tree.update(&leaf).unwrap();
+           match u {
+               TreeUpdate::CompoundUpdate(op) => {
+                   assert_eq!(1, 2);
+               }
+               TreeUpdate::SimpleUpdate(op) => {
+                   assert_eq!(op.leaf, leaf.to_vec());
+               }
+           }
+           // shift update
+           let leaf1 = [0u8; 32];
+           let leaf2 = [1u8; 32];
+           let leaf_h1: [u8; 32] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+               0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+               0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+               0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8];
+           let leaf_h2: [u8; 32] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+               1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+               0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+               0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8];
+           tree.simple_update(&leaf, &leaf_h1).expect("TODO: panic message");
+           let previous_index = tree.get_index_from_hash(&leaf_h1).unwrap();
+           let u = tree.shift_update(&leaf2, &leaf_h2, &leaf1, &leaf_h1, previous_index.clone()).unwrap();
+           assert_eq!(u.shift_leaf_previous_index, previous_index.clone());
+           assert_eq!(u.leaf, leaf2.to_vec());
+           assert_eq!(u.shift_leaf, leaf1.to_vec());
+       }
+        */
 }
+
+
+
 
