@@ -1,21 +1,9 @@
-use ark_std::{cfg_chunks, cfg_chunks_mut, cfg_into_iter, cfg_iter};
 use distributed_prover::tree_hash_circuit::MerkleTreeCircuitParams;
 
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use clap::{Parser, Subcommand};
 use mimalloc::MiMalloc;
 use mpi_snark::{
     coordinator::{generate_g16_pks, CoordinatorState},
-    data_structures::{ProvingKeys, Stage0Request, Stage0Response, Stage1Request, Stage1Response},
-    deserialize_flattened_bytes, serialize_to_vec,
     worker::WorkerState,
-};
-
-use std::{
-    fs::File,
-    io::{Read, Write},
-    num::NonZeroUsize,
-    path::PathBuf,
 };
 
 #[cfg(feature = "parallel")]
@@ -58,109 +46,21 @@ macro_rules! end_timer_buf {
     }};
 }
 
-#[derive(Parser)]
-struct Args {
-    #[clap(subcommand)]
-    command: Command,
-}
-
-#[derive(Subcommand)]
-enum Command {
-    Setup {
-        /// Test circuit param: Number of subcircuits. MUST be a power of two and greater than 1.
-        #[clap(long, value_name = "NUM")]
-        num_subcircuits: usize,
-
-        /// Test circuit param: Number of SHA256 iterations per subcircuit. MUST be at least 1.
-        #[clap(long, value_name = "NUM")]
-        num_sha2_iters: usize,
-
-        /// Test circuit param: Number of portal wire ops per subcircuit. MUST be at least 1.
-        #[clap(long, value_name = "NUM")]
-        num_portals: usize,
-
-        /// Path for the output coordinator key package
-        #[clap(long, value_name = "DIR")]
-        key_out: PathBuf,
-    },
-
-    Work {
-        /// Path to the coordinator key package
-        #[clap(long, value_name = "DIR")]
-        key_file: PathBuf,
-
-        /// The number of workers who will do the committing and proving. Each worker has 1 core.
-        #[clap(long, value_name = "NUM")]
-        num_workers: usize,
-    },
-}
-
 fn main() {
     println!("Rayon num threads: {}", current_num_threads());
-
-    let args = Args::parse();
-
-    match args.command {
-        Command::Setup {
-            num_subcircuits,
-            num_sha2_iters,
-            num_portals,
-            key_out,
-        } => setup(key_out, num_subcircuits, num_sha2_iters, num_portals),
-        Command::Work {
-            key_file,
-            num_workers,
-        } => {
-            // Deserialize the proving keys
-            let proving_keys = {
-                let mut buf = Vec::new();
-                let mut f =
-                    File::open(&key_file).expect(&format!("couldn't open file {:?}", key_file));
-                let _ = f.read_to_end(&mut buf);
-                ProvingKeys::deserialize_uncompressed_unchecked(&mut buf.as_slice()).unwrap()
-            };
-            work(num_workers, proving_keys);
-        },
-    }
+    work();
 }
 
-fn setup(
-    key_out_path: PathBuf,
-    num_subcircuits: usize,
-    num_sha_iterations: usize,
-    num_portals_per_subcircuit: usize,
-) {
-    assert!(
-        num_subcircuits.is_power_of_two(),
-        "#subcircuits MUST be a power of 2"
-    );
-    assert!(num_subcircuits > 1, "num. of subcircuits MUST be > 1");
-    assert!(
-        num_sha_iterations > 0,
-        "num. of SHA256 iterations per subcircuit MUST be > 0"
-    );
-    assert!(
-        num_portals_per_subcircuit > 0,
-        "num. of portal ops per subcircuit MUST be > 0"
-    );
-
+fn work() {
+    let num_workers = 1;
     let circ_params = MerkleTreeCircuitParams {
-        num_leaves: num_subcircuits / 2,
-        num_sha_iters_per_subcircuit: num_sha_iterations,
-        num_portals_per_subcircuit,
+        num_leaves: 8,
+        num_sha_iters_per_subcircuit: 1,
+        num_portals_per_subcircuit: 10,
     };
+    let proving_keys = generate_g16_pks(circ_params);
+    println!("Created pks");
 
-    let pks = generate_g16_pks(circ_params);
-
-    let mut buf = Vec::new();
-    pks.serialize_uncompressed(&mut buf).unwrap();
-
-    let mut f =
-        File::create(&key_out_path).expect(&format!("could not create file {:?}", key_out_path));
-    f.write_all(&buf).unwrap();
-}
-
-fn work(num_workers: usize, proving_keys: ProvingKeys) {
     let circ_params = proving_keys.circ_params.clone();
     let num_subcircuits = 2 * circ_params.num_leaves;
     let current_num_threads = current_num_threads() - 1;
