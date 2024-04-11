@@ -28,7 +28,7 @@ where
     cur_stage: usize,
     /// The committer key that will be used to generate commitments at each step.
     // TODO: Consider making this a ref again
-    pk: &'a ProvingKey<E>,
+    pub pk: &'a ProvingKey<E>,
     _qap: PhantomData<QAP>,
 }
 

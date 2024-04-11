@@ -1,6 +1,8 @@
 use crate::{
     coordinator::{Stage0Request, Stage1Request},
-    eval_tree::{ExecTreeParams, SerializedLeaf, SerializedLeafVar, TreeConfig, TreeConfigGadget},
+    eval_tree::{
+        ExecTreeParams, MerkleRoot, SerializedLeaf, SerializedLeafVar, TreeConfig, TreeConfigGadget,
+    },
     subcircuit_circuit::SubcircuitWithPortalsProver,
     util::{G16Com, G16ComRandomness, G16ComSeed, G16ProvingKey},
     CircuitWithPortals,
@@ -11,6 +13,7 @@ use ark_cp_groth16::{
     Proof as G16Proof,
 };
 use ark_ec::pairing::Pairing;
+use ark_ff::ToConstraintField;
 // use ark_msm::msm::VariableBaseMSMExt;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rand::RngCore;
@@ -163,6 +166,7 @@ where
     C: TreeConfig<Leaf = SerializedLeaf<E::ScalarField>>,
     CG: TreeConfigGadget<C, E::ScalarField, Leaf = SerializedLeafVar<E::ScalarField>>,
     E: Pairing,
+    MerkleRoot<C>: ToConstraintField<E::ScalarField>,
     P: CircuitWithPortals<E::ScalarField>,
     R: RngCore,
 {
@@ -185,6 +189,14 @@ where
     underlying_circuit.set_serialized_witnesses(subcircuit_idx, &serialized_witnesses);
     cb.circuit.circ = Some(underlying_circuit);
 
+    let public_inputs: Vec<E::ScalarField> = [
+        entry_chal.to_field_elements().unwrap(),
+        tr_chal.to_field_elements().unwrap(),
+        root.to_field_elements().unwrap(),
+    ]
+    .concat();
+    let pvk = ark_cp_groth16::verifier::prepare_verifying_key(&cb.pk.vk());
+
     // Put the request values into our circuit
     cb.circuit.cur_leaf = cur_leaf;
     cb.circuit.next_leaf_membership = next_leaf_membership;
@@ -193,6 +205,11 @@ where
     cb.circuit.tr_chal = tr_chal;
 
     let proof = cb.prove(&[com], &[rand], &mut rng).unwrap();
+
+    assert!(
+        ark_cp_groth16::verifier::verify_proof(&pvk, &proof, &public_inputs).unwrap(),
+        "in worker: proof failed to verify"
+    );
 
     Stage1Response {
         subcircuit_idx,
@@ -214,6 +231,7 @@ where
     C: TreeConfig<Leaf = SerializedLeaf<E::ScalarField>>,
     CG: TreeConfigGadget<C, E::ScalarField, Leaf = SerializedLeafVar<E::ScalarField>>,
     E: Pairing,
+    MerkleRoot<C>: ToConstraintField<E::ScalarField>,
     // E::G1: VariableBaseMSMExt,
     // E::G2: VariableBaseMSMExt,
     P: CircuitWithPortals<E::ScalarField>,
