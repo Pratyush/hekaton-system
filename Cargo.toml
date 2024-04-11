@@ -17,6 +17,7 @@ lto = "thin"
 incremental = true
 panic = 'abort'
 debug-assertions = false
+debug = true
 
 [profile.bench]
 opt-level = 3

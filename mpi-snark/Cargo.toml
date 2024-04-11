@@ -12,11 +12,12 @@ ark-ff = { version = "0.4", default-features = false, features = ["asm"] }
 ark-ec = { version = "0.4", default-features = false }
 ark-bls12-381 = { path = "../bls12_381" }
 ark-cp-groth16 = { path = "../cp-groth16", default-features = false }
-mpi = { version = "0.7.0", features = ["derive"] }
-distributed-prover = { path = "../distributed-prover", default-features = false, features = ["asm"] }
+distributed-prover = { path = "../distributed-prover", default-features = false, features = [
+    "asm",
+] }
 rand = "0.8.5"
 itertools = "0.11"
-crossbeam = {version = "0.8", optional = true }
+crossbeam = { version = "0.8", optional = true }
 rayon = { version = "1", optional = true }
 mimalloc = { version = "0.1" }
 tracking-allocator = { version = "0.4" }
@@ -29,14 +30,14 @@ ark-ip-proofs = { git = "https://www.github.com/arkworks-rs/ripp", branch = "ip-
 ark-inner-products = { git = "https://www.github.com/arkworks-rs/ripp", branch = "ip-commitment-old" }
 
 [features]
-default = []#"print-trace"]
+default = [] #"print-trace"]
 print-trace = ["ark-std/print-trace"]
 all_parallel = [
-    "ark-ff/parallel", 
-    "ark-ec/parallel", 
-    "ark-bls12-381/parallel", 
-    "ark-cp-groth16/parallel", 
-    "distributed-prover/parallel", 
-    "parallel"
+    "ark-ff/parallel",
+    "ark-ec/parallel",
+    "ark-bls12-381/parallel",
+    "ark-cp-groth16/parallel",
+    "distributed-prover/parallel",
+    "parallel",
 ]
 parallel = ["crossbeam", "rayon"]
