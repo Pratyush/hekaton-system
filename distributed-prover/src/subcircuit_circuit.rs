@@ -399,9 +399,9 @@ mod test {
 
         // Make a random Merkle tree
         let circ_params = MerkleTreeCircuitParams {
-            num_leaves: 2,
+            num_leaves: 8,
             num_sha_iters_per_subcircuit: 1,
-            num_portals_per_subcircuit: 1,
+            num_portals_per_subcircuit: 10,
         };
         let circ = MerkleTreeCircuit::rand(&mut rng, &circ_params);
         let num_subcircuits = <MerkleTreeCircuit as CircuitWithPortals<Fr>>::num_subcircuits(&circ);
@@ -418,6 +418,7 @@ mod test {
                 .map(|&i| generator.gen_pk(&mut rng, i))
                 .collect::<Vec<_>>()
         };
+        let circ = MerkleTreeCircuit::rand(&mut rng, &circ_params);
 
         // Make the stage0 coordinator state
         let stage0_state = CoordinatorStage0State::new::<TestParams>(circ);
