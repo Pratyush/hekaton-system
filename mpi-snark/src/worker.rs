@@ -29,8 +29,8 @@ pub struct WorkerState<'a> {
     g16_pks: &'a ProvingKeys,
     tree_params: ExecTreeParams<TreeConfig>,
     pub cb: Option<CommitterState<'a>>,
-    com: G16Com,
-    com_rand: G16ComRandomness,
+    pub com: G16Com,
+    pub com_rand: G16ComRandomness,
     num_subcircuits: usize,
 }
 
@@ -72,12 +72,13 @@ impl<'a> WorkerState<'a> {
 
         // Process the request. This returns the response and the commitment builder. Save the
         // builder as state
-        let (resp, cb) = process_stage0_request_get_cb::<_, TreeConfigVar, _, MerkleTreeCircuit, _>(
-            &mut rng,
-            self.tree_params.clone(),
-            g16_pk,
-            stage0_req.to_owned(),
-        );
+        let (resp, cb, _) =
+            process_stage0_request_get_cb::<_, TreeConfigVar, _, MerkleTreeCircuit, _>(
+                &mut rng,
+                self.tree_params.clone(),
+                g16_pk,
+                stage0_req.to_owned(),
+            );
 
         self.cb = Some(cb);
 

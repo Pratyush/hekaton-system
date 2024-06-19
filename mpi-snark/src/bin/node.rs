@@ -1,10 +1,13 @@
+use ark_cp_groth16::verifier::prepare_verifying_key;
 use ark_ip_proofs::tipa::TIPA;
 use distributed_prover::{
     aggregation::AggProvingKey,
     coordinator::{CoordinatorStage0State, G16ProvingKeyGenerator, Stage1Request},
     poseidon_util::{gen_merkle_params, PoseidonTreeConfig, PoseidonTreeConfigVar},
     tree_hash_circuit::{MerkleTreeCircuit, MerkleTreeCircuitParams},
-    worker::{process_stage0_request, process_stage0_request_get_cb},
+    worker::{
+        process_stage0_request, process_stage0_request_get_cb, process_stage1_request_with_cb,
+    },
     CircuitWithPortals,
 };
 
@@ -115,14 +118,16 @@ fn work() {
         .zip(proving_keys_vec.iter())
         .zip(worker_states.iter_mut())
         .map(|((req, pk), worker_state)| {
-            let (resp, cb) = process_stage0_request_get_cb::<
-                _,
-                PoseidonTreeConfigVar,
-                _,
-                MerkleTreeCircuit,
-                _,
-            >(&mut rng, tree_params.clone(), &pk, req.clone());
+            let (resp, cb, com_rand) =
+                process_stage0_request_get_cb::<_, PoseidonTreeConfigVar, _, MerkleTreeCircuit, _>(
+                    &mut rng,
+                    tree_params.clone(),
+                    &pk,
+                    req.clone(),
+                );
             worker_state.cb = Some(cb);
+            worker_state.com = resp.com;
+            worker_state.com_rand = com_rand;
             resp
         })
         .collect::<Vec<_>>();
@@ -143,7 +148,16 @@ fn work() {
     let stage1_resps = stage1_reqs
         .into_iter()
         .zip(worker_states.into_iter())
-        .map(|(req, state)| state.stage_1(rand::thread_rng(), &req.to_ref()))
+        .map(|(req, state)| {
+            let resp = process_stage1_request_with_cb(
+                &mut rng,
+                state.cb.unwrap(),
+                dbg!(state.com),
+                state.com_rand,
+                req.to_owned(),
+            );
+            resp
+        })
         .collect::<Vec<_>>();
 
     println!("Finished worker scatter 1");

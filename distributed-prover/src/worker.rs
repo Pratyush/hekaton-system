@@ -24,8 +24,8 @@ use rand_chacha::ChaCha12Rng;
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct Stage0Response<E: Pairing> {
     pub(crate) subcircuit_idx: usize,
-    pub(crate) com: G16Com<E>,
-    pub(crate) com_seed: G16ComSeed,
+    pub com: G16Com<E>,
+    pub com_seed: G16ComSeed,
 }
 
 impl<E: Pairing> Default for Stage0Response<E> {
@@ -102,6 +102,7 @@ pub fn process_stage0_request_get_cb<C, CG, E, P, R>(
 ) -> (
     Stage0Response<E>,
     G16CommitmentBuilder<SubcircuitWithPortalsProver<E::ScalarField, P, C, CG>, E, QAP>,
+    G16ComRandomness<E>,
 )
 where
     C: TreeConfig<Leaf = SerializedLeaf<E::ScalarField>>,
@@ -140,7 +141,7 @@ where
 
     // Commit to the stage 0 values (the subtraces)
     let mut cb = G16CommitmentBuilder::<_, E, QAP>::new(prover, pk);
-    let (com, _) = cb
+    let (com, com_rand) = cb
         .commit(&mut subcircuit_rng)
         .expect("failed to commit to subtrace");
 
@@ -150,7 +151,7 @@ where
         com_seed,
     };
 
-    (resp, cb)
+    (resp, cb, com_rand)
 }
 
 /// Process the given stage1 request, along with all the previous messages in this execution, and
