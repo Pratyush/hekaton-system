@@ -1,8 +1,15 @@
-use distributed_prover::tree_hash_circuit::MerkleTreeCircuitParams;
+use distributed_prover::{
+    coordinator::G16ProvingKeyGenerator,
+    poseidon_util::{gen_merkle_params, PoseidonTreeConfig, PoseidonTreeConfigVar},
+    tree_hash_circuit::{MerkleTreeCircuit, MerkleTreeCircuitParams},
+    CircuitWithPortals,
+};
 
+use ark_bls12_381::{Bls12_381 as E, Fr};
 use mimalloc::MiMalloc;
 use mpi_snark::{
     coordinator::{generate_g16_pks, CoordinatorState},
+    data_structures::ProvingKeys,
     worker::WorkerState,
 };
 
@@ -58,68 +65,75 @@ fn work() {
         num_sha_iters_per_subcircuit: 1,
         num_portals_per_subcircuit: 10,
     };
-    let proving_keys = generate_g16_pks(circ_params);
+    let mut rng = rand::thread_rng();
+
+    let tree_params = gen_merkle_params();
+
+    // Make an empty circuit of the correct size
+    let circ = MerkleTreeCircuit::rand(&mut rng, &circ_params);
+    let num_subcircuits = <MerkleTreeCircuit as CircuitWithPortals<Fr>>::num_subcircuits(&circ);
+    let all_subcircuit_indices = (0..num_subcircuits).collect::<Vec<_>>();
+
+    let proving_keys_vec = {
+        let generator =
+            G16ProvingKeyGenerator::<PoseidonTreeConfig, PoseidonTreeConfigVar, _, _>::new(
+                circ.clone(),
+                tree_params.clone(),
+            );
+        all_subcircuit_indices
+            .iter()
+            .map(|&i| generator.gen_pk(&mut rng, i))
+            .collect::<Vec<_>>()
+    };
+    let circ = MerkleTreeCircuit::rand(&mut rng, &circ_params);
+
+    let proving_keys = ProvingKeys {
+        circ_params,
+        first_leaf_pk: Some(proving_keys_vec[0].clone()),
+        second_leaf_pk: Some(proving_keys_vec[1].clone()),
+        padding_pk: Some(proving_keys_vec[num_subcircuits - 1].clone()),
+        root_pk: Some(proving_keys_vec[num_subcircuits - 2].clone()),
+        parent_pk: Some(proving_keys_vec[num_subcircuits - 3].clone()),
+    };
+
+    //let proving_keys = generate_g16_pks(circ_params);
     println!("Created pks");
 
     let circ_params = proving_keys.circ_params.clone();
     let num_subcircuits = 2 * circ_params.num_leaves;
     let current_num_threads = current_num_threads() - 1;
 
-    let num_subcircuits_per_worker = num_subcircuits / num_workers;
-    assert_eq!(num_subcircuits_per_worker * num_workers, num_subcircuits);
-
-    let mut log = Vec::new();
-    let very_start = start_timer_buf!(log, || format!("Node: Beginning work"));
-
-    // Initial broadcast
-
-    let start = start_timer_buf!(log, || format!("Coord: construct coordinator state"));
     let mut coordinator_state = CoordinatorState::new(&proving_keys);
-    end_timer_buf!(log, start);
 
-    /***************************************************************************/
-    /***************************************************************************/
-    // Stage 0
-    let start = start_timer_buf!(log, || format!("Coord: Generating stage0 requests"));
     let requests = coordinator_state.stage_0();
-    end_timer_buf!(log, start);
 
     let mut worker_states =
         std::iter::from_fn(|| Some(WorkerState::new(num_subcircuits, &proving_keys)))
-            .take(num_subcircuits_per_worker)
+            .take(num_subcircuits)
             .collect::<Vec<_>>();
 
-    let start = start_timer_buf!(log, || format!("Worker: Processing stage0 requests"));
     let responses = compute_responses(
         current_num_threads,
         &requests,
         &mut worker_states,
         |req, state| state.stage_0(rand::thread_rng(), &req),
     );
-    end_timer_buf!(log, start);
-    println!("Finished worker scatter 0");
 
-    let start = start_timer_buf!(log, || format!("Coord: Processing stage0 responses"));
     let requests = coordinator_state.stage_1(&responses);
-    end_timer_buf!(log, start);
 
     // Compute Stage 1 response
-    let start = start_timer_buf!(log, || format!("Worker: Processing stage1 request"));
     let responses = compute_responses(
         current_num_threads,
         &requests,
         worker_states,
         |req, state| state.stage_1(rand::thread_rng(), &req),
     );
-    end_timer_buf!(log, start);
     println!("Finished worker scatter 1");
     println!("Finished coordinator gather 1");
     /***************************************************************************/
     /***************************************************************************/
 
-    let start = start_timer_buf!(log, || format!("Coord: Aggregating"));
     let _proof = coordinator_state.aggregate(&responses);
-    end_timer_buf!(log, start);
 }
 
 #[cfg(feature = "parallel")]
