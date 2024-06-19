@@ -100,12 +100,6 @@ fn work() {
 
     println!("Created pks");
 
-    let circ_params = proving_keys.circ_params.clone();
-    let num_subcircuits = 2 * circ_params.num_leaves;
-    let current_num_threads = current_num_threads() - 1;
-
-    let mut coordinator_state = CoordinatorState::new(&proving_keys);
-
     let mut worker_states =
         std::iter::from_fn(|| Some(WorkerState::new(num_subcircuits, &proving_keys)))
             .take(num_subcircuits)
@@ -146,12 +140,12 @@ fn work() {
         .collect();
 
     // Compute Stage 1 response
-    let stage1_resps = compute_responses(
-        current_num_threads,
-        &stage1_reqs,
-        worker_states,
-        |req, state| state.stage_1(rand::thread_rng(), &req.to_ref()),
-    );
+    let stage1_resps = stage1_reqs
+        .into_iter()
+        .zip(worker_states.into_iter())
+        .map(|(req, state)| state.stage_1(rand::thread_rng(), &req.to_ref()))
+        .collect::<Vec<_>>();
+
     println!("Finished worker scatter 1");
     println!("Finished coordinator gather 1");
     /***************************************************************************/
