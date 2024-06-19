@@ -28,7 +28,7 @@ type CommitterState<'a> = G16CommitmentBuilder<
 pub struct WorkerState<'a> {
     g16_pks: &'a ProvingKeys,
     tree_params: ExecTreeParams<TreeConfig>,
-    cb: Option<CommitterState<'a>>,
+    pub cb: Option<CommitterState<'a>>,
     com: G16Com,
     com_rand: G16ComRandomness,
     num_subcircuits: usize,

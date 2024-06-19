@@ -1,7 +1,10 @@
+use ark_ip_proofs::tipa::TIPA;
 use distributed_prover::{
-    coordinator::G16ProvingKeyGenerator,
+    aggregation::AggProvingKey,
+    coordinator::{CoordinatorStage0State, G16ProvingKeyGenerator, Stage1Request},
     poseidon_util::{gen_merkle_params, PoseidonTreeConfig, PoseidonTreeConfigVar},
     tree_hash_circuit::{MerkleTreeCircuit, MerkleTreeCircuitParams},
+    worker::{process_stage0_request, process_stage0_request_get_cb},
     CircuitWithPortals,
 };
 
@@ -59,7 +62,6 @@ fn main() {
 }
 
 fn work() {
-    let num_workers = 1;
     let circ_params = MerkleTreeCircuitParams {
         num_leaves: 8,
         num_sha_iters_per_subcircuit: 1,
@@ -96,7 +98,6 @@ fn work() {
         parent_pk: Some(proving_keys_vec[num_subcircuits - 3].clone()),
     };
 
-    //let proving_keys = generate_g16_pks(circ_params);
     println!("Created pks");
 
     let circ_params = proving_keys.circ_params.clone();
@@ -105,35 +106,60 @@ fn work() {
 
     let mut coordinator_state = CoordinatorState::new(&proving_keys);
 
-    let requests = coordinator_state.stage_0();
-
     let mut worker_states =
         std::iter::from_fn(|| Some(WorkerState::new(num_subcircuits, &proving_keys)))
             .take(num_subcircuits)
             .collect::<Vec<_>>();
 
-    let responses = compute_responses(
-        current_num_threads,
-        &requests,
-        &mut worker_states,
-        |req, state| state.stage_0(rand::thread_rng(), &req),
-    );
+    let stage0_state = CoordinatorStage0State::<E, _>::new::<PoseidonTreeConfig>(circ);
+    let stage0_reqs = all_subcircuit_indices
+        .iter()
+        .map(|&idx| stage0_state.gen_request(idx).to_owned())
+        .collect::<Vec<_>>();
+    let stage0_resps = stage0_reqs
+        .iter()
+        .zip(proving_keys_vec.iter())
+        .zip(worker_states.iter_mut())
+        .map(|((req, pk), worker_state)| {
+            let (resp, cb) = process_stage0_request_get_cb::<
+                _,
+                PoseidonTreeConfigVar,
+                _,
+                MerkleTreeCircuit,
+                _,
+            >(&mut rng, tree_params.clone(), &pk, req.clone());
+            worker_state.cb = Some(cb);
+            resp
+        })
+        .collect::<Vec<_>>();
 
-    let requests = coordinator_state.stage_1(&responses);
+    let (tipp_pk, _tipp_vk) = TIPA::<E, Sha256>::setup(num_subcircuits, &mut rng).unwrap();
+    let agg_ck = AggProvingKey::new(tipp_pk.clone(), |i| &proving_keys_vec[i]);
+
+    let stage1_state =
+        stage0_state.process_stage0_responses(&tipp_pk, tree_params.clone(), &stage0_resps);
+
+    // Compute the values needed to prove stage1 for all subcircuits
+    let stage1_reqs: Vec<Stage1Request<PoseidonTreeConfig, _, _>> = all_subcircuit_indices
+        .iter()
+        .map(|idx| stage1_state.gen_request(*idx).to_owned())
+        .collect();
 
     // Compute Stage 1 response
-    let responses = compute_responses(
+    let stage1_resps = compute_responses(
         current_num_threads,
-        &requests,
+        &stage1_reqs,
         worker_states,
-        |req, state| state.stage_1(rand::thread_rng(), &req),
+        |req, state| state.stage_1(rand::thread_rng(), &req.to_ref()),
     );
     println!("Finished worker scatter 1");
     println!("Finished coordinator gather 1");
     /***************************************************************************/
     /***************************************************************************/
 
-    let _proof = coordinator_state.aggregate(&responses);
+    // Compute the aggregate proof
+    let final_agg_state = stage1_state.into_agg_state();
+    let _proof = final_agg_state.gen_agg_proof(&agg_ck, &stage1_resps);
 }
 
 #[cfg(feature = "parallel")]
@@ -156,6 +182,7 @@ fn execute_in_pool_with_all_threads<T: Send>(f: impl FnOnce() -> T + Send) -> T 
 
 #[cfg(feature = "parallel")]
 use rayon::current_num_threads;
+use sha2::Sha256;
 
 #[cfg(not(feature = "parallel"))]
 fn current_num_threads() -> usize {
